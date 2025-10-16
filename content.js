@@ -12,6 +12,7 @@ let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
 let statusEl = null;
+let latestMeta = null;
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -29,7 +30,10 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history...");
+  inputEl.setAttribute(
+    "placeholder",
+    "Search tabs, bookmarks, history... (type 'tab' to see the open tab count)"
+  );
   inputEl.setAttribute("spellcheck", "false");
   inputWrapper.appendChild(inputEl);
 
@@ -132,13 +136,13 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
-  if (query.trim() === "> reindex") {
+  if (isReindexCommand(query)) {
     setStatus("Press Enter to rebuild index");
     resultsState = [];
     renderResults();
     return;
   }
-  setStatus("");
+  updateStatusForQuery(query);
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
   }
@@ -159,8 +163,10 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      latestMeta = response && typeof response.meta === "object" ? response.meta : null;
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       activeIndex = resultsState.length > 0 ? 0 : -1;
+      updateStatusForQuery(inputEl.value);
       renderResults();
     }
   );
@@ -170,6 +176,29 @@ function setStatus(message) {
   if (statusEl) {
     statusEl.textContent = message || "";
   }
+}
+
+function isReindexCommand(query) {
+  return (query || "").trim() === "> reindex";
+}
+
+function updateStatusForQuery(query) {
+  if (isReindexCommand(query)) {
+    return;
+  }
+  const normalized = (query || "").trim().toLowerCase();
+  if (
+    normalized &&
+    "tab".startsWith(normalized) &&
+    latestMeta &&
+    typeof latestMeta.tabCount === "number"
+  ) {
+    const count = latestMeta.tabCount;
+    const label = count === 1 ? "tab" : "tabs";
+    setStatus(`${count} open ${label}`);
+    return;
+  }
+  setStatus("");
 }
 
 function navigateResults(delta) {
@@ -199,9 +228,10 @@ function openResult(result) {
 }
 
 function renderResults() {
+  updateStatusForQuery(inputEl.value);
   resultsEl.innerHTML = "";
 
-  if (inputEl.value.trim() === "> reindex") {
+  if (isReindexCommand(inputEl.value)) {
     const li = document.createElement("li");
     li.className = "spotlight-result reindex";
     li.textContent = "Press Enter to rebuild the search index";

@@ -78,6 +78,9 @@ function applyMatches(entry, multiplier, scores) {
 export function runSearch(query, data) {
   const trimmed = (query || "").trim();
   const { index, termBuckets, items } = data;
+  const tabCount = Array.isArray(items)
+    ? items.reduce((count, item) => count + (item?.type === "tab" ? 1 : 0), 0)
+    : 0;
 
   if (!trimmed) {
     const tabs = items.filter((item) => item.type === "tab");
@@ -88,18 +91,19 @@ export function runSearch(query, data) {
       const bTime = b.lastAccessed || 0;
       return bTime - aTime;
     });
-    return tabs.slice(0, MAX_RESULTS).map((item) => ({
+    const results = tabs.slice(0, MAX_RESULTS).map((item) => ({
       id: item.id,
       title: item.title,
       url: item.url,
       type: item.type,
       score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
     }));
+    return { results, meta: { tabCount } };
   }
 
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) {
-    return [];
+    return { results: [], meta: { tabCount } };
   }
 
   const scores = new Map();
@@ -151,5 +155,8 @@ export function runSearch(query, data) {
     return a.title.localeCompare(b.title);
   });
 
-  return results.slice(0, MAX_RESULTS);
+  return {
+    results: results.slice(0, MAX_RESULTS),
+    meta: { tabCount },
+  };
 }

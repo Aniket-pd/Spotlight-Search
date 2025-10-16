@@ -94,8 +94,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SPOTLIGHT_QUERY") {
     ensureIndex()
       .then((data) => {
-        const results = runSearch(message.query || "", data);
-        sendResponse({ results, requestId: message.requestId });
+        const { results, meta } = runSearch(message.query || "", data);
+        sendResponse({ results, meta, requestId: message.requestId });
       })
       .catch((err) => {
         console.error("Spotlight: query failed", err);

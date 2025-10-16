@@ -8,6 +8,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Arrow-key navigation, Enter to open, and Esc/click outside to dismiss.
 - Optional `Alt+Space` shortcut.
 - Command `> reindex` to rebuild the local search index on demand.
+- Partially typing `tab` reveals the current open tab count so you know when to narrow your search.
 - All processing performed locally—no network calls.
 
 ## Loading the Extension
