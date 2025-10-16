@@ -12,6 +12,7 @@ let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
 let statusEl = null;
+let footerEl = null;
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -42,8 +43,19 @@ function createOverlay() {
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
 
+  footerEl = document.createElement("div");
+  footerEl.className = "spotlight-footer";
+  footerEl.setAttribute("aria-hidden", "true");
+  footerEl.innerHTML = [
+    '<span class="shortcut">↑↓</span> navigate',
+    '<span class="shortcut">Enter</span> open',
+    '<span class="shortcut">⌘↵ / Ctrl+Enter</span> open in new tab',
+    '<span class="shortcut">Esc</span> close'
+  ].join("<span class=\"separator\">•</span>");
+
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
+  containerEl.appendChild(footerEl);
   overlayEl.appendChild(containerEl);
 
   overlayEl.addEventListener("click", (event) => {
@@ -122,10 +134,14 @@ function handleInputKeydown(event) {
     }
     if (resultsState.length > 0 && activeIndex >= 0) {
       event.preventDefault();
-      openResult(resultsState[activeIndex]);
+      openResult(resultsState[activeIndex], {
+        newTab: event.metaKey || event.ctrlKey
+      });
     } else if (resultsState.length === 1) {
       event.preventDefault();
-      openResult(resultsState[0]);
+      openResult(resultsState[0], {
+        newTab: event.metaKey || event.ctrlKey
+      });
     }
   }
 }
@@ -192,9 +208,14 @@ function updateActiveResult() {
   });
 }
 
-function openResult(result) {
+function openResult(result, options = {}) {
   if (!result) return;
-  chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  const newTab = Boolean(options.newTab);
+  chrome.runtime.sendMessage({
+    type: "SPOTLIGHT_OPEN",
+    itemId: result.id,
+    newTab
+  });
   closeOverlay();
 }
 
@@ -252,8 +273,15 @@ function renderResults() {
       event.preventDefault();
     });
 
-    li.addEventListener("click", () => {
-      openResult(result);
+    li.addEventListener("click", (event) => {
+      openResult(result, { newTab: event.metaKey || event.ctrlKey });
+    });
+
+    li.addEventListener("auxclick", (event) => {
+      if (event.button === 1) {
+        event.preventDefault();
+        openResult(result, { newTab: true });
+      }
     });
 
     resultsEl.appendChild(li);

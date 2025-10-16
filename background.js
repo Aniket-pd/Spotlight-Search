@@ -50,11 +50,16 @@ async function sendToggleMessage() {
   }
 }
 
-async function openItem(itemId) {
+async function openItem(itemId, { newTab = false } = {}) {
   const data = await ensureIndex();
   const item = data.items[itemId];
   if (!item) {
     throw new Error("Item not found");
+  }
+
+  if (newTab) {
+    await chrome.tabs.create({ url: item.url });
+    return;
   }
 
   if (item.type === "tab" && item.tabId !== undefined) {
@@ -105,7 +110,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "SPOTLIGHT_OPEN") {
-    openItem(message.itemId)
+    openItem(message.itemId, { newTab: Boolean(message.newTab) })
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Spotlight: open failed", err);

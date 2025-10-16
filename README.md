@@ -6,6 +6,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Fast in-memory index covering tabs, bookmarks, and up to 500 history entries.
 - Weighted scoring with support for exact, prefix, and fuzzy matches (edit distance ≤ 1).
 - Arrow-key navigation, Enter to open, and Esc/click outside to dismiss.
+- Cmd/Ctrl + Enter to open the highlighted result in a fresh tab and on-screen shortcut hints for quick discovery.
 - Optional `Alt+Space` shortcut.
 - Command `> reindex` to rebuild the local search index on demand.
 - All processing performed locally—no network calls.
