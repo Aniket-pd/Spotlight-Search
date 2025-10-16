@@ -39,6 +39,146 @@ function scheduleRebuild(delay = 600) {
   }, delay);
 }
 
+function countOpenTabsFromIndex(data) {
+  if (!data || !Array.isArray(data.items)) {
+    return 0;
+  }
+  let count = 0;
+  for (const item of data.items) {
+    if (item && item.type === "tab") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function buildQueryAugmentations(query, data, baseResults) {
+  const trimmed = (query || "").trim();
+  const lower = trimmed.toLowerCase();
+  const tabCount = countOpenTabsFromIndex(data);
+
+  if (!lower) {
+    return { results: baseResults, ghostSuggestion: "", ghostAnswer: "" };
+  }
+
+  const commands = [
+    {
+      suggestion: "tab",
+      answer: () => {
+        if (!tabCount) return "No open tabs";
+        return tabCount === 1 ? "1 open tab" : `${tabCount} open tabs`;
+      },
+    },
+    {
+      suggestion: "tab sort",
+      answer: () => "Sort tabs alphabetically",
+      result: {
+        id: "__command_tab_sort",
+        title: "Sort tabs by title",
+        subtitle: "Organize the current window's tabs alphabetically",
+        type: "command",
+        command: "tab-sort",
+        commandStart: "Sorting tabs...",
+        commandSuccess: "Tabs sorted",
+        commandError: "Unable to sort tabs",
+        score: Number.MAX_SAFE_INTEGER,
+      },
+      minResultLength: 4,
+    },
+  ];
+
+  const matches = [];
+  const commandResults = [];
+
+  for (const command of commands) {
+    const suggestionLower = command.suggestion.toLowerCase();
+    if (!suggestionLower.startsWith(lower)) {
+      continue;
+    }
+    if (lower.length > suggestionLower.length) {
+      continue;
+    }
+
+    const answerText = typeof command.answer === "function" ? command.answer() : command.answer;
+    matches.push({ suggestion: command.suggestion, answer: answerText });
+
+    if (command.result) {
+      const minLength = command.minResultLength || suggestionLower.length;
+      if (lower.length >= minLength) {
+        commandResults.push({ ...command.result });
+      }
+    }
+  }
+
+  if (matches.length > 0) {
+    matches.sort((a, b) => {
+      const diffA = a.suggestion.length - lower.length;
+      const diffB = b.suggestion.length - lower.length;
+      if (diffA !== diffB) {
+        return diffA - diffB;
+      }
+      return a.suggestion.length - b.suggestion.length;
+    });
+  }
+
+  const best = matches[0];
+  const ghostSuggestion = best ? best.suggestion : "";
+  const ghostAnswer = best ? best.answer || "" : "";
+
+  if (commandResults.length === 0) {
+    return { results: baseResults, ghostSuggestion, ghostAnswer };
+  }
+
+  return {
+    results: [...commandResults, ...baseResults],
+    ghostSuggestion,
+    ghostAnswer,
+  };
+}
+
+async function sortTabsByTitle() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return;
+  }
+
+  const pinnedTabs = tabs.filter((tab) => tab.pinned);
+  const unpinnedTabs = tabs.filter((tab) => !tab.pinned);
+  const pinnedCount = pinnedTabs.length;
+
+  unpinnedTabs.sort((a, b) => {
+    const titleA = (a.title || a.url || "").toLocaleLowerCase();
+    const titleB = (b.title || b.url || "").toLocaleLowerCase();
+    return titleA.localeCompare(titleB);
+  });
+
+  try {
+    for (let index = 0; index < unpinnedTabs.length; index += 1) {
+      const tab = unpinnedTabs[index];
+      const targetIndex = pinnedCount + index;
+      if (tab.index === targetIndex) {
+        continue;
+      }
+      if (tab.id === undefined) {
+        continue;
+      }
+      await chrome.tabs.move(tab.id, { index: targetIndex });
+    }
+  } catch (err) {
+    throw new Error(err?.message || "Failed to reorder tabs");
+  }
+}
+
+async function handleCommand(command) {
+  switch (command) {
+    case "tab-sort":
+      await sortTabsByTitle();
+      return;
+    default:
+      throw new Error(`Unknown command: ${command}`);
+  }
+}
+
 async function sendToggleMessage() {
   try {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -94,8 +234,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SPOTLIGHT_QUERY") {
     ensureIndex()
       .then((data) => {
-        const results = runSearch(message.query || "", data);
-        sendResponse({ results, requestId: message.requestId });
+        const baseResults = runSearch(message.query || "", data);
+        const augmented = buildQueryAugmentations(message.query || "", data, baseResults);
+        sendResponse({
+          results: augmented.results,
+          ghostSuggestion: augmented.ghostSuggestion,
+          ghostAnswer: augmented.ghostAnswer,
+          requestId: message.requestId,
+        });
       })
       .catch((err) => {
         console.error("Spotlight: query failed", err);
@@ -119,6 +265,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Spotlight: reindex failed", err);
+        sendResponse({ success: false, error: err?.message });
+      });
+    return true;
+  }
+
+  if (message.type === "SPOTLIGHT_COMMAND") {
+    handleCommand(message.command)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error("Spotlight: command failed", err);
         sendResponse({ success: false, error: err?.message });
       });
     return true;
