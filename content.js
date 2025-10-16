@@ -3,6 +3,9 @@ const RESULTS_LIMIT = 12;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
+let inputSurfaceEl = null;
+let ghostTextEl = null;
+let ghostAnswerEl = null;
 let resultsEl = null;
 let resultsState = [];
 let activeIndex = -1;
@@ -12,6 +15,8 @@ let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
 let statusEl = null;
+let ghostSuggestionState = "";
+let ghostAnswerState = "";
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -26,12 +31,25 @@ function createOverlay() {
 
   const inputWrapper = document.createElement("div");
   inputWrapper.className = "spotlight-input-wrapper";
+  inputSurfaceEl = document.createElement("div");
+  inputSurfaceEl.className = "spotlight-input-surface";
+
+  ghostTextEl = document.createElement("div");
+  ghostTextEl.className = "spotlight-ghost-text";
+  inputSurfaceEl.appendChild(ghostTextEl);
+
+  ghostAnswerEl = document.createElement("div");
+  ghostAnswerEl.className = "spotlight-ghost-answer";
+  inputSurfaceEl.appendChild(ghostAnswerEl);
+
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
   inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history...");
   inputEl.setAttribute("spellcheck", "false");
-  inputWrapper.appendChild(inputEl);
+  inputSurfaceEl.appendChild(inputEl);
+
+  inputWrapper.appendChild(inputSurfaceEl);
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
@@ -54,6 +72,16 @@ function createOverlay() {
 
   inputEl.addEventListener("input", handleInputChange);
   inputEl.addEventListener("keydown", handleInputKeydown);
+  inputEl.addEventListener("focus", () => {
+    if (inputSurfaceEl) {
+      inputSurfaceEl.classList.add("focused");
+    }
+  });
+  inputEl.addEventListener("blur", () => {
+    if (inputSurfaceEl) {
+      inputSurfaceEl.classList.remove("focused");
+    }
+  });
   document.addEventListener("keydown", handleGlobalKeydown, true);
 }
 
@@ -74,6 +102,7 @@ function openOverlay() {
   statusEl.textContent = "";
   resultsEl.innerHTML = "";
   inputEl.value = "";
+  setGhostState("", "");
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -94,6 +123,7 @@ function closeOverlay() {
     overlayEl.parentElement.removeChild(overlayEl);
   }
   document.body.style.overflow = bodyOverflowBackup;
+  setGhostState("", "");
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
@@ -132,8 +162,10 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  applyGhostState();
   if (query.trim() === "> reindex") {
     setStatus("Press Enter to rebuild index");
+    setGhostState("", "");
     resultsState = [];
     renderResults();
     return;
@@ -159,6 +191,9 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      if (response && response.ghostSuggestion !== undefined) {
+        setGhostState(response.ghostSuggestion, response.ghostAnswer);
+      }
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       activeIndex = resultsState.length > 0 ? 0 : -1;
       renderResults();
@@ -170,6 +205,41 @@ function setStatus(message) {
   if (statusEl) {
     statusEl.textContent = message || "";
   }
+}
+
+function applyGhostState() {
+  if (!inputEl || !ghostTextEl || !ghostAnswerEl) {
+    return;
+  }
+
+  const value = inputEl.value || "";
+  const normalizedValue = value.toLowerCase();
+  const normalizedSuggestion = ghostSuggestionState.toLowerCase();
+  const hasTypedInput = value.trim().length > 0;
+
+  if (
+    hasTypedInput &&
+    ghostSuggestionState &&
+    normalizedSuggestion.startsWith(normalizedValue) &&
+    normalizedValue.length <= normalizedSuggestion.length
+  ) {
+    const remainder = ghostSuggestionState.slice(value.length);
+    ghostTextEl.textContent = `${value}${remainder}`;
+  } else {
+    ghostTextEl.textContent = "";
+  }
+
+  if (ghostSuggestionState && hasTypedInput && ghostAnswerState) {
+    ghostAnswerEl.textContent = ghostAnswerState;
+  } else {
+    ghostAnswerEl.textContent = "";
+  }
+}
+
+function setGhostState(suggestion, answer) {
+  ghostSuggestionState = suggestion || "";
+  ghostAnswerState = answer || "";
+  applyGhostState();
 }
 
 function navigateResults(delta) {
@@ -194,8 +264,32 @@ function updateActiveResult() {
 
 function openResult(result) {
   if (!result) return;
+  if (result.type === "command") {
+    executeCommand(result);
+    return;
+  }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   closeOverlay();
+}
+
+function executeCommand(result) {
+  if (!result || !result.command) {
+    return;
+  }
+  setStatus(result.commandStart || "Running command...");
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_COMMAND", command: result.command },
+    (response) => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        setStatus(result.commandError || "Command failed");
+        return;
+      }
+      setStatus(result.commandSuccess || "Command completed");
+      setTimeout(() => {
+        closeOverlay();
+      }, 180);
+    }
+  );
 }
 
 function renderResults() {
@@ -221,6 +315,9 @@ function renderResults() {
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
+    if (result.type === "command") {
+      li.classList.add("command");
+    }
 
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
@@ -231,7 +328,11 @@ function renderResults() {
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.url;
+    const subtitleText = result.subtitle || result.url || "";
+    url.textContent = subtitleText;
+    if (!subtitleText) {
+      url.classList.add("hidden");
+    }
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
@@ -290,6 +391,8 @@ function formatTypeLabel(type) {
       return "Bookmark";
     case "history":
       return "History";
+    case "command":
+      return "Command";
     default:
       return type || "";
   }
