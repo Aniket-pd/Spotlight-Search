@@ -72,6 +72,63 @@ async function openItem(itemId) {
   }
 }
 
+async function sortAllTabsAlphabetically() {
+  const tabs = await chrome.tabs.query({});
+  const windows = new Map();
+
+  for (const tab of tabs) {
+    if (!windows.has(tab.windowId)) {
+      windows.set(tab.windowId, []);
+    }
+    windows.get(tab.windowId).push(tab);
+  }
+
+  for (const [, windowTabs] of windows.entries()) {
+    const pinned = windowTabs
+      .filter((tab) => tab.pinned)
+      .sort((a, b) => a.index - b.index);
+    const unpinned = windowTabs
+      .filter((tab) => !tab.pinned)
+      .sort((a, b) => {
+        const titleA = (tabTitle(a) || "").toLowerCase();
+        const titleB = (tabTitle(b) || "").toLowerCase();
+        if (titleA !== titleB) {
+          return titleA.localeCompare(titleB);
+        }
+        const urlA = (a.url || "").toLowerCase();
+        const urlB = (b.url || "").toLowerCase();
+        return urlA.localeCompare(urlB);
+      });
+
+    let targetIndex = pinned.length;
+    for (const tab of unpinned) {
+      if (tab.index !== targetIndex) {
+        try {
+          await chrome.tabs.move(tab.id, { index: targetIndex });
+        } catch (err) {
+          console.warn("Spotlight: failed to move tab during sort", err);
+        }
+      }
+      targetIndex += 1;
+    }
+  }
+}
+
+function tabTitle(tab) {
+  return tab.title || tab.url || "";
+}
+
+async function executeCommand(commandId) {
+  switch (commandId) {
+    case "tab-sort":
+      await sortAllTabsAlphabetically();
+      scheduleRebuild(400);
+      return;
+    default:
+      throw new Error(`Unknown command: ${commandId}`);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   rebuildIndex();
 });
@@ -94,8 +151,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SPOTLIGHT_QUERY") {
     ensureIndex()
       .then((data) => {
-        const results = runSearch(message.query || "", data);
-        sendResponse({ results, requestId: message.requestId });
+        const payload = runSearch(message.query || "", data) || {};
+        if (!payload.results || !Array.isArray(payload.results)) {
+          payload.results = [];
+        }
+        sendResponse({ ...payload, requestId: message.requestId });
       })
       .catch((err) => {
         console.error("Spotlight: query failed", err);
@@ -119,6 +179,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Spotlight: reindex failed", err);
+        sendResponse({ success: false, error: err?.message });
+      });
+    return true;
+  }
+
+  if (message.type === "SPOTLIGHT_COMMAND") {
+    executeCommand(message.command)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error("Spotlight: command failed", err);
         sendResponse({ success: false, error: err?.message });
       });
     return true;

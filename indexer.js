@@ -155,10 +155,15 @@ export async function buildIndex() {
   }
   buckets["*"] = Array.from(allTerms);
 
+  const metadata = {
+    tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+  };
+
   return {
     items,
     index: indexMap,
     termBuckets: buckets,
+    metadata,
     createdAt: Date.now(),
   };
 }

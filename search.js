@@ -5,11 +5,39 @@ const EXACT_BOOST = 1;
 const PREFIX_BOOST = 0.7;
 const FUZZY_BOOST = 0.45;
 const TAB_BOOST_SHORT_QUERY = 2.5;
+const COMMAND_SCORE = Number.POSITIVE_INFINITY;
 const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
   history: 2,
 };
+
+const COMMANDS = [
+  {
+    id: "command:tab-sort",
+    title: "Tab sort",
+    aliases: ["sort tabs", "tabs sort", "sort tab", "tab order", "order tabs", "organize tabs"],
+    action: "tab-sort",
+    answer(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `Sorts all ${countLabel} alphabetically`;
+    },
+    description(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `${countLabel} · Alphabetical order`;
+    },
+    isAvailable(context) {
+      return context.tabCount > 0;
+    },
+  },
+];
+
+function formatTabCount(count) {
+  if (count === 1) {
+    return "1 tab";
+  }
+  return `${count} tabs`;
+}
 
 function computeRecencyBoost(item) {
   const now = Date.now();
@@ -75,9 +103,76 @@ function applyMatches(entry, multiplier, scores) {
   }
 }
 
+function compareResults(a, b) {
+  const aScore = typeof a.score === "number" ? a.score : 0;
+  const bScore = typeof b.score === "number" ? b.score : 0;
+
+  const aIsCommand = aScore === COMMAND_SCORE;
+  const bIsCommand = bScore === COMMAND_SCORE;
+
+  if (aIsCommand && !bIsCommand) return -1;
+  if (bIsCommand && !aIsCommand) return 1;
+
+  if (bScore !== aScore) return bScore - aScore;
+
+  if (a.type !== b.type) {
+    return (BASE_TYPE_SCORES[b.type] || 0) - (BASE_TYPE_SCORES[a.type] || 0);
+  }
+
+  const aTitle = a.title || "";
+  const bTitle = b.title || "";
+  return aTitle.localeCompare(bTitle);
+}
+
+function normalizeCommandToken(text = "") {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function findCommandMatch(query, context) {
+  const compactQuery = normalizeCommandToken(query);
+  if (!compactQuery) {
+    return null;
+  }
+
+  for (const command of COMMANDS) {
+    if (!command.isAvailable?.(context)) {
+      continue;
+    }
+    const phrases = [command.title, ...(command.aliases || [])];
+    const matched = phrases.some((phrase) => normalizeCommandToken(phrase).startsWith(compactQuery));
+    if (!matched) {
+      continue;
+    }
+    const answer = command.answer ? command.answer(context) : "";
+    const description = command.description ? command.description(context) : answer;
+    return {
+      ghostText: command.title,
+      answer,
+      result: {
+        id: command.id,
+        title: command.title,
+        url: description,
+        description,
+        type: "command",
+        command: command.action,
+        label: "Command",
+        score: COMMAND_SCORE,
+      },
+    };
+  }
+
+  return null;
+}
+
 export function runSearch(query, data) {
   const trimmed = (query || "").trim();
-  const { index, termBuckets, items } = data;
+  const { index, termBuckets, items, metadata = {} } = data;
+  const tabCount = typeof metadata.tabCount === "number"
+    ? metadata.tabCount
+    : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+
+  const commandContext = { tabCount };
+  const commandSuggestion = trimmed ? findCommandMatch(trimmed, commandContext) : null;
 
   if (!trimmed) {
     const tabs = items.filter((item) => item.type === "tab");
@@ -88,18 +183,22 @@ export function runSearch(query, data) {
       const bTime = b.lastAccessed || 0;
       return bTime - aTime;
     });
-    return tabs.slice(0, MAX_RESULTS).map((item) => ({
-      id: item.id,
-      title: item.title,
-      url: item.url,
-      type: item.type,
-      score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-    }));
+    return {
+      results: tabs.slice(0, MAX_RESULTS).map((item) => ({
+        id: item.id,
+        title: item.title,
+        url: item.url,
+        type: item.type,
+        score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
+      })),
+      ghost: null,
+      answer: "",
+    };
   }
 
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) {
-    return [];
+    return { results: [], ghost: null, answer: "" };
   }
 
   const scores = new Map();
@@ -143,13 +242,18 @@ export function runSearch(query, data) {
     });
   }
 
-  results.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (a.type !== b.type) {
-      return (BASE_TYPE_SCORES[b.type] || 0) - (BASE_TYPE_SCORES[a.type] || 0);
-    }
-    return a.title.localeCompare(b.title);
-  });
+  if (commandSuggestion) {
+    results.push(commandSuggestion.result);
+  }
 
-  return results.slice(0, MAX_RESULTS);
+  results.sort(compareResults);
+
+  const finalResults = results.slice(0, MAX_RESULTS);
+  const hasCommand = commandSuggestion && finalResults.includes(commandSuggestion.result);
+
+  return {
+    results: finalResults,
+    ghost: hasCommand ? { text: commandSuggestion.ghostText } : null,
+    answer: hasCommand ? commandSuggestion.answer : "",
+  };
 }

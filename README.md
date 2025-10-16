@@ -7,6 +7,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Weighted scoring with support for exact, prefix, and fuzzy matches (edit distance ≤ 1).
 - Arrow-key navigation, Enter to open, and Esc/click outside to dismiss.
 - Optional `Alt+Space` shortcut.
+- Command suggestions with inline ghost completions and contextual answers (e.g., tab count for "Tab sort").
 - Command `> reindex` to rebuild the local search index on demand.
 - All processing performed locally—no network calls.
 

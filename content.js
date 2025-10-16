@@ -12,6 +12,10 @@ let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
 let statusEl = null;
+let ghostEl = null;
+let inputContainerEl = null;
+let ghostSuggestionText = "";
+let statusSticky = false;
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -26,12 +30,21 @@ function createOverlay() {
 
   const inputWrapper = document.createElement("div");
   inputWrapper.className = "spotlight-input-wrapper";
+  inputContainerEl = document.createElement("div");
+  inputContainerEl.className = "spotlight-input-container";
+
+  ghostEl = document.createElement("div");
+  ghostEl.className = "spotlight-ghost";
+  ghostEl.textContent = "";
+  inputContainerEl.appendChild(ghostEl);
+
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
   inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history...");
   inputEl.setAttribute("spellcheck", "false");
-  inputWrapper.appendChild(inputEl);
+  inputContainerEl.appendChild(inputEl);
+  inputWrapper.appendChild(inputContainerEl);
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
@@ -54,6 +67,16 @@ function createOverlay() {
 
   inputEl.addEventListener("input", handleInputChange);
   inputEl.addEventListener("keydown", handleInputKeydown);
+  inputEl.addEventListener("focus", () => {
+    if (inputContainerEl) {
+      inputContainerEl.classList.add("focused");
+    }
+  });
+  inputEl.addEventListener("blur", () => {
+    if (inputContainerEl) {
+      inputContainerEl.classList.remove("focused");
+    }
+  });
   document.addEventListener("keydown", handleGlobalKeydown, true);
 }
 
@@ -72,8 +95,10 @@ function openOverlay() {
   activeIndex = -1;
   resultsState = [];
   statusEl.textContent = "";
+  statusSticky = false;
   resultsEl.innerHTML = "";
   inputEl.value = "";
+  setGhostText("");
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -98,6 +123,8 @@ function closeOverlay() {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
   }
+  statusSticky = false;
+  setGhostText("");
 }
 
 function handleGlobalKeydown(event) {
@@ -114,10 +141,32 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  const selectionAtEnd =
+    inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
+  if (
+    ((event.key === "Tab" && !event.shiftKey) || event.key === "ArrowRight") &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    selectionAtEnd &&
+    ghostSuggestionText
+  ) {
+    const applied = applyGhostSuggestion();
+    if (applied) {
+      event.preventDefault();
+      return;
+    }
+  }
+
   if (event.key === "Enter") {
     const value = inputEl.value.trim();
     if (value === "> reindex") {
       triggerReindex();
+      return;
+    }
+    if ((!resultsState.length || activeIndex < 0) && ghostSuggestionText) {
+      event.preventDefault();
+      applyGhostSuggestion();
       return;
     }
     if (resultsState.length > 0 && activeIndex >= 0) {
@@ -132,13 +181,17 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
-  if (query.trim() === "> reindex") {
-    setStatus("Press Enter to rebuild index");
+  const trimmed = query.trim();
+  if (trimmed === "> reindex") {
+    lastRequestId = ++requestCounter;
+    setStatus("Press Enter to rebuild index", { sticky: true, force: true });
+    setGhostText("");
     resultsState = [];
     renderResults();
     return;
   }
-  setStatus("");
+  setStatus("", { force: true });
+  setGhostText("");
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
   }
@@ -154,6 +207,10 @@ function requestResults(query) {
     (response) => {
       if (chrome.runtime.lastError) {
         console.error("Spotlight query error", chrome.runtime.lastError);
+        if (inputEl.value.trim() !== "> reindex") {
+          setGhostText("");
+          setStatus("", { force: true });
+        }
         return;
       }
       if (!response || response.requestId !== lastRequestId) {
@@ -162,14 +219,89 @@ function requestResults(query) {
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       activeIndex = resultsState.length > 0 ? 0 : -1;
       renderResults();
+
+      const trimmed = inputEl.value.trim();
+      if (trimmed === "> reindex") {
+        setGhostText("");
+        return;
+      }
+
+      const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
+      const answer = typeof response.answer === "string" ? response.answer : "";
+      setGhostText(ghost);
+      if (answer) {
+        setStatus(answer, { force: true });
+      } else if (!ghostSuggestionText) {
+        setStatus("", { force: true });
+      }
     }
   );
 }
 
-function setStatus(message) {
+function setStatus(message, options = {}) {
+  const opts = typeof options === "boolean" ? { sticky: options } : options;
+  const { sticky = false, force = false } = opts;
+
+  if (statusSticky && !force && !sticky) {
+    return;
+  }
+
+  statusSticky = Boolean(sticky && message);
+
   if (statusEl) {
     statusEl.textContent = message || "";
   }
+
+  if (!message && !sticky) {
+    statusSticky = false;
+  }
+}
+
+function matchesGhostPrefix(value, suggestion) {
+  if (!value || !suggestion) return false;
+  const compactValue = value.toLowerCase().replace(/\s+/g, "");
+  const compactSuggestion = suggestion.toLowerCase().replace(/\s+/g, "");
+  if (!compactValue) return false;
+  return compactSuggestion.startsWith(compactValue);
+}
+
+function setGhostText(text) {
+  if (!ghostEl || !inputEl) {
+    ghostSuggestionText = "";
+    return;
+  }
+
+  const value = inputEl.value;
+  let suggestion = text && matchesGhostPrefix(value, text) ? text : "";
+  if (suggestion) {
+    const compactValue = value.toLowerCase().replace(/\s+/g, "");
+    const compactSuggestion = suggestion.toLowerCase().replace(/\s+/g, "");
+    if (compactValue === compactSuggestion) {
+      suggestion = "";
+    }
+  }
+  ghostSuggestionText = suggestion;
+  ghostEl.textContent = suggestion;
+  ghostEl.classList.toggle("visible", Boolean(suggestion));
+}
+
+function applyGhostSuggestion() {
+  if (!ghostSuggestionText || !inputEl) {
+    return false;
+  }
+  if (!matchesGhostPrefix(inputEl.value, ghostSuggestionText)) {
+    setGhostText("");
+    return false;
+  }
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  inputEl.value = ghostSuggestionText;
+  inputEl.setSelectionRange(ghostSuggestionText.length, ghostSuggestionText.length);
+  setGhostText("");
+  requestResults(inputEl.value);
+  return true;
 }
 
 function navigateResults(delta) {
@@ -194,7 +326,11 @@ function updateActiveResult() {
 
 function openResult(result) {
   if (!result) return;
-  chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  if (result.type === "command") {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_COMMAND", command: result.command });
+  } else {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  }
   closeOverlay();
 }
 
@@ -231,11 +367,11 @@ function renderResults() {
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.url;
+    url.textContent = result.description || result.url || "";
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
-    type.textContent = formatTypeLabel(result.type);
+    type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
     meta.appendChild(type);
@@ -256,6 +392,10 @@ function renderResults() {
       openResult(result);
     });
 
+    if (result.type === "command") {
+      li.classList.add("spotlight-result-command");
+    }
+
     resultsEl.appendChild(li);
   });
 
@@ -267,22 +407,22 @@ function renderResults() {
 }
 
 function triggerReindex() {
-  setStatus("Rebuilding index...");
+  setStatus("Rebuilding index...", { sticky: true, force: true });
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_REINDEX" }, (response) => {
     if (chrome.runtime.lastError) {
-      setStatus("Unable to rebuild index");
+      setStatus("Unable to rebuild index", { force: true });
       return;
     }
     if (response && response.success) {
-      setStatus("Index refreshed");
+      setStatus("Index refreshed", { force: true });
       requestResults(inputEl.value === "> reindex" ? "" : inputEl.value);
     } else {
-      setStatus("Rebuild failed");
+      setStatus("Rebuild failed", { force: true });
     }
   });
 }
 
-function formatTypeLabel(type) {
+function formatTypeLabel(type, result) {
   switch (type) {
     case "tab":
       return "Tab";
@@ -290,6 +430,8 @@ function formatTypeLabel(type) {
       return "Bookmark";
     case "history":
       return "History";
+    case "command":
+      return (result && result.label) || "Command";
     default:
       return type || "";
   }
