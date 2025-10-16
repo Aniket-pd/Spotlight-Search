@@ -164,6 +164,75 @@ function findCommandMatch(query, context) {
   return null;
 }
 
+function normalizeGhostValue(text = "") {
+  return text.toLowerCase().replace(/\s+/g, "");
+}
+
+function appendCandidate(list, seen, value) {
+  if (!value) return;
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  const key = trimmed.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  list.push(trimmed);
+}
+
+function collectGhostCandidates(result) {
+  const candidates = [];
+  const seen = new Set();
+
+  appendCandidate(candidates, seen, result.title);
+  appendCandidate(candidates, seen, result.url);
+
+  if (result.url) {
+    try {
+      const url = new URL(result.url);
+      appendCandidate(candidates, seen, url.hostname);
+      const hostPath = `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+      appendCandidate(candidates, seen, hostPath);
+    } catch (err) {
+      // Ignore malformed URLs when building ghost candidates.
+    }
+  }
+
+  return candidates;
+}
+
+function findGhostSuggestionForResult(query, result) {
+  const normalizedQuery = normalizeGhostValue(query);
+  if (!normalizedQuery) return null;
+
+  const candidates = collectGhostCandidates(result);
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeGhostValue(candidate);
+    if (normalizedCandidate && normalizedCandidate.startsWith(normalizedQuery)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function findGhostSuggestion(query, results) {
+  const normalizedQuery = normalizeGhostValue(query);
+  if (!normalizedQuery) {
+    return null;
+  }
+
+  for (const result of results) {
+    if (!result || result.type === "command") {
+      continue;
+    }
+    const suggestion = findGhostSuggestionForResult(query, result);
+    if (suggestion) {
+      return { text: suggestion, answer: "" };
+    }
+  }
+
+  return null;
+}
+
 export function runSearch(query, data) {
   const trimmed = (query || "").trim();
   const { index, termBuckets, items, metadata = {} } = data;
@@ -250,10 +319,15 @@ export function runSearch(query, data) {
 
   const finalResults = results.slice(0, MAX_RESULTS);
   const hasCommand = commandSuggestion && finalResults.includes(commandSuggestion.result);
+  const generalGhost = hasCommand ? null : findGhostSuggestion(trimmed, finalResults);
 
   return {
     results: finalResults,
-    ghost: hasCommand ? { text: commandSuggestion.ghostText } : null,
-    answer: hasCommand ? commandSuggestion.answer : "",
+    ghost: hasCommand
+      ? { text: commandSuggestion.ghostText }
+      : generalGhost,
+    answer: hasCommand
+      ? commandSuggestion.answer
+      : generalGhost?.answer || "",
   };
 }
