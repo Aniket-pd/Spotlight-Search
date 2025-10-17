@@ -20,14 +20,31 @@ const COMMANDS = [
     action: "tab-sort",
     answer(context) {
       const countLabel = formatTabCount(context.tabCount);
-      return `Sorts all ${countLabel} alphabetically`;
+      return `Sorts all ${countLabel} by domain and title`;
     },
     description(context) {
       const countLabel = formatTabCount(context.tabCount);
-      return `${countLabel} · Alphabetical order`;
+      return `${countLabel} · Domain + title order`;
     },
     isAvailable(context) {
       return context.tabCount > 0;
+    },
+  },
+  {
+    id: "command:tab-shuffle",
+    title: "Tab shuffle",
+    aliases: ["shuffle tabs", "tabs shuffle", "shuffle my tabs", "randomize tabs", "tab random"],
+    action: "tab-shuffle",
+    answer(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `Shuffles all ${countLabel} just for fun`;
+    },
+    description(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `${countLabel} · Random order`;
+    },
+    isAvailable(context) {
+      return context.tabCount > 1;
     },
   },
 ];

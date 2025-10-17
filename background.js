@@ -72,7 +72,47 @@ async function openItem(itemId) {
   }
 }
 
-async function sortAllTabsAlphabetically() {
+function tabTitle(tab) {
+  return tab.title || tab.url || "";
+}
+
+function tabDomain(tab) {
+  if (!tab.url) {
+    return "";
+  }
+  try {
+    const url = new URL(tab.url);
+    return url.hostname || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function compareTabsByDomainAndTitle(a, b) {
+  const domainA = tabDomain(a).toLowerCase();
+  const domainB = tabDomain(b).toLowerCase();
+  if (domainA !== domainB) {
+    return domainA.localeCompare(domainB);
+  }
+
+  const titleA = tabTitle(a).toLowerCase();
+  const titleB = tabTitle(b).toLowerCase();
+  if (titleA !== titleB) {
+    return titleA.localeCompare(titleB);
+  }
+
+  const urlA = (a.url || "").toLowerCase();
+  const urlB = (b.url || "").toLowerCase();
+  if (urlA !== urlB) {
+    return urlA.localeCompare(urlB);
+  }
+
+  const idA = a.id === undefined ? "" : String(a.id);
+  const idB = b.id === undefined ? "" : String(b.id);
+  return idA.localeCompare(idB);
+}
+
+async function sortAllTabsByDomainAndTitle() {
   const tabs = await chrome.tabs.query({});
   const windows = new Map();
 
@@ -89,16 +129,7 @@ async function sortAllTabsAlphabetically() {
       .sort((a, b) => a.index - b.index);
     const unpinned = windowTabs
       .filter((tab) => !tab.pinned)
-      .sort((a, b) => {
-        const titleA = (tabTitle(a) || "").toLowerCase();
-        const titleB = (tabTitle(b) || "").toLowerCase();
-        if (titleA !== titleB) {
-          return titleA.localeCompare(titleB);
-        }
-        const urlA = (a.url || "").toLowerCase();
-        const urlB = (b.url || "").toLowerCase();
-        return urlA.localeCompare(urlB);
-      });
+      .sort(compareTabsByDomainAndTitle);
 
     let targetIndex = pinned.length;
     for (const tab of unpinned) {
@@ -114,14 +145,53 @@ async function sortAllTabsAlphabetically() {
   }
 }
 
-function tabTitle(tab) {
-  return tab.title || tab.url || "";
+function shuffleInPlace(tabs) {
+  for (let i = tabs.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tabs[i], tabs[j]] = [tabs[j], tabs[i]];
+  }
+}
+
+async function shuffleTabs() {
+  const tabs = await chrome.tabs.query({});
+  const windows = new Map();
+
+  for (const tab of tabs) {
+    if (!windows.has(tab.windowId)) {
+      windows.set(tab.windowId, []);
+    }
+    windows.get(tab.windowId).push(tab);
+  }
+
+  for (const [, windowTabs] of windows.entries()) {
+    const pinned = windowTabs
+      .filter((tab) => tab.pinned)
+      .sort((a, b) => a.index - b.index);
+    const unpinned = windowTabs.filter((tab) => !tab.pinned);
+    shuffleInPlace(unpinned);
+
+    let targetIndex = pinned.length;
+    for (const tab of unpinned) {
+      if (tab.index !== targetIndex) {
+        try {
+          await chrome.tabs.move(tab.id, { index: targetIndex });
+        } catch (err) {
+          console.warn("Spotlight: failed to move tab during shuffle", err);
+        }
+      }
+      targetIndex += 1;
+    }
+  }
 }
 
 async function executeCommand(commandId) {
   switch (commandId) {
     case "tab-sort":
-      await sortAllTabsAlphabetically();
+      await sortAllTabsByDomainAndTitle();
+      scheduleRebuild(400);
+      return;
+    case "tab-shuffle":
+      await shuffleTabs();
       scheduleRebuild(400);
       return;
     default:
