@@ -17,6 +17,26 @@ let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 
+const iconCache = new Map();
+const pendingIconOrigins = new Set();
+let faviconQueue = [];
+let faviconProcessing = false;
+const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const PLACEHOLDER_COLORS = [
+  "#A5B4FC",
+  "#7DD3FC",
+  "#FBCFE8",
+  "#FDE68A",
+  "#FECACA",
+  "#C4B5FD",
+  "#BBF7D0",
+  "#F9A8D4",
+  "#FCA5A5",
+  "#FDBA74",
+  "#F97316",
+  "#FBBF24",
+];
+
 function createOverlay() {
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
@@ -217,6 +237,7 @@ function requestResults(query) {
         return;
       }
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
+      applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       renderResults();
 
@@ -361,14 +382,17 @@ function renderResults() {
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
+    li.dataset.resultId = String(result.id);
+    const origin = getResultOrigin(result);
+    if (origin) {
+      li.dataset.origin = origin;
+    } else {
+      delete li.dataset.origin;
+    }
 
-    if (result.faviconUrl) {
-      const icon = document.createElement("img");
-      icon.className = "spotlight-result-icon";
-      icon.src = result.faviconUrl;
-      icon.alt = "";
-      icon.referrerPolicy = "no-referrer";
-      li.appendChild(icon);
+    const iconEl = createIconElement(result);
+    if (iconEl) {
+      li.appendChild(iconEl);
     }
 
     const body = document.createElement("div");
@@ -422,6 +446,7 @@ function renderResults() {
   if (activeIndex < 0 && resultsState.length > 0) {
     activeIndex = 0;
   }
+  enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
   updateActiveResult();
 }
 
@@ -454,6 +479,294 @@ function formatTypeLabel(type, result) {
     default:
       return type || "";
   }
+}
+
+function scheduleIdleWork(callback) {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(callback, { timeout: 500 });
+  } else {
+    setTimeout(callback, 32);
+  }
+}
+
+function getResultOrigin(result) {
+  if (!result) return "";
+  if (result.type === "command") {
+    return typeof result.origin === "string" ? result.origin : "";
+  }
+  if (typeof result.origin === "string" && result.origin) {
+    return result.origin;
+  }
+  const url = typeof result.url === "string" ? result.url : "";
+  if (!url) {
+    return "";
+  }
+  if (!/^https?:/i.test(url)) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url, window.location?.href || undefined);
+    const origin = parsed.origin || "";
+    if (origin && typeof result === "object") {
+      result.origin = origin;
+    }
+    return origin;
+  } catch (err) {
+    return "";
+  }
+}
+
+function getPlaceholderInitial(result) {
+  if (!result) return "";
+  const origin = getResultOrigin(result);
+  if (origin) {
+    const host = origin.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+    if (host) {
+      const letter = host[0];
+      if (letter && /[a-z0-9]/i.test(letter)) {
+        return letter.toUpperCase();
+      }
+    }
+  }
+  const title = typeof result.title === "string" && result.title.trim() ? result.title.trim() : "";
+  if (title) {
+    const letter = title[0];
+    if (letter && /[a-z0-9]/i.test(letter)) {
+      return letter.toUpperCase();
+    }
+  }
+  const url = typeof result.url === "string" && result.url.trim() ? result.url.trim() : "";
+  if (url) {
+    const letter = url.replace(/^https?:\/\//i, "")[0];
+    if (letter && /[a-z0-9]/i.test(letter)) {
+      return letter.toUpperCase();
+    }
+  }
+  return "";
+}
+
+function computePlaceholderColor(origin) {
+  if (!origin) {
+    return "rgba(148, 163, 184, 0.35)";
+  }
+  let hash = 0;
+  for (let i = 0; i < origin.length; i += 1) {
+    hash = (hash << 5) - hash + origin.charCodeAt(i);
+    hash |= 0; // eslint-disable-line no-bitwise
+  }
+  const index = Math.abs(hash) % PLACEHOLDER_COLORS.length;
+  return PLACEHOLDER_COLORS[index];
+}
+
+function createPlaceholderElement(result) {
+  const placeholder = document.createElement("div");
+  placeholder.className = "spotlight-result-placeholder";
+  const origin = getResultOrigin(result);
+  const initial = getPlaceholderInitial(result);
+  if (initial) {
+    placeholder.textContent = initial;
+    placeholder.classList.add("has-initial");
+  } else {
+    const fallback = document.createElement("img");
+    fallback.className = "spotlight-result-placeholder-img";
+    fallback.src = DEFAULT_ICON_URL;
+    fallback.alt = "";
+    fallback.referrerPolicy = "no-referrer";
+    placeholder.appendChild(fallback);
+  }
+  const color = computePlaceholderColor(origin);
+  placeholder.style.backgroundColor = color;
+  return placeholder;
+}
+
+function createIconImage(src) {
+  const image = document.createElement("img");
+  image.className = "spotlight-result-icon-img";
+  image.src = src;
+  image.alt = "";
+  image.referrerPolicy = "no-referrer";
+  return image;
+}
+
+function createIconElement(result) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "spotlight-result-icon";
+  const origin = getResultOrigin(result);
+  const cached = origin ? iconCache.get(origin) : null;
+  const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
+  if (src) {
+    wrapper.appendChild(createIconImage(src));
+  } else {
+    wrapper.appendChild(createPlaceholderElement(result));
+  }
+  return wrapper;
+}
+
+function applyCachedFavicons(results) {
+  if (!Array.isArray(results)) {
+    return;
+  }
+  results.forEach((result) => {
+    if (!result) return;
+    const origin = getResultOrigin(result);
+    if (!origin) return;
+    if (iconCache.has(origin)) {
+      const cached = iconCache.get(origin);
+      result.faviconUrl = typeof cached === "string" && cached ? cached : null;
+    }
+  });
+}
+
+function shouldRequestFavicon(result) {
+  if (!result || result.type === "command") {
+    return false;
+  }
+  const origin = getResultOrigin(result);
+  if (!origin) {
+    return false;
+  }
+  if (iconCache.has(origin) || pendingIconOrigins.has(origin)) {
+    return false;
+  }
+  if (faviconQueue.some((task) => task.origin === origin)) {
+    return false;
+  }
+  const url = typeof result.url === "string" ? result.url : "";
+  if (!/^https?:/i.test(url)) {
+    return false;
+  }
+  return true;
+}
+
+function enqueueFavicons(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return;
+  }
+  const neededOrigins = new Set();
+  results.forEach((result) => {
+    const origin = getResultOrigin(result);
+    if (origin) {
+      neededOrigins.add(origin);
+    }
+  });
+  if (neededOrigins.size) {
+    faviconQueue = faviconQueue.filter((task) => neededOrigins.has(task.origin));
+  } else {
+    faviconQueue = [];
+  }
+  let added = false;
+  results.forEach((result) => {
+    if (!shouldRequestFavicon(result)) {
+      return;
+    }
+    const origin = getResultOrigin(result);
+    if (!origin) {
+      return;
+    }
+    faviconQueue.push({
+      origin,
+      itemId: result.id,
+      url: result.url,
+      type: result.type,
+      tabId: typeof result.tabId === "number" ? result.tabId : null,
+    });
+    added = true;
+  });
+  if (added) {
+    processFaviconQueue();
+  }
+}
+
+function updateResultsWithIcon(origin, faviconUrl) {
+  const normalizedOrigin = origin || "";
+  resultsState.forEach((result) => {
+    if (!result) return;
+    if ((getResultOrigin(result) || "") === normalizedOrigin) {
+      result.faviconUrl = faviconUrl || null;
+    }
+  });
+  applyIconToResults(normalizedOrigin, faviconUrl || null);
+}
+
+function processFaviconQueue() {
+  if (faviconProcessing || !faviconQueue.length) {
+    return;
+  }
+  faviconProcessing = true;
+
+  const runNext = () => {
+    if (!faviconQueue.length) {
+      faviconProcessing = false;
+      return;
+    }
+
+    const task = faviconQueue.shift();
+    if (!task) {
+      scheduleIdleWork(runNext);
+      return;
+    }
+
+    if (pendingIconOrigins.has(task.origin)) {
+      scheduleIdleWork(runNext);
+      return;
+    }
+
+    pendingIconOrigins.add(task.origin);
+
+    chrome.runtime.sendMessage(
+      {
+        type: "SPOTLIGHT_FAVICON",
+        itemId: task.itemId,
+        origin: task.origin,
+        url: task.url,
+        tabId: task.tabId,
+        resultType: task.type,
+      },
+      (response) => {
+        pendingIconOrigins.delete(task.origin);
+
+        if (chrome.runtime.lastError) {
+          scheduleIdleWork(runNext);
+          return;
+        }
+
+        const faviconUrl =
+          response && typeof response.faviconUrl === "string" && response.faviconUrl
+            ? response.faviconUrl
+            : null;
+        iconCache.set(task.origin, faviconUrl);
+        updateResultsWithIcon(task.origin, faviconUrl);
+        scheduleIdleWork(runNext);
+      }
+    );
+  };
+
+  scheduleIdleWork(runNext);
+}
+
+function applyIconToResults(origin, faviconUrl) {
+  if (!resultsEl) {
+    return;
+  }
+  const normalizedOrigin = origin || "";
+  const items = resultsEl.querySelectorAll("li");
+  items.forEach((itemEl) => {
+    if ((itemEl.dataset.origin || "") !== normalizedOrigin) {
+      return;
+    }
+    const iconContainer = itemEl.querySelector(".spotlight-result-icon");
+    if (!iconContainer) {
+      return;
+    }
+    iconContainer.innerHTML = "";
+    if (faviconUrl) {
+      iconContainer.appendChild(createIconImage(faviconUrl));
+      return;
+    }
+    const resultId = itemEl.dataset.resultId;
+    const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
+    iconContainer.appendChild(createPlaceholderElement(result || null));
+  });
 }
 
 chrome.runtime.onMessage.addListener((message) => {
