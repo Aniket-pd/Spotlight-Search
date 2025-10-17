@@ -12,6 +12,9 @@ const BASE_TYPE_SCORES = {
   history: 2,
 };
 
+const COMMAND_ICON_DATA_URL =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
+
 const STATIC_COMMANDS = [
   {
     id: "command:tab-sort",
@@ -187,6 +190,7 @@ function findBestStaticCommand(query, context) {
         command: command.action,
         label: "Command",
         score: COMMAND_SCORE,
+        faviconUrl: COMMAND_ICON_DATA_URL,
       },
     };
   }
@@ -286,6 +290,7 @@ function buildCloseTabResult(tab) {
     args: { tabId },
     label: "Command",
     score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
   };
 }
 
@@ -376,6 +381,7 @@ function collectCloseAllSuggestions(words, context) {
           args: {},
           label: "Command",
           score: COMMAND_SCORE,
+          faviconUrl: COMMAND_ICON_DATA_URL,
         },
       ],
       ghost: title,
@@ -401,6 +407,7 @@ function collectCloseAllSuggestions(words, context) {
       args: { domain },
       label: "Command",
       score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
     };
   });
 
@@ -558,6 +565,7 @@ export function runSearch(query, data) {
         url: item.url,
         type: item.type,
         score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
+        faviconUrl: item.faviconUrl,
       })),
       ghost: null,
       answer: "",
@@ -607,6 +615,7 @@ export function runSearch(query, data) {
       url: item.url,
       type: item.type,
       score: finalScore,
+      faviconUrl: item.faviconUrl,
     });
   }
 
