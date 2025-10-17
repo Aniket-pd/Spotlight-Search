@@ -327,7 +327,11 @@ function updateActiveResult() {
 function openResult(result) {
   if (!result) return;
   if (result.type === "command") {
-    chrome.runtime.sendMessage({ type: "SPOTLIGHT_COMMAND", command: result.command });
+    const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
+    if (result.args) {
+      payload.args = result.args;
+    }
+    chrome.runtime.sendMessage(payload);
   } else {
     chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   }

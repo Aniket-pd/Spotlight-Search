@@ -184,7 +184,67 @@ async function shuffleTabs() {
   }
 }
 
-async function executeCommand(commandId) {
+function getDomainFromUrl(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+async function closeTabById(tabId) {
+  if (typeof tabId !== "number") {
+    return;
+  }
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch (err) {
+    console.warn("Spotlight: failed to close tab", err);
+  }
+}
+
+async function closeAllTabsExceptActive() {
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const allTabs = await chrome.tabs.query({ currentWindow: true });
+    const toClose = allTabs
+      .filter((tab) => tab.id !== undefined && (!activeTab || tab.id !== activeTab.id))
+      .map((tab) => tab.id);
+    if (toClose.length) {
+      await chrome.tabs.remove(toClose);
+    }
+  } catch (err) {
+    console.warn("Spotlight: failed to close all tabs", err);
+  }
+}
+
+async function closeTabsByDomain(domain) {
+  if (!domain) {
+    return;
+  }
+  const normalized = domain.toLowerCase();
+  try {
+    const tabs = await chrome.tabs.query({});
+    const toClose = tabs
+      .filter((tab) => {
+        if (tab.id === undefined || !tab.url) {
+          return false;
+        }
+        const tabDomain = getDomainFromUrl(tab.url).toLowerCase();
+        return tabDomain === normalized;
+      })
+      .map((tab) => tab.id);
+    if (toClose.length) {
+      await chrome.tabs.remove(toClose);
+    }
+  } catch (err) {
+    console.warn("Spotlight: failed to close tabs by domain", err);
+  }
+}
+
+async function executeCommand(commandId, args = {}) {
   switch (commandId) {
     case "tab-sort":
       await sortAllTabsByDomainAndTitle();
@@ -192,6 +252,18 @@ async function executeCommand(commandId) {
       return;
     case "tab-shuffle":
       await shuffleTabs();
+      scheduleRebuild(400);
+      return;
+    case "tab-close":
+      await closeTabById(args.tabId);
+      scheduleRebuild(200);
+      return;
+    case "tab-close-all":
+      await closeAllTabsExceptActive();
+      scheduleRebuild(400);
+      return;
+    case "tab-close-domain":
+      await closeTabsByDomain(args.domain);
       scheduleRebuild(400);
       return;
     default:
@@ -255,7 +327,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "SPOTLIGHT_COMMAND") {
-    executeCommand(message.command)
+    executeCommand(message.command, message.args)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Spotlight: command failed", err);
