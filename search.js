@@ -12,7 +12,7 @@ const BASE_TYPE_SCORES = {
   history: 2,
 };
 
-const COMMANDS = [
+const STATIC_COMMANDS = [
   {
     id: "command:tab-sort",
     title: "Tab sort",
@@ -129,6 +129,13 @@ function compareResults(a, b) {
 
   if (aIsCommand && !bIsCommand) return -1;
   if (bIsCommand && !aIsCommand) return 1;
+  if (aIsCommand && bIsCommand) {
+    const aRank = typeof a.commandRank === "number" ? a.commandRank : Number.MAX_SAFE_INTEGER;
+    const bRank = typeof b.commandRank === "number" ? b.commandRank : Number.MAX_SAFE_INTEGER;
+    if (aRank !== bRank) {
+      return aRank - bRank;
+    }
+  }
 
   if (bScore !== aScore) return bScore - aScore;
 
@@ -145,13 +152,13 @@ function normalizeCommandToken(text = "") {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-function findCommandMatch(query, context) {
+function findBestStaticCommand(query, context) {
   const compactQuery = normalizeCommandToken(query);
   if (!compactQuery) {
     return null;
   }
 
-  for (const command of COMMANDS) {
+  for (const command of STATIC_COMMANDS) {
     if (!command.isAvailable?.(context)) {
       continue;
     }
@@ -179,6 +186,274 @@ function findCommandMatch(query, context) {
   }
 
   return null;
+}
+
+function getTabDomain(tab) {
+  if (!tab || !tab.url) return "";
+  try {
+    const url = new URL(tab.url);
+    return url.hostname || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function findMatchingTabsForCloseCommand(tabs, query) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const scored = [];
+
+  for (const tab of tabs) {
+    const title = (tab.title || "").toLowerCase();
+    const url = (tab.url || "").toLowerCase();
+    const domain = getTabDomain(tab).toLowerCase();
+    let score = 0;
+
+    if (!normalizedQuery) {
+      score = 1;
+    } else {
+      if (title.includes(normalizedQuery)) score += 4;
+      if (domain.includes(normalizedQuery)) score += 3;
+      if (url.includes(normalizedQuery)) score += 1;
+      if (title.startsWith(normalizedQuery)) score += 2;
+      if (domain.startsWith(normalizedQuery)) score += 2;
+    }
+
+    if (!score && normalizedQuery) {
+      continue;
+    }
+
+    if (tab.active) score += 0.5;
+    const recency = typeof tab.lastAccessed === "number" ? tab.lastAccessed : 0;
+    scored.push({ tab, score, recency });
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (b.recency || 0) - (a.recency || 0);
+  });
+
+  return scored.slice(0, 6).map((entry) => entry.tab);
+}
+
+function normalizeWord(word) {
+  return (word || "").toLowerCase();
+}
+
+function matchToken(word, target) {
+  const lowerWord = normalizeWord(word);
+  const lowerTarget = normalizeWord(target);
+  if (!lowerWord) return false;
+  return lowerTarget.startsWith(lowerWord) || lowerWord.startsWith(lowerTarget);
+}
+
+function formatWindowLabel(tab) {
+  if (typeof tab.windowId !== "number") {
+    return "";
+  }
+  return `Window ${tab.windowId}`;
+}
+
+function buildCloseTabResult(tab) {
+  const tabId = typeof tab.tabId === "number" ? tab.tabId : null;
+  if (tabId === null) {
+    return null;
+  }
+  const domain = getTabDomain(tab);
+  const windowLabel = formatWindowLabel(tab);
+  const descriptionParts = [];
+  if (domain) {
+    descriptionParts.push(domain);
+  }
+  if (windowLabel) {
+    descriptionParts.push(windowLabel);
+  }
+
+  const description = descriptionParts.join(" · ") || tab.url || "";
+
+  return {
+    id: `command:close-tab:${tab.tabId ?? tab.id}`,
+    title: `Close “${tab.title || tab.url || "Untitled"}”`,
+    url: description,
+    description,
+    type: "command",
+    command: "tab-close",
+    args: { tabId },
+    label: "Command",
+    score: COMMAND_SCORE,
+  };
+}
+
+function collectTabCloseSuggestions(query, context) {
+  const tabs = context.tabs || [];
+  if (!tabs.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const firstWord = normalizeWord(query.split(/\s+/)[0]);
+  const normalizedToken = normalizeCommandToken(query);
+  const looksLikeClose =
+    matchToken(firstWord, "close") ||
+    matchToken(normalizedToken, "close") ||
+    normalizeWord(query).startsWith("close");
+
+  if (!looksLikeClose) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const remainder = query.slice((query.match(/^\s*\S+/)?.[0] || "").length).trim();
+  const remainderWords = remainder.split(/\s+/).filter(Boolean);
+  const firstRemainder = normalizeWord(remainderWords[0]);
+
+  const looksLikeAll =
+    matchToken(firstRemainder, "all") ||
+    normalizeCommandToken(query).startsWith("closeall");
+  if (looksLikeAll) {
+    return collectCloseAllSuggestions(remainderWords.slice(1), context);
+  }
+
+  const matchingTabs = findMatchingTabsForCloseCommand(tabs, remainder);
+  if (!matchingTabs.length) {
+    return {
+      results: [],
+      ghost: remainder ? null : "Close all tabs",
+      answer: "",
+    };
+  }
+
+  const results = matchingTabs
+    .map((tab) => buildCloseTabResult(tab))
+    .filter(Boolean);
+  if (!results.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+  return {
+    results,
+    ghost: results[0]?.title || null,
+    answer: "",
+  };
+}
+
+function collectCloseAllSuggestions(words, context) {
+  const tabs = context.tabs || [];
+  const rest = words || [];
+  let remainingWords = rest.slice();
+
+  if (remainingWords.length) {
+    const first = normalizeWord(remainingWords[0]);
+    if (matchToken(first, "tabs")) {
+      remainingWords = remainingWords.slice(1);
+    }
+  }
+
+  const domainQuery = remainingWords.join(" ").trim();
+  if (!domainQuery) {
+    const activeTab = tabs.find((tab) => tab.active);
+    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
+    const windowTabs = windowId === null ? tabs : tabs.filter((tab) => tab.windowId === windowId);
+    const totalInWindow = windowTabs.length;
+    const closingCount = Math.max(totalInWindow - 1, 0);
+    const countLabel = formatTabCount(totalInWindow);
+    const title = "Close all tabs";
+    const description = `${countLabel} in window · Active tab stays open`;
+    const answer = closingCount === 0
+      ? "Only the active tab is open in this window."
+      : `Closes ${closingCount} other ${closingCount === 1 ? "tab" : "tabs"} in this window.`;
+    return {
+      results: [
+        {
+          id: "command:close-tabs-all",
+          title,
+          url: description,
+          description,
+          type: "command",
+          command: "tab-close-all",
+          args: {},
+          label: "Command",
+          score: COMMAND_SCORE,
+        },
+      ],
+      ghost: title,
+      answer,
+    };
+  }
+
+  const domainMatches = collectDomainMatches(tabs, domainQuery);
+  if (!domainMatches.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const results = domainMatches.map(({ domain, count }) => {
+    const title = `Close all ${count === 1 ? "tab" : "tabs"} from ${domain}`;
+    const description = `${count} ${count === 1 ? "tab" : "tabs"} · ${domain}`;
+    return {
+      id: `command:close-domain:${domain}`,
+      title,
+      url: description,
+      description,
+      type: "command",
+      command: "tab-close-domain",
+      args: { domain },
+      label: "Command",
+      score: COMMAND_SCORE,
+    };
+  });
+
+  return {
+    results,
+    ghost: results[0]?.title || null,
+    answer: `Closes ${results[0].description || "matching tabs"}.`,
+  };
+}
+
+function collectDomainMatches(tabs, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [];
+
+  const counts = new Map();
+  for (const tab of tabs) {
+    const domain = getTabDomain(tab);
+    if (!domain) continue;
+    const lowerDomain = domain.toLowerCase();
+    if (!lowerDomain.includes(normalized)) continue;
+    counts.set(domain, (counts.get(domain) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([domain, count]) => ({ domain, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.domain.localeCompare(b.domain);
+    })
+    .slice(0, 5);
+}
+
+function collectCommandSuggestions(query, context) {
+  const suggestions = [];
+  let ghost = null;
+  let answer = "";
+
+  const staticMatch = findBestStaticCommand(query, context);
+  if (staticMatch) {
+    const ranked = { ...staticMatch.result, commandRank: suggestions.length };
+    suggestions.push(ranked);
+    ghost = ghost || staticMatch.ghostText;
+    answer = answer || staticMatch.answer;
+  }
+
+  const closeSuggestions = collectTabCloseSuggestions(query, context);
+  if (closeSuggestions.results.length) {
+    closeSuggestions.results.forEach((result) => {
+      suggestions.push({ ...result, commandRank: suggestions.length });
+    });
+    if (!ghost && closeSuggestions.ghost) {
+      ghost = closeSuggestions.ghost;
+    }
+    if (!answer && closeSuggestions.answer) {
+      answer = closeSuggestions.answer;
+    }
+  }
+
+  return { results: suggestions, ghost, answer };
 }
 
 function normalizeGhostValue(text = "") {
@@ -257,8 +532,9 @@ export function runSearch(query, data) {
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
 
-  const commandContext = { tabCount };
-  const commandSuggestion = trimmed ? findCommandMatch(trimmed, commandContext) : null;
+  const tabs = items.filter((item) => item.type === "tab");
+  const commandContext = { tabCount, tabs };
+  const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
     const tabs = items.filter((item) => item.type === "tab");
@@ -328,23 +604,23 @@ export function runSearch(query, data) {
     });
   }
 
-  if (commandSuggestion) {
-    results.push(commandSuggestion.result);
+  if (commandSuggestions.results.length) {
+    results.push(...commandSuggestions.results);
   }
 
   results.sort(compareResults);
 
   const finalResults = results.slice(0, MAX_RESULTS);
-  const hasCommand = commandSuggestion && finalResults.includes(commandSuggestion.result);
+  const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE);
   const generalGhost = hasCommand ? null : findGhostSuggestion(trimmed, finalResults);
 
   return {
     results: finalResults,
     ghost: hasCommand
-      ? { text: commandSuggestion.ghostText }
+      ? (commandSuggestions.ghost ? { text: commandSuggestions.ghost } : null)
       : generalGhost,
     answer: hasCommand
-      ? commandSuggestion.answer
+      ? commandSuggestions.answer
       : generalGhost?.answer || "",
   };
 }
