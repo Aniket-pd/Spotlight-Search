@@ -4,6 +4,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 
 ## Features
 - Fast in-memory index covering tabs, bookmarks, and up to 500 history entries.
+- Scoped filters with `tab:`/`t:`, `bookmark:`/`b:`, and `history:`/`h:` prefixes to focus results.
 - Weighted scoring with support for exact, prefix, and fuzzy matches (edit distance ≤ 1).
 - Arrow-key navigation, Enter to open, and Esc/click outside to dismiss.
 - Optional `Alt+Space` shortcut.

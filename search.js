@@ -15,6 +15,12 @@ const BASE_TYPE_SCORES = {
 const COMMAND_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
 
+const FILTER_ALIASES = {
+  tab: ["tab:", "tabs:", "t:"],
+  bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
+  history: ["history:", "hist:", "h:"],
+};
+
 const STATIC_COMMANDS = [
   {
     id: "command:tab-sort",
@@ -538,8 +544,22 @@ function findGhostSuggestion(query, results) {
   return null;
 }
 
+function extractFilterPrefix(query) {
+  const lowerQuery = query.toLowerCase();
+  for (const [type, prefixes] of Object.entries(FILTER_ALIASES)) {
+    for (const prefix of prefixes) {
+      if (lowerQuery.startsWith(prefix)) {
+        return { filterType: type, remainder: query.slice(prefix.length) };
+      }
+    }
+  }
+  return { filterType: null, remainder: query };
+}
+
 export function runSearch(query, data) {
-  const trimmed = (query || "").trim();
+  const initial = (query || "").trim();
+  const { filterType, remainder } = extractFilterPrefix(initial);
+  const trimmed = remainder.trim();
   const { index, termBuckets, items, metadata = {} } = data;
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
@@ -550,16 +570,30 @@ export function runSearch(query, data) {
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
-    const tabs = items.filter((item) => item.type === "tab");
-    tabs.sort((a, b) => {
-      if (a.active && !b.active) return -1;
-      if (!a.active && b.active) return 1;
-      const aTime = a.lastAccessed || 0;
-      const bTime = b.lastAccessed || 0;
-      return bTime - aTime;
-    });
+    const defaultItems = filterType
+      ? items.filter((item) => item.type === filterType)
+      : items.filter((item) => item.type === "tab");
+
+    if (filterType === "tab" || !filterType) {
+      defaultItems.sort((a, b) => {
+        if (a.active && !b.active) return -1;
+        if (!a.active && b.active) return 1;
+        const aTime = a.lastAccessed || 0;
+        const bTime = b.lastAccessed || 0;
+        return bTime - aTime;
+      });
+    } else {
+      defaultItems.sort((a, b) => {
+        const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
+        const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
+        if (bScore !== aScore) return bScore - aScore;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
+    }
     return {
-      results: tabs.slice(0, MAX_RESULTS).map((item) => ({
+      results: defaultItems.slice(0, MAX_RESULTS).map((item) => ({
         id: item.id,
         title: item.title,
         url: item.url,
@@ -571,12 +605,13 @@ export function runSearch(query, data) {
       })),
       ghost: null,
       answer: "",
+      filter: filterType,
     };
   }
 
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) {
-    return { results: [], ghost: null, answer: "" };
+    return { results: [], ghost: null, answer: "", filter: filterType };
   }
 
   const scores = new Map();
@@ -607,6 +642,9 @@ export function runSearch(query, data) {
   for (const [itemId, score] of scores.entries()) {
     const item = items[itemId];
     if (!item) continue;
+    if (filterType && item.type !== filterType) {
+      continue;
+    }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
@@ -675,5 +713,6 @@ export function runSearch(query, data) {
     results: finalResults,
     ghost: ghostPayload,
     answer,
+    filter: filterType,
   };
 }

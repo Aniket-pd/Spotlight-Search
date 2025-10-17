@@ -18,6 +18,7 @@ let ghostEl = null;
 let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
+let activeFilter = null;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -63,7 +64,7 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history...");
+  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history… (try \"tab:\")");
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -124,6 +125,7 @@ function openOverlay() {
   resultsState = [];
   statusEl.textContent = "";
   statusSticky = false;
+  activeFilter = null;
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -152,6 +154,7 @@ function closeOverlay() {
     pendingQueryTimeout = null;
   }
   statusSticky = false;
+  activeFilter = null;
   setGhostText("");
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
@@ -250,6 +253,7 @@ function requestResults(query) {
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
+      activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
       renderResults();
 
       const trimmed = inputEl.value.trim();
@@ -261,8 +265,16 @@ function requestResults(query) {
       const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
       const answer = typeof response.answer === "string" ? response.answer : "";
       setGhostText(ghost);
+      const filterLabel = getFilterStatusLabel(activeFilter);
+      let statusMessage = "";
+      if (filterLabel) {
+        statusMessage = `Filtering ${filterLabel}`;
+      }
       if (answer) {
-        setStatus(answer, { force: true });
+        statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
+      }
+      if (statusMessage) {
+        setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
       } else if (!ghostSuggestionText) {
         setStatus("", { force: true });
       }
@@ -399,7 +411,9 @@ function renderResults() {
   if (!resultsState.length) {
     const li = document.createElement("li");
     li.className = "spotlight-result empty";
-    li.textContent = "No matches";
+    const scopeLabel = getFilterStatusLabel(activeFilter);
+    const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
+    li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
     resultsEl.appendChild(li);
     if (inputEl) {
       inputEl.removeAttribute("aria-activedescendant");
@@ -478,6 +492,19 @@ function renderResults() {
   }
   enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
   updateActiveResult();
+}
+
+function getFilterStatusLabel(type) {
+  switch (type) {
+    case "tab":
+      return "tabs";
+    case "bookmark":
+      return "bookmarks";
+    case "history":
+      return "history";
+    default:
+      return "";
+  }
 }
 
 function triggerReindex() {
