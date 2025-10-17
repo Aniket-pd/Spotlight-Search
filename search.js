@@ -540,6 +540,7 @@ function findGhostSuggestion(query, results) {
 
 export function runSearch(query, data) {
   const trimmed = (query || "").trim();
+  const tokens = trimmed ? tokenize(trimmed) : [];
   const { index, termBuckets, items, metadata = {} } = data;
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
@@ -571,12 +572,12 @@ export function runSearch(query, data) {
       })),
       ghost: null,
       answer: "",
+      tokens,
     };
   }
 
-  const tokens = tokenize(trimmed);
   if (tokens.length === 0) {
-    return { results: [], ghost: null, answer: "" };
+    return { results: [], ghost: null, answer: "", tokens };
   }
 
   const scores = new Map();
@@ -675,5 +676,6 @@ export function runSearch(query, data) {
     results: finalResults,
     ghost: ghostPayload,
     answer,
+    tokens,
   };
 }

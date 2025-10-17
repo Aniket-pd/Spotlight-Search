@@ -16,6 +16,7 @@ let ghostEl = null;
 let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
+let currentQueryTokens = [];
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -36,6 +37,71 @@ const PLACEHOLDER_COLORS = [
   "#F97316",
   "#FBBF24",
 ];
+
+function createHighlightedFragment(text, tokens) {
+  const fragment = document.createDocumentFragment();
+  const value = typeof text === "string" ? text : "";
+
+  if (!value) {
+    fragment.appendChild(document.createTextNode(""));
+    return fragment;
+  }
+
+  const normalizedTokens = Array.isArray(tokens)
+    ? Array.from(
+        new Set(
+          tokens
+            .filter((token) => typeof token === "string" && token.trim())
+            .map((token) => token.toLowerCase())
+        )
+      ).sort((a, b) => b.length - a.length)
+    : [];
+
+  if (!normalizedTokens.length) {
+    fragment.appendChild(document.createTextNode(value));
+    return fragment;
+  }
+
+  const pattern = normalizedTokens
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+
+  if (!pattern) {
+    fragment.appendChild(document.createTextNode(value));
+    return fragment;
+  }
+
+  const regex = new RegExp(pattern, "gi");
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      fragment.appendChild(document.createTextNode(value.slice(lastIndex, match.index)));
+    }
+
+    const span = document.createElement("span");
+    span.className = "spotlight-highlight";
+    span.textContent = value.slice(match.index, regex.lastIndex);
+    fragment.appendChild(span);
+
+    lastIndex = regex.lastIndex;
+
+    if (regex.lastIndex === match.index) {
+      regex.lastIndex += 1;
+    }
+  }
+
+  if (lastIndex < value.length) {
+    fragment.appendChild(document.createTextNode(value.slice(lastIndex)));
+  }
+
+  if (!fragment.childNodes.length) {
+    fragment.appendChild(document.createTextNode(value));
+  }
+
+  return fragment;
+}
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -114,6 +180,7 @@ function openOverlay() {
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
+  currentQueryTokens = [];
   statusEl.textContent = "";
   statusSticky = false;
   resultsEl.innerHTML = "";
@@ -144,6 +211,7 @@ function closeOverlay() {
     pendingQueryTimeout = null;
   }
   statusSticky = false;
+  currentQueryTokens = [];
   setGhostText("");
 }
 
@@ -206,6 +274,7 @@ function handleInputChange() {
     lastRequestId = ++requestCounter;
     setStatus("Press Enter to rebuild index", { sticky: true, force: true });
     setGhostText("");
+    currentQueryTokens = [];
     resultsState = [];
     renderResults();
     return;
@@ -231,18 +300,23 @@ function requestResults(query) {
           setGhostText("");
           setStatus("", { force: true });
         }
+        currentQueryTokens = [];
         return;
       }
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      const trimmedInput = inputEl.value.trim();
+      const sanitizedTokens = Array.isArray(response.tokens)
+        ? response.tokens.filter((token) => typeof token === "string" && token.trim())
+        : [];
+      currentQueryTokens = trimmedInput && trimmedInput !== "> reindex" ? sanitizedTokens : [];
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       renderResults();
 
-      const trimmed = inputEl.value.trim();
-      if (trimmed === "> reindex") {
+      if (trimmedInput === "> reindex") {
         setGhostText("");
         return;
       }
@@ -400,14 +474,24 @@ function renderResults() {
 
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
-    title.textContent = result.title || result.url;
+    const titleText = result.title || result.url || "";
+    if (currentQueryTokens.length && inputEl && inputEl.value.trim()) {
+      title.appendChild(createHighlightedFragment(titleText, currentQueryTokens));
+    } else {
+      title.textContent = titleText;
+    }
 
     const meta = document.createElement("div");
     meta.className = "spotlight-result-meta";
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
+    const urlText = result.description || result.url || "";
+    if (currentQueryTokens.length && inputEl && inputEl.value.trim()) {
+      url.appendChild(createHighlightedFragment(urlText, currentQueryTokens));
+    } else {
+      url.textContent = urlText;
+    }
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
