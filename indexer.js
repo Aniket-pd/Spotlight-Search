@@ -1,6 +1,7 @@
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
   return text
@@ -78,13 +79,31 @@ async function indexTabs(indexMap, termBuckets, items) {
   }
 }
 
-function collectBookmarkNodes(nodes, list = []) {
+function computeFolderKey(path = []) {
+  const parts = Array.isArray(path) ? path.filter(Boolean) : [];
+  if (!parts.length) {
+    return BOOKMARK_ROOT_FOLDER_KEY;
+  }
+  return parts.join("||");
+}
+
+function collectBookmarkNodes(nodes, list = [], path = []) {
   for (const node of nodes) {
+    const nodeTitle = typeof node.title === "string" ? node.title.trim() : "";
     if (node.url) {
-      list.push(node);
+      const folders = Array.isArray(path) ? path.filter(Boolean) : [];
+      list.push({
+        id: node.id,
+        url: node.url,
+        title: node.title,
+        dateAdded: node.dateAdded,
+        folders,
+        folderKey: computeFolderKey(folders),
+      });
     }
-    if (node.children) {
-      collectBookmarkNodes(node.children, list);
+    if (node.children && node.children.length) {
+      const nextPath = nodeTitle ? [...path, nodeTitle] : path;
+      collectBookmarkNodes(node.children, list, nextPath);
     }
   }
   return list;
@@ -104,6 +123,8 @@ async function indexBookmarks(indexMap, termBuckets, items) {
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
       origin: extractOrigin(bookmark.url),
+      folderPath: Array.isArray(bookmark.folders) ? bookmark.folders : [],
+      folderKey: bookmark.folderKey || computeFolderKey(bookmark.folders),
     });
 
     addToIndex(indexMap, termBuckets, itemId, bookmark.title, TAB_TITLE_WEIGHT);
