@@ -610,8 +610,45 @@ export function runSearch(query, data) {
 
   results.sort(compareResults);
 
-  const finalResults = results.slice(0, MAX_RESULTS);
-  const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE);
+  const prioritizedBuckets = {
+    command: [],
+    tab: [],
+    bookmark: [],
+    other: [],
+    history: [],
+  };
+
+  for (const result of results) {
+    if (!result) continue;
+    if (result.score === COMMAND_SCORE || result.type === "command") {
+      prioritizedBuckets.command.push(result);
+      continue;
+    }
+    if (result.type === "tab") {
+      prioritizedBuckets.tab.push(result);
+      continue;
+    }
+    if (result.type === "bookmark") {
+      prioritizedBuckets.bookmark.push(result);
+      continue;
+    }
+    if (result.type === "history") {
+      prioritizedBuckets.history.push(result);
+      continue;
+    }
+    prioritizedBuckets.other.push(result);
+  }
+
+  const prioritizedResults = [
+    ...prioritizedBuckets.command,
+    ...prioritizedBuckets.tab,
+    ...prioritizedBuckets.bookmark,
+    ...prioritizedBuckets.other,
+    ...prioritizedBuckets.history,
+  ];
+
+  const finalResults = prioritizedResults.slice(0, MAX_RESULTS);
+  const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE || result?.type === "command");
   const generalGhost = hasCommand ? null : findGhostSuggestion(trimmed, finalResults);
 
   return {
