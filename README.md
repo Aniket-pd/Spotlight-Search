@@ -15,7 +15,6 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
 
-
 ## Contextual Subfilters
 
 Spotlight presents filter-specific suggestions to help narrow results without typing extra operators:
@@ -35,7 +34,8 @@ Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a c
 
 ## Development Notes
 - Background indexing runs on startup and whenever tabs/bookmarks/history change.
-- The overlay UI lives in `content.js` with styles from `styles.css`.
-- Indexing and search logic reside in `indexer.js` and `search.js` respectively.
+- The background service worker is implemented in modular services under `src/background/` (index management, favicon resolution, and command execution).
+- The overlay UI lives in `src/content/index.js` with styles in `src/content/styles.css`.
+- Index construction utilities reside in `src/indexing/`, shared helpers in `src/common/`, and the search engine in `src/search/`.
 
 Enjoy lightning-fast, private browsing search!
