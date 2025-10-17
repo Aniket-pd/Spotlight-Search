@@ -4,6 +4,113 @@ import { runSearch } from "./search.js";
 let indexData = null;
 let buildingPromise = null;
 let rebuildTimer = null;
+const faviconCache = new Map();
+const pendingFavicons = new Map();
+
+function buildChromeFaviconUrl(url) {
+  if (!url) return null;
+  return `chrome://favicon/size/32@1x/${url}`;
+}
+
+function buildGoogleFaviconUrl(url) {
+  if (!url) return null;
+  return `https://www.google.com/s2/favicons?sz=32&domain_url=${encodeURIComponent(url)}`;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Failed to read favicon"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchDataUrl(candidateUrl) {
+  if (!candidateUrl) return null;
+  try {
+    const response = await fetch(candidateUrl);
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    return await blobToDataUrl(blob);
+  } catch (err) {
+    return null;
+  }
+}
+
+async function fetchFirstAvailableDataUrl(candidates) {
+  for (const candidate of candidates) {
+    const dataUrl = await fetchDataUrl(candidate);
+    if (dataUrl) {
+      return dataUrl;
+    }
+  }
+  return null;
+}
+
+async function fetchFaviconForSource(source) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  if (source.kind === "tab" && typeof source.tabId === "number") {
+    const candidates = [];
+    try {
+      const tab = await chrome.tabs.get(source.tabId);
+      if (tab?.favIconUrl) {
+        candidates.push(tab.favIconUrl);
+      }
+      if (tab?.url) {
+        candidates.push(buildChromeFaviconUrl(tab.url));
+        candidates.push(buildGoogleFaviconUrl(tab.url));
+      }
+    } catch (err) {
+      // tab might have closed; ignore
+    }
+    if (source.url) {
+      candidates.push(buildChromeFaviconUrl(source.url));
+      candidates.push(buildGoogleFaviconUrl(source.url));
+    }
+    return fetchFirstAvailableDataUrl(candidates);
+  }
+
+  if (source.kind === "url" && source.url) {
+    return fetchFirstAvailableDataUrl([
+      buildChromeFaviconUrl(source.url),
+      buildGoogleFaviconUrl(source.url),
+    ]);
+  }
+
+  return null;
+}
+
+async function resolveFavicon(iconKey, source) {
+  if (!iconKey || !source) {
+    return null;
+  }
+  if (faviconCache.has(iconKey)) {
+    return faviconCache.get(iconKey);
+  }
+  let pending = pendingFavicons.get(iconKey);
+  if (!pending) {
+    pending = fetchFaviconForSource(source)
+      .catch((err) => {
+        console.warn("Spotlight: favicon fetch failed", err);
+        return null;
+      })
+      .then((dataUrl) => {
+        pendingFavicons.delete(iconKey);
+        if (dataUrl) {
+          faviconCache.set(iconKey, dataUrl);
+        }
+        return dataUrl;
+      });
+    pendingFavicons.set(iconKey, pending);
+  }
+  return pending;
+}
 
 async function ensureIndex() {
   if (indexData) {
@@ -302,6 +409,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => {
         console.error("Spotlight: query failed", err);
         sendResponse({ results: [], error: true, requestId: message.requestId });
+      });
+    return true;
+  }
+
+  if (message.type === "SPOTLIGHT_FAVICON") {
+    const { iconKey, source } = message;
+    if (!iconKey || !source) {
+      sendResponse({ success: false, dataUrl: null });
+      return;
+    }
+    const cached = faviconCache.get(iconKey);
+    if (cached) {
+      sendResponse({ success: true, dataUrl: cached });
+      return;
+    }
+    resolveFavicon(iconKey, source)
+      .then((dataUrl) => {
+        if (dataUrl) {
+          sendResponse({ success: true, dataUrl });
+        } else {
+          sendResponse({ success: false, dataUrl: null });
+        }
+      })
+      .catch((err) => {
+        console.warn("Spotlight: favicon response failed", err);
+        sendResponse({ success: false, dataUrl: null });
       });
     return true;
   }

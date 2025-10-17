@@ -190,7 +190,7 @@ function findBestStaticCommand(query, context) {
         command: command.action,
         label: "Command",
         score: COMMAND_SCORE,
-        faviconUrl: COMMAND_ICON_DATA_URL,
+        icon: { url: COMMAND_ICON_DATA_URL },
       },
     };
   }
@@ -290,7 +290,7 @@ function buildCloseTabResult(tab) {
     args: { tabId },
     label: "Command",
     score: COMMAND_SCORE,
-    faviconUrl: COMMAND_ICON_DATA_URL,
+    icon: { url: COMMAND_ICON_DATA_URL },
   };
 }
 
@@ -381,7 +381,7 @@ function collectCloseAllSuggestions(words, context) {
           args: {},
           label: "Command",
           score: COMMAND_SCORE,
-          faviconUrl: COMMAND_ICON_DATA_URL,
+          icon: { url: COMMAND_ICON_DATA_URL },
         },
       ],
       ghost: title,
@@ -407,7 +407,7 @@ function collectCloseAllSuggestions(words, context) {
       args: { domain },
       label: "Command",
       score: COMMAND_SCORE,
-      faviconUrl: COMMAND_ICON_DATA_URL,
+      icon: { url: COMMAND_ICON_DATA_URL },
     };
   });
 
@@ -565,7 +565,7 @@ export function runSearch(query, data) {
         url: item.url,
         type: item.type,
         score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-        faviconUrl: item.faviconUrl,
+        icon: item.icon || null,
       })),
       ghost: null,
       answer: "",
@@ -615,7 +615,7 @@ export function runSearch(query, data) {
       url: item.url,
       type: item.type,
       score: finalScore,
-      faviconUrl: item.faviconUrl,
+      icon: item.icon || null,
     });
   }
 

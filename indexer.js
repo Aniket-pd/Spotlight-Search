@@ -40,21 +40,65 @@ function addToIndex(indexMap, termBuckets, itemId, text, weightMultiplier) {
   }
 }
 
+function getUrlOrigin(url) {
+  if (!url) return "";
+  try {
+    const { origin } = new URL(url);
+    return origin || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function createIconDescriptor(kind, metadata = {}) {
+  const url = typeof metadata.url === "string" ? metadata.url : "";
+  const origin = getUrlOrigin(url);
+  const baseKey = origin || url || (typeof metadata.tabId === "number" ? `tab:${metadata.tabId}` : "");
+  if (!baseKey) {
+    return null;
+  }
+
+  const key = `icon:${baseKey}`;
+  if (kind === "tab" && typeof metadata.tabId === "number") {
+    return {
+      key,
+      source: {
+        kind: "tab",
+        tabId: metadata.tabId,
+        url,
+      },
+    };
+  }
+
+  if (kind === "url" && url) {
+    return {
+      key,
+      source: {
+        kind: "url",
+        url,
+      },
+    };
+  }
+
+  return null;
+}
+
 async function indexTabs(indexMap, termBuckets, items) {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
     if (!tab.url || tab.url.startsWith("chrome://")) continue;
     const itemId = items.length;
+    const icon = createIconDescriptor("tab", { tabId: tab.id, url: tab.url });
     items.push({
       id: itemId,
       type: "tab",
       title: tab.title || tab.url,
       url: tab.url,
-      faviconUrl: tab.favIconUrl || (tab.url ? `chrome://favicon/size/32@1x/${tab.url}` : undefined),
       tabId: tab.id,
       windowId: tab.windowId,
       active: Boolean(tab.active),
       lastAccessed: tab.lastAccessed || Date.now(),
+      icon,
     });
 
     addToIndex(indexMap, termBuckets, itemId, tab.title, TAB_TITLE_WEIGHT);
@@ -86,14 +130,15 @@ async function indexBookmarks(indexMap, termBuckets, items) {
   for (const bookmark of bookmarks) {
     if (!bookmark.url) continue;
     const itemId = items.length;
+    const icon = createIconDescriptor("url", { url: bookmark.url });
     items.push({
       id: itemId,
       type: "bookmark",
       title: bookmark.title || bookmark.url,
       url: bookmark.url,
-      faviconUrl: bookmark.url ? `chrome://favicon/size/32@1x/${bookmark.url}` : undefined,
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
+      icon,
     });
 
     addToIndex(indexMap, termBuckets, itemId, bookmark.title, TAB_TITLE_WEIGHT);
@@ -117,14 +162,15 @@ async function indexHistory(indexMap, termBuckets, items) {
   for (const entry of historyItems) {
     if (!entry.url) continue;
     const itemId = items.length;
+    const icon = createIconDescriptor("url", { url: entry.url });
     items.push({
       id: itemId,
       type: "history",
       title: entry.title || entry.url,
       url: entry.url,
-      faviconUrl: entry.url ? `chrome://favicon/size/32@1x/${entry.url}` : undefined,
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
+      icon,
     });
 
     addToIndex(indexMap, termBuckets, itemId, entry.title, TAB_TITLE_WEIGHT);

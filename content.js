@@ -16,6 +16,185 @@ let ghostEl = null;
 let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
+const iconCache = new Map();
+const iconRequests = new Map();
+let iconElementsByKey = new Map();
+let iconPrefetchHandle = null;
+let iconPrefetchTimeout = null;
+
+function cancelIconPrefetch() {
+  if (iconPrefetchHandle !== null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(iconPrefetchHandle);
+  }
+  if (iconPrefetchTimeout !== null) {
+    clearTimeout(iconPrefetchTimeout);
+  }
+  iconPrefetchHandle = null;
+  iconPrefetchTimeout = null;
+}
+
+function hashString(value) {
+  const text = value || "";
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return hash >>> 0;
+}
+
+function getPlaceholderColor(seed) {
+  if (!seed) {
+    return "rgba(255, 255, 255, 0.1)";
+  }
+  const hash = hashString(seed);
+  const hue = hash % 360;
+  const saturation = 55 + (hash % 20);
+  const lightness = 42 + (hash % 10);
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+}
+
+function getPlaceholderInitial(result) {
+  const sourceText = (result?.title || result?.url || "").trim();
+  if (!sourceText) {
+    return "";
+  }
+  const alphanumericMatch = sourceText.match(/[A-Za-z0-9]/);
+  if (!alphanumericMatch) {
+    return "";
+  }
+  return alphanumericMatch[0].toUpperCase();
+}
+
+function createImageElement(src) {
+  const img = document.createElement("img");
+  img.className = "spotlight-result-icon";
+  img.src = src;
+  img.alt = "";
+  img.referrerPolicy = "no-referrer";
+  return img;
+}
+
+function createPlaceholderElement(result, key) {
+  const placeholder = document.createElement("div");
+  placeholder.className = "spotlight-result-icon-placeholder";
+  const seed = key || result?.url || result?.title || "";
+  placeholder.style.backgroundColor = getPlaceholderColor(seed);
+  const initial = document.createElement("span");
+  initial.className = "spotlight-result-icon-initial";
+  initial.textContent = getPlaceholderInitial(result) || "";
+  placeholder.appendChild(initial);
+  return placeholder;
+}
+
+function registerIconElement(key, wrapper) {
+  if (!key) return;
+  let set = iconElementsByKey.get(key);
+  if (!set) {
+    set = new Set();
+    iconElementsByKey.set(key, set);
+  }
+  set.add(wrapper);
+}
+
+function applyIconToWrappers(key, dataUrl) {
+  if (!key || !dataUrl) return;
+  const wrappers = iconElementsByKey.get(key);
+  if (!wrappers) return;
+  wrappers.forEach((wrapper) => {
+    if (!wrapper || !wrapper.isConnected) return;
+    wrapper.innerHTML = "";
+    wrapper.appendChild(createImageElement(dataUrl));
+  });
+}
+
+function createResultIconElement(result) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "spotlight-result-icon-wrapper";
+  const icon = result?.icon || null;
+  if (icon?.url) {
+    wrapper.appendChild(createImageElement(icon.url));
+    return wrapper;
+  }
+
+  const key = icon?.key || "";
+  if (key && iconCache.has(key)) {
+    wrapper.appendChild(createImageElement(iconCache.get(key)));
+    return wrapper;
+  }
+
+  wrapper.appendChild(createPlaceholderElement(result, key));
+  if (key && icon?.source) {
+    wrapper.dataset.iconKey = key;
+    registerIconElement(key, wrapper);
+  }
+  return wrapper;
+}
+
+function loadIconForResult(result) {
+  const icon = result?.icon || null;
+  if (!icon || !icon.key || !icon.source) {
+    return;
+  }
+  if (iconCache.has(icon.key) || iconRequests.has(icon.key)) {
+    return;
+  }
+
+  const requestPromise = new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "SPOTLIGHT_FAVICON", iconKey: icon.key, source: icon.source },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        if (!response || !response.success || !response.dataUrl) {
+          resolve(null);
+          return;
+        }
+        resolve(response.dataUrl);
+      }
+    );
+  });
+
+  iconRequests.set(icon.key, requestPromise);
+  requestPromise
+    .then((dataUrl) => {
+      if (dataUrl) {
+        iconCache.set(icon.key, dataUrl);
+        applyIconToWrappers(icon.key, dataUrl);
+      }
+    })
+    .finally(() => {
+      iconRequests.delete(icon.key);
+    });
+}
+
+function processIconPrefetch() {
+  iconPrefetchHandle = null;
+  iconPrefetchTimeout = null;
+  const count = Math.min(resultsState.length, RESULTS_LIMIT);
+  for (let index = 0; index < count; index += 1) {
+    loadIconForResult(resultsState[index]);
+  }
+}
+
+function scheduleIconPrefetch() {
+  if (!resultsState.length) {
+    cancelIconPrefetch();
+    return;
+  }
+  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+    if (iconPrefetchHandle !== null && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(iconPrefetchHandle);
+    }
+    iconPrefetchHandle = window.requestIdleCallback(processIconPrefetch, { timeout: 120 });
+  } else {
+    if (iconPrefetchTimeout !== null) {
+      clearTimeout(iconPrefetchTimeout);
+    }
+    iconPrefetchTimeout = setTimeout(processIconPrefetch, 50);
+  }
+}
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -125,6 +304,7 @@ function closeOverlay() {
   }
   statusSticky = false;
   setGhostText("");
+  cancelIconPrefetch();
 }
 
 function handleGlobalKeydown(event) {
@@ -188,6 +368,7 @@ function handleInputChange() {
     setGhostText("");
     resultsState = [];
     renderResults();
+    cancelIconPrefetch();
     return;
   }
   setStatus("", { force: true });
@@ -219,6 +400,11 @@ function requestResults(query) {
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
       activeIndex = resultsState.length > 0 ? 0 : -1;
       renderResults();
+      if (resultsState.length) {
+        scheduleIconPrefetch();
+      } else {
+        cancelIconPrefetch();
+      }
 
       const trimmed = inputEl.value.trim();
       if (trimmed === "> reindex") {
@@ -339,6 +525,7 @@ function openResult(result) {
 }
 
 function renderResults() {
+  iconElementsByKey = new Map();
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -362,13 +549,9 @@ function renderResults() {
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
 
-    if (result.faviconUrl) {
-      const icon = document.createElement("img");
-      icon.className = "spotlight-result-icon";
-      icon.src = result.faviconUrl;
-      icon.alt = "";
-      icon.referrerPolicy = "no-referrer";
-      li.appendChild(icon);
+    const iconEl = createResultIconElement(result);
+    if (iconEl) {
+      li.appendChild(iconEl);
     }
 
     const body = document.createElement("div");
