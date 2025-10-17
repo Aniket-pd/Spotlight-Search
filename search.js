@@ -565,7 +565,9 @@ export function runSearch(query, data) {
         url: item.url,
         type: item.type,
         score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-        faviconUrl: item.faviconUrl,
+        faviconUrl: item.faviconUrl || null,
+        origin: item.origin || "",
+        tabId: item.tabId,
       })),
       ghost: null,
       answer: "",
@@ -615,7 +617,9 @@ export function runSearch(query, data) {
       url: item.url,
       type: item.type,
       score: finalScore,
-      faviconUrl: item.faviconUrl,
+      faviconUrl: item.faviconUrl || null,
+      origin: item.origin || "",
+      tabId: item.tabId,
     });
   }
 

@@ -40,6 +40,16 @@ function addToIndex(indexMap, termBuckets, itemId, text, weightMultiplier) {
   }
 }
 
+function extractOrigin(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.origin || "";
+  } catch (err) {
+    return "";
+  }
+}
+
 async function indexTabs(indexMap, termBuckets, items) {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
@@ -50,11 +60,11 @@ async function indexTabs(indexMap, termBuckets, items) {
       type: "tab",
       title: tab.title || tab.url,
       url: tab.url,
-      faviconUrl: tab.favIconUrl || (tab.url ? `chrome://favicon/size/32@1x/${tab.url}` : undefined),
       tabId: tab.id,
       windowId: tab.windowId,
       active: Boolean(tab.active),
       lastAccessed: tab.lastAccessed || Date.now(),
+      origin: extractOrigin(tab.url),
     });
 
     addToIndex(indexMap, termBuckets, itemId, tab.title, TAB_TITLE_WEIGHT);
@@ -91,9 +101,9 @@ async function indexBookmarks(indexMap, termBuckets, items) {
       type: "bookmark",
       title: bookmark.title || bookmark.url,
       url: bookmark.url,
-      faviconUrl: bookmark.url ? `chrome://favicon/size/32@1x/${bookmark.url}` : undefined,
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
+      origin: extractOrigin(bookmark.url),
     });
 
     addToIndex(indexMap, termBuckets, itemId, bookmark.title, TAB_TITLE_WEIGHT);
@@ -122,9 +132,9 @@ async function indexHistory(indexMap, termBuckets, items) {
       type: "history",
       title: entry.title || entry.url,
       url: entry.url,
-      faviconUrl: entry.url ? `chrome://favicon/size/32@1x/${entry.url}` : undefined,
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
+      origin: extractOrigin(entry.url),
     });
 
     addToIndex(indexMap, termBuckets, itemId, entry.title, TAB_TITLE_WEIGHT);
