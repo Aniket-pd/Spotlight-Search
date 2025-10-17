@@ -19,6 +19,10 @@ let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
+let subfilterContainerEl = null;
+let subfilterScrollerEl = null;
+let subfilterState = { type: null, options: [], activeId: null };
+let selectedSubfilter = null;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -72,6 +76,15 @@ function createOverlay() {
   inputContainerEl.appendChild(inputEl);
   inputWrapper.appendChild(inputContainerEl);
 
+  subfilterContainerEl = document.createElement("div");
+  subfilterContainerEl.className = "spotlight-subfilters";
+  subfilterContainerEl.setAttribute("role", "group");
+  subfilterContainerEl.setAttribute("aria-label", "Subfilters");
+  subfilterScrollerEl = document.createElement("div");
+  subfilterScrollerEl.className = "spotlight-subfilters-scroll";
+  subfilterContainerEl.appendChild(subfilterScrollerEl);
+  inputWrapper.appendChild(subfilterContainerEl);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -87,6 +100,8 @@ function createOverlay() {
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
+
+  renderSubfilters();
 
   overlayEl.addEventListener("click", (event) => {
     if (event.target === overlayEl) {
@@ -109,6 +124,154 @@ function createOverlay() {
   document.addEventListener("keydown", handleGlobalKeydown, true);
 }
 
+function resetSubfilterState() {
+  subfilterState = { type: null, options: [], activeId: null };
+  selectedSubfilter = null;
+  renderSubfilters();
+}
+
+function updateSubfilterState(payload) {
+  if (!payload || typeof payload !== "object") {
+    resetSubfilterState();
+    return;
+  }
+
+  const { type, options = [], activeId } = payload;
+  if (!type || !Array.isArray(options)) {
+    resetSubfilterState();
+    return;
+  }
+
+  const sanitizedOptions = options
+    .map((option) => {
+      if (!option || typeof option.id !== "string") {
+        return null;
+      }
+      return {
+        id: option.id,
+        label: typeof option.label === "string" ? option.label : option.id,
+        hint: typeof option.hint === "string" ? option.hint : "",
+        count: typeof option.count === "number" ? option.count : null,
+      };
+    })
+    .filter(Boolean);
+
+  const hasNonAllOption = sanitizedOptions.some((option) => option.id !== "all");
+  if (!hasNonAllOption) {
+    resetSubfilterState();
+    return;
+  }
+
+  let resolvedActiveId = typeof activeId === "string" ? activeId : null;
+  if (!resolvedActiveId) {
+    resolvedActiveId = sanitizedOptions.find((option) => option.id === "all") ? "all" : sanitizedOptions[0]?.id || null;
+  }
+
+  subfilterState = { type, options: sanitizedOptions, activeId: resolvedActiveId };
+  if (resolvedActiveId && resolvedActiveId !== "all") {
+    selectedSubfilter = { type, id: resolvedActiveId };
+  } else {
+    selectedSubfilter = null;
+  }
+  renderSubfilters();
+}
+
+function getActiveSubfilterLabel() {
+  if (!subfilterState || !Array.isArray(subfilterState.options)) {
+    return "";
+  }
+  const activeId = subfilterState.activeId;
+  if (!activeId || activeId === "all") {
+    return "";
+  }
+  const option = subfilterState.options.find((entry) => entry && entry.id === activeId);
+  return option?.label || "";
+}
+
+function renderSubfilters() {
+  if (!subfilterContainerEl || !subfilterScrollerEl) {
+    return;
+  }
+
+  const options = Array.isArray(subfilterState.options) ? subfilterState.options : [];
+  const hasType = Boolean(subfilterState.type);
+  const hasNonAllOption = options.some((option) => option && option.id && option.id !== "all");
+  const shouldShow = hasType && hasNonAllOption;
+  subfilterContainerEl.classList.toggle("visible", shouldShow);
+  subfilterContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+
+  subfilterScrollerEl.innerHTML = "";
+  if (!shouldShow) {
+    return;
+  }
+
+  options.forEach((option) => {
+    if (!option || typeof option.id !== "string") {
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-subfilter";
+    button.dataset.id = option.id;
+    button.title = option.hint || option.label;
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "spotlight-subfilter-label";
+    labelSpan.textContent = option.label;
+    button.appendChild(labelSpan);
+
+    if (typeof option.count === "number" && option.count > 0) {
+      const countSpan = document.createElement("span");
+      countSpan.className = "spotlight-subfilter-count";
+      countSpan.textContent = String(option.count);
+      button.appendChild(countSpan);
+    }
+
+    const isActive = subfilterState.activeId ? subfilterState.activeId === option.id : option.id === "all";
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+
+    button.addEventListener("click", () => {
+      handleSubfilterClick(option);
+    });
+
+    subfilterScrollerEl.appendChild(button);
+  });
+}
+
+function handleSubfilterClick(option) {
+  if (!option || !subfilterState.type) {
+    return;
+  }
+
+  const currentId = subfilterState.activeId || "all";
+  const nextId = option.id;
+
+  if (nextId === currentId) {
+    if (nextId === "all") {
+      return;
+    }
+    subfilterState = { ...subfilterState, activeId: "all" };
+    selectedSubfilter = null;
+    renderSubfilters();
+    requestResults(inputEl.value);
+    return;
+  }
+
+  if (nextId === "all") {
+    subfilterState = { ...subfilterState, activeId: "all" };
+    selectedSubfilter = null;
+    renderSubfilters();
+    requestResults(inputEl.value);
+    return;
+  }
+
+  subfilterState = { ...subfilterState, activeId: nextId };
+  selectedSubfilter = { type: subfilterState.type, id: nextId };
+  renderSubfilters();
+  requestResults(inputEl.value);
+}
+
 function openOverlay() {
   if (isOpen) {
     inputEl.focus();
@@ -126,6 +289,7 @@ function openOverlay() {
   statusEl.textContent = "";
   statusSticky = false;
   activeFilter = null;
+  resetSubfilterState();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -155,6 +319,7 @@ function closeOverlay() {
   }
   statusSticky = false;
   activeFilter = null;
+  resetSubfilterState();
   setGhostText("");
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
@@ -236,8 +401,12 @@ function handleInputChange() {
 
 function requestResults(query) {
   lastRequestId = ++requestCounter;
+  const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
+  if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
+    message.subfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
+  }
   chrome.runtime.sendMessage(
-    { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId },
+    message,
     (response) => {
       if (chrome.runtime.lastError) {
         console.error("Spotlight query error", chrome.runtime.lastError);
@@ -255,6 +424,7 @@ function requestResults(query) {
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
       renderResults();
+      updateSubfilterState(response.subfilters);
 
       const trimmed = inputEl.value.trim();
       if (trimmed === "> reindex") {
@@ -266,9 +436,13 @@ function requestResults(query) {
       const answer = typeof response.answer === "string" ? response.answer : "";
       setGhostText(ghost);
       const filterLabel = getFilterStatusLabel(activeFilter);
+      const subfilterLabel = getActiveSubfilterLabel();
       let statusMessage = "";
       if (filterLabel) {
         statusMessage = `Filtering ${filterLabel}`;
+        if (subfilterLabel) {
+          statusMessage = `${statusMessage} · ${subfilterLabel}`;
+        }
       }
       if (answer) {
         statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;

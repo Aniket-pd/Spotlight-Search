@@ -399,7 +399,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SPOTLIGHT_QUERY") {
     ensureIndex()
       .then((data) => {
-        const payload = runSearch(message.query || "", data) || {};
+        const payload = runSearch(message.query || "", data, { subfilter: message.subfilter }) || {};
         if (!payload.results || !Array.isArray(payload.results)) {
           payload.results = [];
         }
