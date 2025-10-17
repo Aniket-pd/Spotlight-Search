@@ -1,4 +1,6 @@
 const OVERLAY_ID = "spotlight-overlay";
+const RESULTS_LIST_ID = "spotlight-results-list";
+const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
 const RESULTS_LIMIT = 12;
 let overlayEl = null;
 let containerEl = null;
@@ -63,17 +65,23 @@ function createOverlay() {
   inputEl.type = "text";
   inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history...");
   inputEl.setAttribute("spellcheck", "false");
+  inputEl.setAttribute("role", "combobox");
+  inputEl.setAttribute("aria-haspopup", "listbox");
+  inputEl.setAttribute("aria-autocomplete", "both");
   inputContainerEl.appendChild(inputEl);
   inputWrapper.appendChild(inputContainerEl);
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
+  statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
+  resultsEl.id = RESULTS_LIST_ID;
+  inputEl.setAttribute("aria-controls", RESULTS_LIST_ID);
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
@@ -145,6 +153,9 @@ function closeOverlay() {
   }
   statusSticky = false;
   setGhostText("");
+  if (inputEl) {
+    inputEl.removeAttribute("aria-activedescendant");
+  }
 }
 
 function handleGlobalKeydown(event) {
@@ -332,17 +343,29 @@ function navigateResults(delta) {
 }
 
 function updateActiveResult() {
+  if (!resultsEl || !inputEl) {
+    return;
+  }
   const items = resultsEl.querySelectorAll("li");
+  let activeItem = null;
   items.forEach((item, index) => {
-    if (index === activeIndex) {
-      item.classList.add("active");
-      item.setAttribute("aria-selected", "true");
-      item.scrollIntoView({ block: "nearest" });
+    const isActive = index === activeIndex;
+    item.classList.toggle("active", isActive);
+    if (item.getAttribute("role") === "option") {
+      item.setAttribute("aria-selected", isActive ? "true" : "false");
     } else {
-      item.classList.remove("active");
       item.removeAttribute("aria-selected");
     }
+    if (isActive) {
+      activeItem = item;
+      item.scrollIntoView({ block: "nearest" });
+    }
   });
+  if (activeItem && activeItem.id) {
+    inputEl.setAttribute("aria-activedescendant", activeItem.id);
+  } else {
+    inputEl.removeAttribute("aria-activedescendant");
+  }
 }
 
 function openResult(result) {
@@ -367,6 +390,9 @@ function renderResults() {
     li.className = "spotlight-result reindex";
     li.textContent = "Press Enter to rebuild the search index";
     resultsEl.appendChild(li);
+    if (inputEl) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
     return;
   }
 
@@ -375,6 +401,9 @@ function renderResults() {
     li.className = "spotlight-result empty";
     li.textContent = "No matches";
     resultsEl.appendChild(li);
+    if (inputEl) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
     return;
   }
 
@@ -382,6 +411,7 @@ function renderResults() {
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
+    li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
     li.dataset.resultId = String(result.id);
     const origin = getResultOrigin(result);
     if (origin) {
