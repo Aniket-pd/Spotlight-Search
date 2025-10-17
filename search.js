@@ -121,6 +121,12 @@ function applyMatches(entry, multiplier, scores) {
 }
 
 function compareResults(a, b) {
+  const aIsCommandType = a && a.type === "command";
+  const bIsCommandType = b && b.type === "command";
+
+  if (aIsCommandType && !bIsCommandType) return -1;
+  if (bIsCommandType && !aIsCommandType) return 1;
+
   const aScore = typeof a.score === "number" ? a.score : 0;
   const bScore = typeof b.score === "number" ? b.score : 0;
 
@@ -611,16 +617,50 @@ export function runSearch(query, data) {
   results.sort(compareResults);
 
   const finalResults = results.slice(0, MAX_RESULTS);
+  const topResult = finalResults[0] || null;
   const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE);
-  const generalGhost = hasCommand ? null : findGhostSuggestion(trimmed, finalResults);
+  let ghostPayload = null;
+  let answer = "";
+
+  const topIsCommand = Boolean(topResult && (topResult.type === "command" || topResult.score === COMMAND_SCORE));
+
+  if (topIsCommand) {
+    const commandGhostText = topResult.title || commandSuggestions.ghost || "";
+    ghostPayload = commandGhostText ? { text: commandGhostText } : null;
+    answer = commandSuggestions.answer || "";
+  } else if (topResult) {
+    const normalizedQuery = normalizeGhostValue(trimmed);
+    const topDisplay = topResult.title || topResult.url || "";
+    if (normalizedQuery && topDisplay && normalizeGhostValue(topDisplay).startsWith(normalizedQuery)) {
+      ghostPayload = { text: topDisplay };
+    } else {
+      const primarySuggestion = findGhostSuggestionForResult(trimmed, topResult);
+      if (primarySuggestion) {
+        ghostPayload = { text: primarySuggestion };
+      } else {
+        const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
+        if (fallbackGhost) {
+          ghostPayload = fallbackGhost;
+          answer = fallbackGhost.answer || "";
+        }
+      }
+    }
+  } else if (hasCommand && commandSuggestions.ghost) {
+    ghostPayload = { text: commandSuggestions.ghost };
+    answer = commandSuggestions.answer || "";
+  }
+
+  if (!ghostPayload && !hasCommand) {
+    const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
+    if (fallbackGhost) {
+      ghostPayload = fallbackGhost;
+      answer = fallbackGhost.answer || "";
+    }
+  }
 
   return {
     results: finalResults,
-    ghost: hasCommand
-      ? (commandSuggestions.ghost ? { text: commandSuggestions.ghost } : null)
-      : generalGhost,
-    answer: hasCommand
-      ? commandSuggestions.answer
-      : generalGhost?.answer || "",
+    ghost: ghostPayload,
+    answer,
   };
 }
