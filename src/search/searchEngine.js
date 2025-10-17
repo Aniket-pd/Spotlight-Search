@@ -1,4 +1,10 @@
-import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
+import { tokenize } from "../common/text.js";
+import {
+  buildSubfilterOptions,
+  sanitizeSubfilterSelection,
+  matchesSubfilter,
+  computeHistoryBoundaries,
+} from "./subfilters.js";
 
 const MAX_RESULTS = 12;
 const EXACT_BOOST = 1;
@@ -20,273 +26,6 @@ const FILTER_ALIASES = {
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
 };
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_SUBFILTER_OPTIONS = 12;
-const COMMON_SECOND_LEVEL_TLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "go", "ne", "or"]);
-
-function toStartOfDay(timestamp) {
-  const date = new Date(timestamp);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-function computeHistoryBoundaries(now = Date.now()) {
-  const startToday = toStartOfDay(now);
-  const startYesterday = startToday - DAY_MS;
-  const sevenDaysAgo = now - 7 * DAY_MS;
-  const thirtyDaysAgo = now - 30 * DAY_MS;
-  return {
-    startToday,
-    startYesterday,
-    sevenDaysAgo,
-    thirtyDaysAgo,
-  };
-}
-
-function matchesHistoryRange(timestamp, rangeId, boundaries) {
-  if (!timestamp) {
-    return false;
-  }
-  const { startToday, startYesterday, sevenDaysAgo, thirtyDaysAgo } = boundaries;
-  switch (rangeId) {
-    case "today":
-      return timestamp >= startToday;
-    case "yesterday":
-      return timestamp >= startYesterday && timestamp < startToday;
-    case "last7":
-      return timestamp >= sevenDaysAgo;
-    case "last30":
-      return timestamp >= thirtyDaysAgo;
-    case "older":
-      return timestamp > 0 && timestamp < thirtyDaysAgo;
-    default:
-      return true;
-  }
-}
-
-function buildHistorySubfilters() {
-  return [
-    { id: "all", label: "All History" },
-    { id: "today", label: "Today" },
-    { id: "yesterday", label: "Yesterday" },
-    { id: "last7", label: "Last 7 Days" },
-    { id: "last30", label: "Last 30 Days" },
-    { id: "older", label: "Older" },
-  ];
-}
-
-function extractHostname(url) {
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname || "";
-  } catch (err) {
-    return "";
-  }
-}
-
-function toTitleCase(text) {
-  if (!text) return "";
-  return text
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-function formatTokenLabel(token) {
-  if (!token) return "";
-  const cleaned = token.replace(/[-_]+/g, " ").trim();
-  if (!cleaned) {
-    return "";
-  }
-  const compact = cleaned.replace(/\s+/g, "");
-  if (compact.length <= 3) {
-    return cleaned.toUpperCase();
-  }
-  return toTitleCase(cleaned);
-}
-
-function formatDomainLabel(domain) {
-  if (!domain) return "Unknown";
-  const trimmed = domain.replace(/^www\./i, "");
-  const segments = trimmed.split(".").filter(Boolean);
-  if (!segments.length) {
-    return "Unknown";
-  }
-  if (segments.length === 1) {
-    return formatTokenLabel(segments[0]);
-  }
-  const last = segments[segments.length - 1];
-  const secondLast = segments[segments.length - 2];
-  const shortSecond = secondLast && secondLast.length <= 3;
-  if (segments.length >= 3 && (shortSecond || COMMON_SECOND_LEVEL_TLDS.has(secondLast))) {
-    const candidate = segments[segments.length - 3];
-    if (candidate) {
-      return formatTokenLabel(candidate);
-    }
-  }
-  return formatTokenLabel(secondLast) || formatTokenLabel(segments[0]);
-}
-
-function buildTabSubfilters(tabs) {
-  const counts = new Map();
-  for (const tab of tabs || []) {
-    const domain = extractHostname(tab.url);
-    if (!domain) continue;
-    counts.set(domain, (counts.get(domain) || 0) + 1);
-  }
-
-  const entries = Array.from(counts.entries())
-    .sort((a, b) => {
-      if (b[1] !== a[1]) return b[1] - a[1];
-      return a[0].localeCompare(b[0]);
-    })
-    .slice(0, MAX_SUBFILTER_OPTIONS);
-
-  const options = [{ id: "all", label: "All Tabs" }];
-  for (const [domain, count] of entries) {
-    options.push({
-      id: `domain:${domain}`,
-      label: formatDomainLabel(domain),
-      hint: domain,
-      count,
-    });
-  }
-  return options;
-}
-
-function formatFolderLabel(path) {
-  if (!Array.isArray(path) || !path.length) {
-    return "Unsorted";
-  }
-  const last = path[path.length - 1];
-  return last || "Unsorted";
-}
-
-function normalizeFolderKey(value) {
-  if (typeof value === "string" && value) {
-    return value;
-  }
-  return BOOKMARK_ROOT_FOLDER_KEY;
-}
-
-function buildBookmarkSubfilters(bookmarks) {
-  const counts = new Map();
-  for (const bookmark of bookmarks || []) {
-    const path = Array.isArray(bookmark.folderPath) ? bookmark.folderPath.filter(Boolean) : [];
-    const key = normalizeFolderKey(bookmark.folderKey);
-    const existing = counts.get(key) || { count: 0, path };
-    existing.count += 1;
-    if (!existing.path.length && path.length) {
-      existing.path = path;
-    }
-    counts.set(key, existing);
-  }
-
-  const options = [{ id: "all", label: "All Bookmarks" }];
-  const entries = Array.from(counts.entries())
-    .sort((a, b) => {
-      if (b[1].count !== a[1].count) return b[1].count - a[1].count;
-      const labelA = formatFolderLabel(a[1].path);
-      const labelB = formatFolderLabel(b[1].path);
-      return labelA.localeCompare(labelB);
-    })
-    .slice(0, MAX_SUBFILTER_OPTIONS);
-
-  for (const [key, info] of entries) {
-    const label = formatFolderLabel(info.path);
-    const hint = info.path.length > 1 ? info.path.join(" › ") : info.path[0] || label;
-    options.push({
-      id: `folder:${key}`,
-      label,
-      hint,
-      count: info.count,
-    });
-  }
-
-  return options;
-}
-
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
-  if (!filterType) {
-    return [];
-  }
-  if (filterType === "history") {
-    return buildHistorySubfilters();
-  }
-  if (filterType === "tab") {
-    return buildTabSubfilters(tabs);
-  }
-  if (filterType === "bookmark") {
-    return buildBookmarkSubfilters(bookmarks);
-  }
-  return [];
-}
-
-function sanitizeSubfilterSelection(filterType, requested, options) {
-  if (!filterType || !Array.isArray(options) || !options.length) {
-    return null;
-  }
-
-  const validIds = new Set(options.map((option) => option.id));
-  const requestedId =
-    requested &&
-    typeof requested === "object" &&
-    requested.type === filterType &&
-    typeof requested.id === "string"
-      ? requested.id
-      : null;
-
-  if (requestedId && validIds.has(requestedId)) {
-    return requestedId;
-  }
-
-  if (validIds.has("all")) {
-    return "all";
-  }
-
-  return options[0]?.id || null;
-}
-
-function matchesSubfilter(item, filterType, subfilterId, context) {
-  if (!filterType) {
-    return true;
-  }
-  if (!subfilterId || subfilterId === "all") {
-    return true;
-  }
-
-  if (filterType === "history") {
-    const boundaries = context?.historyBoundaries || computeHistoryBoundaries(Date.now());
-    const timestamp = typeof item?.lastVisitTime === "number" ? item.lastVisitTime : 0;
-    return matchesHistoryRange(timestamp, subfilterId, boundaries);
-  }
-
-  if (filterType === "tab") {
-    if (!subfilterId.startsWith("domain:")) {
-      return true;
-    }
-    const target = subfilterId.slice("domain:".length);
-    if (!target) {
-      return true;
-    }
-    const itemDomain = extractHostname(item?.url || "");
-    return itemDomain === target;
-  }
-
-  if (filterType === "bookmark") {
-    if (!subfilterId.startsWith("folder:")) {
-      return true;
-    }
-    const key = subfilterId.slice("folder:".length);
-    const itemKey = normalizeFolderKey(item?.folderKey);
-    return key === itemKey;
-  }
-
-  return true;
-}
 
 const STATIC_COMMANDS = [
   {
@@ -522,162 +261,38 @@ function normalizeWord(word) {
   return (word || "").toLowerCase();
 }
 
-function matchToken(word, target) {
-  const lowerWord = normalizeWord(word);
-  const lowerTarget = normalizeWord(target);
-  if (!lowerWord) return false;
-  return lowerTarget.startsWith(lowerWord) || lowerWord.startsWith(lowerTarget);
-}
-
-function formatWindowLabel(tab) {
-  if (typeof tab.windowId !== "number") {
-    return "";
-  }
-  return `Window ${tab.windowId}`;
-}
-
-function buildCloseTabResult(tab) {
-  const tabId = typeof tab.tabId === "number" ? tab.tabId : null;
-  if (tabId === null) {
-    return null;
-  }
+function formatTabLabel(tab) {
+  const title = tab.title || tab.url || "Untitled tab";
   const domain = getTabDomain(tab);
-  const windowLabel = formatWindowLabel(tab);
-  const descriptionParts = [];
-  if (domain) {
-    descriptionParts.push(domain);
+  if (!domain) {
+    return title;
   }
-  if (windowLabel) {
-    descriptionParts.push(windowLabel);
-  }
-
-  const description = descriptionParts.join(" · ") || tab.url || "";
-
-  return {
-    id: `command:close-tab:${tab.tabId ?? tab.id}`,
-    title: `Close “${tab.title || tab.url || "Untitled"}”`,
-    url: description,
-    description,
-    type: "command",
-    command: "tab-close",
-    args: { tabId },
-    label: "Command",
-    score: COMMAND_SCORE,
-    faviconUrl: COMMAND_ICON_DATA_URL,
-  };
+  return `${title} (${domain})`;
 }
 
 function collectTabCloseSuggestions(query, context) {
-  const tabs = context.tabs || [];
+  const tabs = context?.tabs || [];
   if (!tabs.length) {
     return { results: [], ghost: null, answer: "" };
   }
 
-  const firstWord = normalizeWord(query.split(/\s+/)[0]);
-  const normalizedToken = normalizeCommandToken(query);
-  const looksLikeClose =
-    matchToken(firstWord, "close") ||
-    matchToken(normalizedToken, "close") ||
-    normalizeWord(query).startsWith("close");
-
-  if (!looksLikeClose) {
+  const matches = findMatchingTabsForCloseCommand(tabs, query);
+  if (!matches.length) {
     return { results: [], ghost: null, answer: "" };
   }
 
-  const remainder = query.slice((query.match(/^\s*\S+/)?.[0] || "").length).trim();
-  const remainderWords = remainder.split(/\s+/).filter(Boolean);
-  const firstRemainder = normalizeWord(remainderWords[0]);
-
-  const looksLikeAll =
-    matchToken(firstRemainder, "all") ||
-    normalizeCommandToken(query).startsWith("closeall");
-  if (looksLikeAll) {
-    return collectCloseAllSuggestions(remainderWords.slice(1), context);
-  }
-
-  const matchingTabs = findMatchingTabsForCloseCommand(tabs, remainder);
-  if (!matchingTabs.length) {
+  const results = matches.map((tab, index) => {
+    const domain = getTabDomain(tab);
+    const title = formatTabLabel(tab);
+    const description = domain ? `Closes ${domain}` : "Close matching tab";
     return {
-      results: [],
-      ghost: remainder ? null : "Close all tabs",
-      answer: "",
-    };
-  }
-
-  const results = matchingTabs
-    .map((tab) => buildCloseTabResult(tab))
-    .filter(Boolean);
-  if (!results.length) {
-    return { results: [], ghost: null, answer: "" };
-  }
-  return {
-    results,
-    ghost: results[0]?.title || null,
-    answer: "",
-  };
-}
-
-function collectCloseAllSuggestions(words, context) {
-  const tabs = context.tabs || [];
-  const rest = words || [];
-  let remainingWords = rest.slice();
-
-  if (remainingWords.length) {
-    const first = normalizeWord(remainingWords[0]);
-    if (matchToken(first, "tabs")) {
-      remainingWords = remainingWords.slice(1);
-    }
-  }
-
-  const domainQuery = remainingWords.join(" ").trim();
-  if (!domainQuery) {
-    const activeTab = tabs.find((tab) => tab.active);
-    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
-    const windowTabs = windowId === null ? tabs : tabs.filter((tab) => tab.windowId === windowId);
-    const totalInWindow = windowTabs.length;
-    const closingCount = Math.max(totalInWindow - 1, 0);
-    const countLabel = formatTabCount(totalInWindow);
-    const title = "Close all tabs";
-    const description = `${countLabel} in window · Active tab stays open`;
-    const answer = closingCount === 0
-      ? "Only the active tab is open in this window."
-      : `Closes ${closingCount} other ${closingCount === 1 ? "tab" : "tabs"} in this window.`;
-    return {
-      results: [
-        {
-          id: "command:close-tabs-all",
-          title,
-          url: description,
-          description,
-          type: "command",
-          command: "tab-close-all",
-          args: {},
-          label: "Command",
-          score: COMMAND_SCORE,
-          faviconUrl: COMMAND_ICON_DATA_URL,
-        },
-      ],
-      ghost: title,
-      answer,
-    };
-  }
-
-  const domainMatches = collectDomainMatches(tabs, domainQuery);
-  if (!domainMatches.length) {
-    return { results: [], ghost: null, answer: "" };
-  }
-
-  const results = domainMatches.map(({ domain, count }) => {
-    const title = `Close all ${count === 1 ? "tab" : "tabs"} from ${domain}`;
-    const description = `${count} ${count === 1 ? "tab" : "tabs"} · ${domain}`;
-    return {
-      id: `command:close-domain:${domain}`,
+      id: `command:tab-close:${index}`,
       title,
-      url: description,
+      url: tab.url,
       description,
       type: "command",
-      command: "tab-close-domain",
-      args: { domain },
+      command: "tab-close",
+      args: { tabId: tab.id },
       label: "Command",
       score: COMMAND_SCORE,
       faviconUrl: COMMAND_ICON_DATA_URL,
@@ -687,7 +302,7 @@ function collectCloseAllSuggestions(words, context) {
   return {
     results,
     ghost: results[0]?.title || null,
-    answer: `Closes ${results[0].description || "matching tabs"}.`,
+    answer: `Closes ${results.length === 1 ? "the matching tab" : "matching tabs"}.`,
   };
 }
 
@@ -713,6 +328,41 @@ function collectDomainMatches(tabs, query) {
     .slice(0, 5);
 }
 
+function collectTabCloseByDomainSuggestions(query, context) {
+  const tabs = context?.tabs || [];
+  if (!tabs.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const domains = collectDomainMatches(tabs, query);
+  if (!domains.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const results = domains.map(({ domain, count }, index) => {
+    const label = `${domain} (${count})`;
+    const description = `Closes ${count} tab${count === 1 ? "" : "s"} from ${domain}`;
+    return {
+      id: `command:tab-close-domain:${index}`,
+      title: label,
+      url: description,
+      description,
+      type: "command",
+      command: "tab-close-domain",
+      args: { domain },
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    };
+  });
+
+  return {
+    results,
+    ghost: results[0]?.title || null,
+    answer: `Closes ${results[0].description || "matching tabs"}.`,
+  };
+}
+
 function collectCommandSuggestions(query, context) {
   const suggestions = [];
   let ghost = null;
@@ -736,6 +386,19 @@ function collectCommandSuggestions(query, context) {
     }
     if (!answer && closeSuggestions.answer) {
       answer = closeSuggestions.answer;
+    }
+  }
+
+  const domainCloseSuggestions = collectTabCloseByDomainSuggestions(query, context);
+  if (domainCloseSuggestions.results.length) {
+    domainCloseSuggestions.results.forEach((result) => {
+      suggestions.push({ ...result, commandRank: suggestions.length });
+    });
+    if (!ghost && domainCloseSuggestions.ghost) {
+      ghost = domainCloseSuggestions.ghost;
+    }
+    if (!answer && domainCloseSuggestions.answer) {
+      answer = domainCloseSuggestions.answer;
     }
   }
 
@@ -828,9 +491,10 @@ export function runSearch(query, data, options = {}) {
   const { filterType, remainder } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
   const { index, termBuckets, items, metadata = {} } = data;
-  const tabCount = typeof metadata.tabCount === "number"
-    ? metadata.tabCount
-    : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+  const tabCount =
+    typeof metadata.tabCount === "number"
+      ? metadata.tabCount
+      : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
@@ -843,7 +507,9 @@ export function runSearch(query, data, options = {}) {
       : null;
   const subfilterContext = { historyBoundaries };
   const commandContext = { tabCount, tabs };
-  const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
+  const commandSuggestions = trimmed
+    ? collectCommandSuggestions(trimmed, commandContext)
+    : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
     let defaultItems = filterType

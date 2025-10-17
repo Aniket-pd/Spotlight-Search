@@ -1,24 +1,10 @@
+import { tokenize } from "../common/text.js";
+import { extractHostname, getOriginFromUrl } from "../common/urls.js";
+
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
-
-function normalize(text = "") {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-export function tokenize(text = "") {
-  const normalized = normalize(text);
-  if (!normalized) {
-    return [];
-  }
-  return normalized.split(/\s+/).filter(Boolean);
-}
 
 function addToIndex(indexMap, termBuckets, itemId, text, weightMultiplier) {
   const tokens = tokenize(text);
@@ -38,44 +24,6 @@ function addToIndex(indexMap, termBuckets, itemId, text, weightMultiplier) {
       termBuckets.set(key, bucket);
     }
     bucket.add(token);
-  }
-}
-
-function extractOrigin(url) {
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    return parsed.origin || "";
-  } catch (err) {
-    return "";
-  }
-}
-
-async function indexTabs(indexMap, termBuckets, items) {
-  const tabs = await chrome.tabs.query({});
-  for (const tab of tabs) {
-    if (!tab.url || tab.url.startsWith("chrome://")) continue;
-    const itemId = items.length;
-    items.push({
-      id: itemId,
-      type: "tab",
-      title: tab.title || tab.url,
-      url: tab.url,
-      tabId: tab.id,
-      windowId: tab.windowId,
-      active: Boolean(tab.active),
-      lastAccessed: tab.lastAccessed || Date.now(),
-      origin: extractOrigin(tab.url),
-    });
-
-    addToIndex(indexMap, termBuckets, itemId, tab.title, TAB_TITLE_WEIGHT);
-    addToIndex(indexMap, termBuckets, itemId, tab.url, URL_WEIGHT);
-    try {
-      const url = new URL(tab.url);
-      addToIndex(indexMap, termBuckets, itemId, url.hostname, URL_WEIGHT);
-    } catch (err) {
-      // ignore malformed URL
-    }
   }
 }
 
@@ -109,6 +57,34 @@ function collectBookmarkNodes(nodes, list = [], path = []) {
   return list;
 }
 
+async function indexTabs(indexMap, termBuckets, items) {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!tab.url || tab.url.startsWith("chrome://")) continue;
+    const itemId = items.length;
+    items.push({
+      id: itemId,
+      type: "tab",
+      title: tab.title || tab.url,
+      url: tab.url,
+      tabId: tab.id,
+      windowId: tab.windowId,
+      active: Boolean(tab.active),
+      lastAccessed: tab.lastAccessed || Date.now(),
+      origin: getOriginFromUrl(tab.url),
+    });
+
+    addToIndex(indexMap, termBuckets, itemId, tab.title, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, tab.url, URL_WEIGHT);
+    try {
+      const hostname = extractHostname(tab.url);
+      addToIndex(indexMap, termBuckets, itemId, hostname, URL_WEIGHT);
+    } catch (err) {
+      // ignore malformed URL
+    }
+  }
+}
+
 async function indexBookmarks(indexMap, termBuckets, items) {
   const tree = await chrome.bookmarks.getTree();
   const bookmarks = collectBookmarkNodes(tree, []);
@@ -122,7 +98,7 @@ async function indexBookmarks(indexMap, termBuckets, items) {
       url: bookmark.url,
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
-      origin: extractOrigin(bookmark.url),
+      origin: getOriginFromUrl(bookmark.url),
       folderPath: Array.isArray(bookmark.folders) ? bookmark.folders : [],
       folderKey: bookmark.folderKey || computeFolderKey(bookmark.folders),
     });
@@ -130,8 +106,8 @@ async function indexBookmarks(indexMap, termBuckets, items) {
     addToIndex(indexMap, termBuckets, itemId, bookmark.title, TAB_TITLE_WEIGHT);
     addToIndex(indexMap, termBuckets, itemId, bookmark.url, URL_WEIGHT);
     try {
-      const url = new URL(bookmark.url);
-      addToIndex(indexMap, termBuckets, itemId, url.hostname, URL_WEIGHT);
+      const hostname = extractHostname(bookmark.url);
+      addToIndex(indexMap, termBuckets, itemId, hostname, URL_WEIGHT);
     } catch (err) {
       // ignore malformed URL
     }
@@ -155,14 +131,14 @@ async function indexHistory(indexMap, termBuckets, items) {
       url: entry.url,
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
-      origin: extractOrigin(entry.url),
+      origin: getOriginFromUrl(entry.url),
     });
 
     addToIndex(indexMap, termBuckets, itemId, entry.title, TAB_TITLE_WEIGHT);
     addToIndex(indexMap, termBuckets, itemId, entry.url, URL_WEIGHT);
     try {
-      const url = new URL(entry.url);
-      addToIndex(indexMap, termBuckets, itemId, url.hostname, URL_WEIGHT);
+      const hostname = extractHostname(entry.url);
+      addToIndex(indexMap, termBuckets, itemId, hostname, URL_WEIGHT);
     } catch (err) {
       // ignore malformed URL
     }

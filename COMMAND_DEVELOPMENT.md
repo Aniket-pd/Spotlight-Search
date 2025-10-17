@@ -6,14 +6,14 @@ This guide explains how to add a new Spotlight command, wire it into the extensi
 
 Spotlight commands follow a two-part flow:
 
-1. **Suggestion phase** – `search.js` evaluates the user query and surfaces command results. Static commands live in the `STATIC_COMMANDS` array near the top of the file. Dynamic commands (e.g., close tabs) are composed in helper functions further down the file.
-2. **Execution phase** – `background.js` receives the selected command and runs the corresponding action inside `executeCommand()`.
+1. **Suggestion phase** – `src/search/searchEngine.js` evaluates the user query and surfaces command results. Static commands live in the `STATIC_COMMANDS` array near the top of the file. Dynamic commands (e.g., close tabs) are composed in helper functions further down the file.
+2. **Execution phase** – `src/background/services/commandService.js` receives the selected command and runs the corresponding action inside `executeCommand()`.
 
 A new command should have entries in both areas.
 
-## 2. Add the Command to `search.js`
+## 2. Add the Command to `searchEngine.js`
 
-Open [`search.js`](./search.js) and extend the `STATIC_COMMANDS` array with a new object. Follow the existing structure exactly:
+Open [`src/search/searchEngine.js`](./src/search/searchEngine.js) and extend the `STATIC_COMMANDS` array with a new object. Follow the existing structure exactly:
 
 ```js
 {
@@ -45,26 +45,26 @@ Key points:
 
 If your command needs dynamic suggestions (for example, it operates on specific tabs or domains) create a helper alongside `collectTabCloseSuggestions()` that returns `{ results, ghost, answer }` and merge it into `collectCommandSuggestions()`.
 
-## 3. Handle Execution in `background.js`
+## 3. Handle Execution in `commandService.js`
 
-Open [`background.js`](./background.js) and add a new `case` block in `executeCommand()` that matches the `action` you set in `search.js`:
+Open [`src/background/services/commandService.js`](./src/background/services/commandService.js) and add a new handler to the `COMMAND_HANDLERS` map that matches the `action` you set in `searchEngine.js`:
 
 ```js
-case "tab-example":
+"tab-example": async () => {
   await doSomethingUseful();
   scheduleRebuild(400); // Keep the index fresh when the command mutates tabs/bookmarks/history.
-  return;
+},
 ```
 
 Guidelines:
 
-- Keep switch cases sorted alongside related commands (e.g., all tab commands together).
-- Reuse existing helper utilities or add new ones above `executeCommand()` if the command requires additional logic. Follow the same coding style as the rest of the file (two-space indentation, `const` by default, async/await for Chrome APIs, defensive `try/catch` when a call can fail).
+- Keep related handlers grouped together (e.g., all tab commands).
+- Reuse existing helper utilities or add new ones next to the other tab/bookmark/history helpers. Follow the same coding style as the rest of the file (two-space indentation, `const` by default, async/await for Chrome APIs, defensive `try/catch` when a call can fail).
 - Call `scheduleRebuild()` when the command changes tabs, bookmarks, or history so that subsequent searches remain accurate.
 
 ## 4. Wire Optional UI or Telemetry Hooks
 
-If the new command needs additional UI behavior (such as rendering a custom result tile) update `content.js` accordingly. Ensure any new CSS follows the conventions in `styles.css` (BEM-like class names prefixed with `spotlight-`).
+If the new command needs additional UI behavior (such as rendering a custom result tile) update `src/content/index.js` accordingly. Ensure any new CSS follows the conventions in `src/content/styles.css` (BEM-like class names prefixed with `spotlight-`).
 
 ## 5. Validate the Experience
 
