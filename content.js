@@ -17,6 +17,172 @@ let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 
+const FALLBACK_ICON_CACHE = new Map();
+const FALLBACK_ICON_COLORS = [
+  "#6366F1",
+  "#EC4899",
+  "#F97316",
+  "#10B981",
+  "#8B5CF6",
+  "#F59E0B",
+  "#0EA5E9",
+  "#14B8A6",
+  "#EF4444",
+];
+const ICON_IDLE_TIMEOUT = 120;
+const FALLBACK_ICON_ENCODER = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+function encodeSvgToDataUrl(svg) {
+  if (FALLBACK_ICON_ENCODER) {
+    const bytes = FALLBACK_ICON_ENCODER.encode(svg);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return `data:image/svg+xml;base64,${btoa(binary)}`;
+  }
+
+  return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+}
+
+function safeFaviconUrl(url) {
+  if (!url || typeof url !== "string") {
+    return null;
+  }
+
+  if (url.startsWith("chrome://") || url.startsWith("javascript:")) {
+    return null;
+  }
+
+  if (url.startsWith("data:")) {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url, window.location.href);
+    const allowedProtocols = ["http:", "https:", "data:", "chrome-extension:", "moz-extension:"];
+    if (allowedProtocols.includes(parsed.protocol)) {
+      return url;
+    }
+  } catch (err) {
+    return null;
+  }
+
+  return null;
+}
+
+function pickFallbackColor(key) {
+  if (!key) {
+    return FALLBACK_ICON_COLORS[0];
+  }
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  return FALLBACK_ICON_COLORS[hash % FALLBACK_ICON_COLORS.length];
+}
+
+function getFallbackIconLabel(result) {
+  const source = (result && (result.title || result.url || result.type || "")) || "";
+  const match = source.match(/[A-Za-z0-9]/);
+  if (match && match[0]) {
+    return match[0].toUpperCase();
+  }
+  return "•";
+}
+
+function getFallbackIcon(result) {
+  const key =
+    (result && (result.url || result.title || `${result.type || "unknown"}-${result.id ?? ""}`)) ||
+    "unknown";
+  if (FALLBACK_ICON_CACHE.has(key)) {
+    return FALLBACK_ICON_CACHE.get(key);
+  }
+
+  const label = getFallbackIconLabel(result);
+  const color = pickFallbackColor(key);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><rect width="64" height="64" rx="14" fill="${color}"/><text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="600" fill="#ffffff">${label}</text></svg>`;
+  const dataUrl = encodeSvgToDataUrl(svg);
+  FALLBACK_ICON_CACHE.set(key, dataUrl);
+  return dataUrl;
+}
+
+function handleIconError(event) {
+  const img = event?.currentTarget;
+  if (!img) {
+    return;
+  }
+  img.removeEventListener("error", handleIconError);
+  const fallback = img.dataset.fallback;
+  if (fallback && img.src !== fallback) {
+    img.src = fallback;
+  }
+  img.classList.add("spotlight-result-icon-fallback");
+}
+
+function handleIconLoad(event) {
+  const img = event?.currentTarget;
+  if (!img) {
+    return;
+  }
+  const actualSrc = img.dataset.actualSrc;
+  if (actualSrc && img.currentSrc === actualSrc) {
+    img.classList.remove("spotlight-result-icon-fallback");
+  }
+}
+
+function scheduleIconLoad(img, src) {
+  if (!img || !src) {
+    return;
+  }
+  if (img.dataset.actualSrc === src) {
+    return;
+  }
+  const assignSrc = () => {
+    img.dataset.actualSrc = src;
+    img.src = src;
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(assignSrc, { timeout: ICON_IDLE_TIMEOUT });
+  } else {
+    setTimeout(assignSrc, 0);
+  }
+}
+
+function createResultIcon(result) {
+  const icon = document.createElement("img");
+  icon.className = "spotlight-result-icon";
+  icon.alt = "";
+  icon.decoding = "async";
+  icon.loading = "lazy";
+  icon.referrerPolicy = "no-referrer";
+
+  const fallbackSrc = getFallbackIcon(result);
+  if (fallbackSrc) {
+    icon.dataset.fallback = fallbackSrc;
+  }
+
+  const safeSrc = safeFaviconUrl(result?.faviconUrl);
+  if (safeSrc && safeSrc.startsWith("data:")) {
+    icon.dataset.actualSrc = safeSrc;
+    icon.src = safeSrc;
+  } else {
+    if (fallbackSrc) {
+      icon.src = fallbackSrc;
+    }
+    if (safeSrc) {
+      scheduleIconLoad(icon, safeSrc);
+    } else if (fallbackSrc) {
+      icon.classList.add("spotlight-result-icon-fallback");
+    }
+  }
+
+  icon.addEventListener("error", handleIconError);
+  icon.addEventListener("load", handleIconLoad);
+
+  return icon;
+}
+
 function createOverlay() {
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
@@ -357,17 +523,15 @@ function renderResults() {
     return;
   }
 
+  const fragment = document.createDocumentFragment();
+
   resultsState.forEach((result, index) => {
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
 
-    if (result.faviconUrl) {
-      const icon = document.createElement("img");
-      icon.className = "spotlight-result-icon";
-      icon.src = result.faviconUrl;
-      icon.alt = "";
-      icon.referrerPolicy = "no-referrer";
+    const icon = createResultIcon(result);
+    if (icon) {
       li.appendChild(icon);
     }
 
@@ -414,9 +578,10 @@ function renderResults() {
     if (result.type === "command") {
       li.classList.add("spotlight-result-command");
     }
-
-    resultsEl.appendChild(li);
+    fragment.appendChild(li);
   });
+
+  resultsEl.appendChild(fragment);
 
   activeIndex = Math.min(activeIndex, resultsState.length - 1);
   if (activeIndex < 0 && resultsState.length > 0) {

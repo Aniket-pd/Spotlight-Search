@@ -2,6 +2,39 @@ const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
 
+const SAFE_FAVICON_PROTOCOLS = new Set([
+  "http:",
+  "https:",
+  "data:",
+  "chrome-extension:",
+  "moz-extension:",
+]);
+
+function sanitizeFaviconUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") {
+    return undefined;
+  }
+
+  if (rawUrl.startsWith("chrome://")) {
+    return undefined;
+  }
+
+  if (rawUrl.startsWith("data:")) {
+    return rawUrl;
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (SAFE_FAVICON_PROTOCOLS.has(parsed.protocol)) {
+      return rawUrl;
+    }
+  } catch (err) {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 function normalize(text = "") {
   return text
     .toLowerCase()
@@ -50,7 +83,7 @@ async function indexTabs(indexMap, termBuckets, items) {
       type: "tab",
       title: tab.title || tab.url,
       url: tab.url,
-      faviconUrl: tab.favIconUrl || (tab.url ? `chrome://favicon/size/32@1x/${tab.url}` : undefined),
+      faviconUrl: sanitizeFaviconUrl(tab.favIconUrl),
       tabId: tab.id,
       windowId: tab.windowId,
       active: Boolean(tab.active),
@@ -91,7 +124,7 @@ async function indexBookmarks(indexMap, termBuckets, items) {
       type: "bookmark",
       title: bookmark.title || bookmark.url,
       url: bookmark.url,
-      faviconUrl: bookmark.url ? `chrome://favicon/size/32@1x/${bookmark.url}` : undefined,
+      faviconUrl: undefined,
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
     });
@@ -122,7 +155,7 @@ async function indexHistory(indexMap, termBuckets, items) {
       type: "history",
       title: entry.title || entry.url,
       url: entry.url,
-      faviconUrl: entry.url ? `chrome://favicon/size/32@1x/${entry.url}` : undefined,
+      faviconUrl: undefined,
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
     });
