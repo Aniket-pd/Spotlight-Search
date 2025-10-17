@@ -13,6 +13,18 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - All processing performed locally—no network calls.
 - Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
+- Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
+
+
+## Contextual Subfilters
+
+Spotlight presents filter-specific suggestions to help narrow results without typing extra operators:
+
+- **History** – Toggle between date ranges like **Today**, **Yesterday**, **Last 7 Days**, **Last 30 Days**, or **Older**.
+- **Tabs** – Quickly scope to the domains of tabs you currently have open (e.g., YouTube, Google, Reddit). The list refreshes automatically as your active tabs change.
+- **Bookmarks** – Browse by bookmark folder (e.g., Work, Personal, Tutorials) to jump straight to the right collection.
+
+Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a chip applies the filter instantly, and you can tap the active chip again to clear it.
 
 ## Loading the Extension
 1. Clone or download this repository.
