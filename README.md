@@ -10,6 +10,8 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Command suggestions with inline ghost completions and contextual answers (e.g., tab count for "Tab sort").
 - Command `> reindex` to rebuild the local search index on demand.
 - All processing performed locally—no network calls.
+- Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
+- Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 
 ## Loading the Extension
 1. Clone or download this repository.
