@@ -362,6 +362,18 @@ function renderResults() {
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
 
+    if (result.faviconUrl) {
+      const icon = document.createElement("img");
+      icon.className = "spotlight-result-icon";
+      icon.src = result.faviconUrl;
+      icon.alt = "";
+      icon.referrerPolicy = "no-referrer";
+      li.appendChild(icon);
+    }
+
+    const body = document.createElement("div");
+    body.className = "spotlight-result-content";
+
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
     title.textContent = result.title || result.url;
@@ -380,12 +392,15 @@ function renderResults() {
     meta.appendChild(url);
     meta.appendChild(type);
 
-    li.appendChild(title);
-    li.appendChild(meta);
+    body.appendChild(title);
+    body.appendChild(meta);
+    li.appendChild(body);
 
-    li.addEventListener("mouseenter", () => {
-      activeIndex = index;
-      updateActiveResult();
+    li.addEventListener("pointerover", () => {
+      if (activeIndex !== index) {
+        activeIndex = index;
+        updateActiveResult();
+      }
     });
 
     li.addEventListener("mousedown", (event) => {

@@ -50,6 +50,7 @@ async function indexTabs(indexMap, termBuckets, items) {
       type: "tab",
       title: tab.title || tab.url,
       url: tab.url,
+      faviconUrl: tab.favIconUrl || (tab.url ? `chrome://favicon/size/32@1x/${tab.url}` : undefined),
       tabId: tab.id,
       windowId: tab.windowId,
       active: Boolean(tab.active),
@@ -90,6 +91,7 @@ async function indexBookmarks(indexMap, termBuckets, items) {
       type: "bookmark",
       title: bookmark.title || bookmark.url,
       url: bookmark.url,
+      faviconUrl: bookmark.url ? `chrome://favicon/size/32@1x/${bookmark.url}` : undefined,
       bookmarkId: bookmark.id,
       dateAdded: bookmark.dateAdded,
     });
@@ -120,6 +122,7 @@ async function indexHistory(indexMap, termBuckets, items) {
       type: "history",
       title: entry.title || entry.url,
       url: entry.url,
+      faviconUrl: entry.url ? `chrome://favicon/size/32@1x/${entry.url}` : undefined,
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
     });
