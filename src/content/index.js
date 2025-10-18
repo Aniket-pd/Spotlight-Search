@@ -858,7 +858,8 @@ function openResult(result) {
   closeOverlay();
 }
 
-function renderResults() {
+function renderResults(options = {}) {
+  const { scrollActive = true } = options;
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -897,7 +898,7 @@ function renderResults() {
     activeIndex = 0;
   }
   enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
-  updateActiveResult();
+  updateActiveResult({ scroll: scrollActive });
 }
 
 function createResultListItem(result, index) {
@@ -1171,7 +1172,11 @@ function applyDownloadUpdate(update) {
       return result;
     }
     changed = true;
-    targets.add(result.id);
+    const resultId = result.id;
+    targets.add(resultId);
+    if (resultId !== null && resultId !== undefined) {
+      targets.add(String(resultId));
+    }
     const merged = { ...result, ...update };
     if (typeof merged.id !== "number") {
       merged.id = result.id;
@@ -1191,13 +1196,26 @@ function refreshDownloadResults(targetIds) {
     return;
   }
   let updated = false;
+  let visibleMatch = false;
   const items = Array.from(resultsEl.querySelectorAll(".spotlight-result"));
   items.forEach((itemEl, index) => {
-    const resultId = Number(itemEl.dataset.resultId);
-    if (!targetIds.has(resultId)) {
+    const idAttr = itemEl.dataset.resultId;
+    const numericId = typeof idAttr === "string" ? Number(idAttr) : NaN;
+    const hasNumericMatch = Number.isFinite(numericId) && targetIds.has(numericId);
+    const hasStringMatch = typeof idAttr === "string" && targetIds.has(idAttr);
+    if (!hasNumericMatch && !hasStringMatch) {
       return;
     }
-    const result = resultsState.find((entry) => entry && entry.id === resultId && entry.type === "download");
+    visibleMatch = true;
+    const result = resultsState.find((entry) => {
+      if (!entry || entry.type !== "download") {
+        return false;
+      }
+      if (Number.isFinite(numericId) && entry.id === numericId) {
+        return true;
+      }
+      return typeof idAttr === "string" && String(entry.id) === idAttr;
+    });
     if (!result) {
       return;
     }
@@ -1209,6 +1227,24 @@ function refreshDownloadResults(targetIds) {
   });
   if (updated) {
     updateActiveResult({ scroll: false });
+    return;
+  }
+  if (!visibleMatch) {
+    return;
+  }
+  const previousActiveId =
+    activeIndex >= 0 && resultsState[activeIndex] ? resultsState[activeIndex].id : null;
+  const previousScrollTop = resultsEl.scrollTop;
+  const nextActiveIndex =
+    previousActiveId !== null
+      ? resultsState.findIndex((entry) => entry && entry.id === previousActiveId)
+      : -1;
+  if (nextActiveIndex >= 0) {
+    activeIndex = nextActiveIndex;
+  }
+  renderResults({ scrollActive: false });
+  if (typeof previousScrollTop === "number" && previousScrollTop >= 0) {
+    resultsEl.scrollTop = previousScrollTop;
   }
 }
 
