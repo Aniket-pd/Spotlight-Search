@@ -42,6 +42,12 @@ export function registerDataInvalidationEvents(context) {
       "paused",
       "canResume",
       "danger",
+      "bytesReceived",
+      "totalBytes",
+      "fileSize",
+      "estimatedEndTime",
+      "startTime",
+      "endTime",
     ]);
     downloadApi.onChanged.addListener((delta) => {
       if (!delta) {

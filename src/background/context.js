@@ -6,6 +6,7 @@ export function createBackgroundContext({ buildIndex }) {
     buildingPromise: null,
     rebuildTimer: null,
     isStale: false,
+    nextRebuildTime: 0,
   };
   const faviconCache = new Map();
 
@@ -14,6 +15,7 @@ export function createBackgroundContext({ buildIndex }) {
       clearTimeout(state.rebuildTimer);
       state.rebuildTimer = null;
     }
+    state.nextRebuildTime = 0;
   }
 
   async function rebuildIndex() {
@@ -44,13 +46,24 @@ export function createBackgroundContext({ buildIndex }) {
 
   function scheduleRebuild(delay = DEFAULT_REBUILD_DELAY) {
     state.isStale = true;
+    const now = Date.now();
+    const targetTime = now + Math.max(0, delay);
+
     if (state.rebuildTimer) {
+      if (targetTime >= state.nextRebuildTime - 8) {
+        return;
+      }
       clearTimeout(state.rebuildTimer);
+      state.rebuildTimer = null;
     }
+
+    const timeout = Math.max(0, targetTime - Date.now());
+    state.nextRebuildTime = targetTime;
     state.rebuildTimer = setTimeout(() => {
       state.rebuildTimer = null;
+      state.nextRebuildTime = 0;
       rebuildIndex().catch((err) => console.error("Spotlight: rebuild failed", err));
-    }, delay);
+    }, timeout);
   }
 
   async function sendToggleMessage() {
