@@ -6,14 +6,14 @@ This guide explains how to add a new Spotlight command, wire it into the extensi
 
 Spotlight commands follow a two-part flow:
 
-1. **Suggestion phase** – `search.js` evaluates the user query and surfaces command results. Static commands live in the `STATIC_COMMANDS` array near the top of the file. Dynamic commands (e.g., close tabs) are composed in helper functions further down the file.
-2. **Execution phase** – `background.js` receives the selected command and runs the corresponding action inside `executeCommand()`.
+1. **Suggestion phase** – `src/search/search.js` evaluates the user query and surfaces command results. Static commands live in the `STATIC_COMMANDS` array near the top of the file. Dynamic commands (e.g., close tabs) are composed in helper functions further down the file.
+2. **Execution phase** – `src/background/commands.js` receives the selected command and runs the corresponding action inside `executeCommand()`.
 
 A new command should have entries in both areas.
 
 ## 2. Add the Command to `search.js`
 
-Open [`search.js`](./search.js) and extend the `STATIC_COMMANDS` array with a new object. Follow the existing structure exactly:
+Open [`src/search/search.js`](./src/search/search.js) and extend the `STATIC_COMMANDS` array with a new object. Follow the existing structure exactly:
 
 ```js
 {
@@ -45,9 +45,9 @@ Key points:
 
 If your command needs dynamic suggestions (for example, it operates on specific tabs or domains) create a helper alongside `collectTabCloseSuggestions()` that returns `{ results, ghost, answer }` and merge it into `collectCommandSuggestions()`.
 
-## 3. Handle Execution in `background.js`
+## 3. Handle Execution in `src/background/commands.js`
 
-Open [`background.js`](./background.js) and add a new `case` block in `executeCommand()` that matches the `action` you set in `search.js`:
+Open [`src/background/commands.js`](./src/background/commands.js) and add a new `case` block in `executeCommand()` that matches the `action` you set in `search.js`:
 
 ```js
 case "tab-example":
@@ -64,7 +64,7 @@ Guidelines:
 
 ## 4. Wire Optional UI or Telemetry Hooks
 
-If the new command needs additional UI behavior (such as rendering a custom result tile) update `content.js` accordingly. Ensure any new CSS follows the conventions in `styles.css` (BEM-like class names prefixed with `spotlight-`).
+If the new command needs additional UI behavior (such as rendering a custom result tile) update `src/content/index.js` accordingly. Ensure any new CSS follows the conventions in `src/content/styles.css` (BEM-like class names prefixed with `spotlight-`).
 
 ## 5. Validate the Experience
 

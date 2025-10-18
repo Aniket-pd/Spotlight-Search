@@ -35,7 +35,8 @@ Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a c
 
 ## Development Notes
 - Background indexing runs on startup and whenever tabs/bookmarks/history change.
-- The overlay UI lives in `content.js` with styles from `styles.css`.
-- Indexing and search logic reside in `indexer.js` and `search.js` respectively.
+- The overlay UI lives in `src/content/index.js` with styles from `src/content/styles.css`.
+- Indexing and search logic reside in `src/search/indexer.js` and `src/search/search.js` respectively.
+- Background orchestration is handled by the modules in `src/background/` with `src/background/index.js` wiring listeners together.
 
 Enjoy lightning-fast, private browsing search!
