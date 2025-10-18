@@ -1,5 +1,41 @@
 const DEFAULT_REBUILD_DELAY = 600;
 
+function computeDownloadFingerprint(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return "";
+  }
+  return items
+    .filter((item) => item && item.type === "download")
+    .map((item) => {
+      const id = typeof item.downloadId === "number" ? item.downloadId : item.id;
+      const state = item.state || "";
+      const received = Number.isFinite(item.bytesReceived) ? Math.max(item.bytesReceived, 0) : 0;
+      const total = Number.isFinite(item.totalBytes) ? Math.max(item.totalBytes, 0) : 0;
+      const paused = item.paused ? "1" : "0";
+      const exists = item.exists === false ? "0" : "1";
+      return `${id}:${state}:${received}:${total}:${paused}:${exists}`;
+    })
+    .join("|");
+}
+
+function broadcastIndexUpdate(message) {
+  if (!message || typeof chrome?.runtime?.sendMessage !== "function") {
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(message, () => {
+      if (chrome.runtime.lastError) {
+        const msg = chrome.runtime.lastError.message || "";
+        if (!msg.includes("Receiving end") && !msg.includes("closed the connection")) {
+          console.warn("Spotlight: failed to broadcast index update", msg);
+        }
+      }
+    });
+  } catch (err) {
+    console.warn("Spotlight: unexpected error broadcasting index update", err);
+  }
+}
+
 export function createBackgroundContext({ buildIndex }) {
   const state = {
     indexData: null,
@@ -7,6 +43,7 @@ export function createBackgroundContext({ buildIndex }) {
     rebuildTimer: null,
     isStale: false,
     nextRebuildTime: 0,
+    lastDownloadFingerprint: "",
   };
   const faviconCache = new Map();
 
@@ -26,6 +63,13 @@ export function createBackgroundContext({ buildIndex }) {
           state.indexData = data;
           state.buildingPromise = null;
           state.isStale = false;
+          const items = Array.isArray(data?.items) ? data.items : [];
+          const fingerprint = computeDownloadFingerprint(items);
+          const downloadsChanged = fingerprint !== state.lastDownloadFingerprint;
+          state.lastDownloadFingerprint = fingerprint;
+          if (downloadsChanged) {
+            broadcastIndexUpdate({ type: "SPOTLIGHT_INDEX_UPDATED", changes: { downloads: true } });
+          }
           return data;
         })
         .catch((error) => {

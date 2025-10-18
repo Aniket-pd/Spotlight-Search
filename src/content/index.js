@@ -307,6 +307,31 @@ function updateLiveRefreshState() {
   }
 }
 
+function shouldRefreshForDownloadChanges() {
+  if (!isOpen || !inputEl) {
+    return false;
+  }
+  if (activeFilter === "download") {
+    return true;
+  }
+  return resultsState.some((result) => result && result.type === "download");
+}
+
+function handleIndexUpdateMessage(message) {
+  if (!message || message.type !== "SPOTLIGHT_INDEX_UPDATED") {
+    return;
+  }
+  const changes = message && typeof message.changes === "object" ? message.changes : null;
+  if (!changes || !changes.downloads) {
+    return;
+  }
+  if (!shouldRefreshForDownloadChanges()) {
+    return;
+  }
+  clearLiveUpdateTimer();
+  requestResults(inputEl.value);
+}
+
 function createOverlay() {
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
@@ -1534,12 +1559,18 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
-    openOverlay();
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      openOverlay();
+    }
+    return;
+  }
+  if (message.type === "SPOTLIGHT_INDEX_UPDATED") {
+    handleIndexUpdateMessage(message);
   }
 });
