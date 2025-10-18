@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "permissions": ["tabs", "bookmarks", "history", "storage", "scripting"],
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "src/background/index.js",
     "type": "module"
   },
   "commands": {
@@ -26,8 +26,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
+      "js": ["src/content/index.js"],
+      "css": ["src/content/styles.css"],
       "run_at": "document_idle"
     }
   ],
