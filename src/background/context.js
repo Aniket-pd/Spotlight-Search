@@ -5,15 +5,25 @@ export function createBackgroundContext({ buildIndex }) {
     indexData: null,
     buildingPromise: null,
     rebuildTimer: null,
+    isStale: false,
   };
   const faviconCache = new Map();
 
+  function clearPendingRebuild() {
+    if (state.rebuildTimer) {
+      clearTimeout(state.rebuildTimer);
+      state.rebuildTimer = null;
+    }
+  }
+
   async function rebuildIndex() {
     if (!state.buildingPromise) {
+      clearPendingRebuild();
       state.buildingPromise = buildIndex()
         .then((data) => {
           state.indexData = data;
           state.buildingPromise = null;
+          state.isStale = false;
           return data;
         })
         .catch((error) => {
@@ -26,13 +36,14 @@ export function createBackgroundContext({ buildIndex }) {
   }
 
   async function ensureIndex() {
-    if (state.indexData) {
+    if (state.indexData && !state.isStale) {
       return state.indexData;
     }
     return rebuildIndex();
   }
 
   function scheduleRebuild(delay = DEFAULT_REBUILD_DELAY) {
+    state.isStale = true;
     if (state.rebuildTimer) {
       clearTimeout(state.rebuildTimer);
     }

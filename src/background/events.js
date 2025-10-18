@@ -28,6 +28,34 @@ export function registerDataInvalidationEvents(context) {
   chrome.history.onVisited.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onTitleChanged?.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onVisitRemoved?.addListener(() => context.scheduleRebuild(2000));
+
+  const downloadApi = chrome.downloads;
+  if (downloadApi?.onCreated?.addListener) {
+    downloadApi.onCreated.addListener(() => context.scheduleRebuild(250));
+  }
+  if (downloadApi?.onChanged?.addListener) {
+    const IMPORTANT_DOWNLOAD_CHANGE_KEYS = new Set([
+      "state",
+      "filename",
+      "finalUrl",
+      "exists",
+      "paused",
+      "canResume",
+      "danger",
+    ]);
+    downloadApi.onChanged.addListener((delta) => {
+      if (!delta) {
+        return;
+      }
+      const keys = Object.keys(delta);
+      if (keys.some((key) => IMPORTANT_DOWNLOAD_CHANGE_KEYS.has(key))) {
+        context.scheduleRebuild(delta.state ? 150 : 350);
+      }
+    });
+  }
+  if (downloadApi?.onErased?.addListener) {
+    downloadApi.onErased.addListener(() => context.scheduleRebuild(500));
+  }
 }
 
 export function registerActionClick(context) {
