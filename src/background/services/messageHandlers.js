@@ -1,6 +1,7 @@
 import { ensureIndex, rebuildIndex } from "./indexService.js";
 import { executeCommand } from "./commandService.js";
 import { resolveFaviconForTarget } from "./faviconService.js";
+import { getNavigationResults, navigateToHistoryTarget } from "./navigationService.js";
 import { runSearch } from "../../search/searchEngine.js";
 
 export function createMessageHandler() {
@@ -22,6 +23,25 @@ export function createMessageHandler() {
           .catch((err) => {
             console.error("Spotlight: query failed", err);
             sendResponse({ results: [], error: true, requestId: message.requestId });
+          });
+        return true;
+
+      case "SPOTLIGHT_NAVIGATION":
+        getNavigationResults(message.direction, message.query)
+          .then((payload) => {
+            const results = Array.isArray(payload?.results) ? payload.results : [];
+            const filter = typeof payload?.filter === "string" ? payload.filter : null;
+            const response = {
+              results,
+              filter,
+              navigation: payload?.navigation || { direction: message.direction || "back" },
+              requestId: message.requestId,
+            };
+            sendResponse(response);
+          })
+          .catch((err) => {
+            console.error("Spotlight: navigation query failed", err);
+            sendResponse({ results: [], filter: message.direction || "back", navigation: { direction: message.direction || "back" }, requestId: message.requestId, error: true });
           });
         return true;
 
@@ -61,6 +81,15 @@ export function createMessageHandler() {
           .then(() => sendResponse({ success: true }))
           .catch((err) => {
             console.error("Spotlight: open failed", err);
+            sendResponse({ success: false, error: err?.message });
+          });
+        return true;
+
+      case "SPOTLIGHT_NAVIGATE":
+        navigateToHistoryTarget(message.url)
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => {
+            console.error("Spotlight: navigation failed", err);
             sendResponse({ success: false, error: err?.message });
           });
         return true;

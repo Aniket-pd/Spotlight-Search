@@ -2,6 +2,26 @@ const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
 const RESULTS_LIMIT = 12;
+const MODE_OPTIONS = [
+  {
+    id: "bookmark",
+    label: "Bookmark",
+    type: "filter",
+    prefix: "bookmark: ",
+    matches: ["bookmark:", "bookmarks:", "bm:", "b:"],
+  },
+  { id: "tab", label: "Tab", type: "filter", prefix: "tab: ", matches: ["tab:", "tabs:", "t:"] },
+  {
+    id: "history",
+    label: "History",
+    type: "filter",
+    prefix: "history: ",
+    matches: ["history:", "hist:", "h:"],
+  },
+  { id: "back", label: "Back", type: "navigation" },
+  { id: "forward", label: "Forward", type: "navigation" },
+];
+const MODE_OPTION_MAP = new Map(MODE_OPTIONS.map((option) => [option.id, option]));
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -23,6 +43,11 @@ let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
 let subfilterState = { type: null, options: [], activeId: null };
 let selectedSubfilter = null;
+let modeDropdownEl = null;
+let modeActiveIndex = 0;
+let isModeDropdownOpen = false;
+let activeMode = null;
+let modeOptionElements = [];
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -75,6 +100,7 @@ function createOverlay() {
   inputEl.setAttribute("aria-autocomplete", "both");
   inputContainerEl.appendChild(inputEl);
   inputWrapper.appendChild(inputContainerEl);
+  createModeDropdown(inputWrapper);
 
   subfilterContainerEl = document.createElement("div");
   subfilterContainerEl.className = "spotlight-subfilters";
@@ -122,6 +148,152 @@ function createOverlay() {
     }
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
+}
+
+function createModeDropdown(wrapper) {
+  if (modeDropdownEl) {
+    return;
+  }
+  modeDropdownEl = document.createElement("div");
+  modeDropdownEl.className = "spotlight-mode-dropdown";
+  modeDropdownEl.setAttribute("role", "listbox");
+  modeDropdownEl.setAttribute("aria-label", "Spotlight modes");
+  modeDropdownEl.tabIndex = -1;
+
+  modeOptionElements = MODE_OPTIONS.map((option, index) => {
+    const item = document.createElement("div");
+    item.className = "spotlight-mode-option";
+    item.setAttribute("role", "option");
+    item.dataset.modeId = option.id;
+    item.textContent = option.label;
+    item.addEventListener("pointerover", () => {
+      if (!isModeDropdownOpen) {
+        return;
+      }
+      setModeActiveIndex(index);
+    });
+    item.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    item.addEventListener("click", () => {
+      handleModeSelection(option);
+    });
+    modeDropdownEl.appendChild(item);
+    return item;
+  });
+
+  wrapper.appendChild(modeDropdownEl);
+  renderModeDropdown();
+}
+
+function renderModeDropdown() {
+  if (!modeDropdownEl) {
+    return;
+  }
+  modeOptionElements.forEach((element, index) => {
+    if (!element) return;
+    const option = MODE_OPTIONS[index];
+    const isActive = isModeDropdownOpen && index === modeActiveIndex;
+    const isSelected = activeMode && activeMode.id === option.id;
+    element.classList.toggle("active", isActive);
+    element.classList.toggle("selected", isSelected);
+    element.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  modeDropdownEl.classList.toggle("visible", isModeDropdownOpen);
+  modeDropdownEl.setAttribute("aria-expanded", isModeDropdownOpen ? "true" : "false");
+  modeDropdownEl.setAttribute("aria-hidden", isModeDropdownOpen ? "false" : "true");
+}
+
+function openModeDropdown() {
+  if (!modeDropdownEl) {
+    return;
+  }
+  isModeDropdownOpen = true;
+  modeActiveIndex = Math.max(
+    0,
+    activeMode ? MODE_OPTIONS.findIndex((option) => option.id === activeMode.id) : 0
+  );
+  renderModeDropdown();
+}
+
+function closeModeDropdown() {
+  if (!modeDropdownEl) {
+    return;
+  }
+  isModeDropdownOpen = false;
+  renderModeDropdown();
+}
+
+function setModeActiveIndex(index) {
+  if (!isModeDropdownOpen) {
+    return;
+  }
+  const clamped = ((index % MODE_OPTIONS.length) + MODE_OPTIONS.length) % MODE_OPTIONS.length;
+  if (clamped === modeActiveIndex) {
+    return;
+  }
+  modeActiveIndex = clamped;
+  renderModeDropdown();
+}
+
+function moveModeActiveIndex(delta) {
+  if (!isModeDropdownOpen) {
+    return;
+  }
+  setModeActiveIndex(modeActiveIndex + delta);
+}
+
+function resolveFilterModeFromQuery(query) {
+  if (typeof query !== "string" || !query) {
+    return null;
+  }
+  const lower = query.toLowerCase();
+  for (const option of MODE_OPTIONS) {
+    if (option.type !== "filter" || !option.prefix) {
+      continue;
+    }
+    const normalizedPrefix = option.prefix.trim().toLowerCase();
+    if (normalizedPrefix && lower.startsWith(normalizedPrefix)) {
+      return option;
+    }
+    if (Array.isArray(option.matches)) {
+      for (const match of option.matches) {
+        if (typeof match === "string" && match && lower.startsWith(match.toLowerCase())) {
+          return option;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function handleModeSelection(option) {
+  if (!option) {
+    return;
+  }
+  const selectedIndex = MODE_OPTIONS.findIndex((entry) => entry.id === option.id);
+  if (selectedIndex >= 0) {
+    modeActiveIndex = selectedIndex;
+  }
+  activeMode = { id: option.id, type: option.type };
+  closeModeDropdown();
+  setGhostText("");
+  if (option.type === "filter") {
+    const prefix = option.prefix || "";
+    if (inputEl) {
+      inputEl.value = prefix;
+      const caret = prefix.length;
+      inputEl.setSelectionRange(caret, caret);
+    }
+    handleInputChange();
+  } else if (option.type === "navigation") {
+    if (inputEl) {
+      inputEl.value = "";
+    }
+    resetSubfilterState();
+    handleInputChange();
+  }
+  renderModeDropdown();
 }
 
 function resetSubfilterState() {
@@ -289,10 +461,12 @@ function openOverlay() {
   statusEl.textContent = "";
   statusSticky = false;
   activeFilter = null;
+  activeMode = null;
   resetSubfilterState();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
+  closeModeDropdown();
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -319,8 +493,10 @@ function closeOverlay() {
   }
   statusSticky = false;
   activeFilter = null;
+  activeMode = null;
   resetSubfilterState();
   setGhostText("");
+  closeModeDropdown();
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
@@ -328,6 +504,28 @@ function closeOverlay() {
 
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
+  if (isModeDropdownOpen) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveModeActiveIndex(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const option = MODE_OPTIONS[modeActiveIndex] || null;
+      handleModeSelection(option);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModeDropdown();
+      if (inputEl && inputEl.value === "/") {
+        inputEl.value = "";
+        handleInputChange();
+      }
+      return;
+    }
+  }
   if (event.key === "Escape") {
     event.preventDefault();
     closeOverlay();
@@ -340,6 +538,28 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  if (isModeDropdownOpen) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveModeActiveIndex(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const option = MODE_OPTIONS[modeActiveIndex] || null;
+      handleModeSelection(option);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModeDropdown();
+      if (inputEl && inputEl.value === "/") {
+        inputEl.value = "";
+        handleInputChange();
+      }
+      return;
+    }
+  }
   const selectionAtEnd =
     inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
   if (
@@ -380,8 +600,40 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  if (query === "/") {
+    if (!isModeDropdownOpen) {
+      openModeDropdown();
+    } else {
+      renderModeDropdown();
+    }
+    if (pendingQueryTimeout) {
+      clearTimeout(pendingQueryTimeout);
+      pendingQueryTimeout = null;
+    }
+    setGhostText("");
+    return;
+  }
+  if (isModeDropdownOpen) {
+    closeModeDropdown();
+  }
+  const filterMode = resolveFilterModeFromQuery(query);
+  if (filterMode) {
+    if (!activeMode || activeMode.id !== filterMode.id || activeMode.type !== "filter") {
+      activeMode = { id: filterMode.id, type: "filter" };
+      renderModeDropdown();
+    }
+  } else if (!activeMode || activeMode.type !== "navigation") {
+    if (activeMode) {
+      activeMode = null;
+      renderModeDropdown();
+    }
+  }
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
+    if (activeMode) {
+      activeMode = null;
+      renderModeDropdown();
+    }
     lastRequestId = ++requestCounter;
     setStatus("Press Enter to rebuild index", { sticky: true, force: true });
     setGhostText("");
@@ -399,61 +651,102 @@ function handleInputChange() {
   }, 80);
 }
 
+function handleResultsResponse(response, options = {}) {
+  const { requestId, isNavigation = false, direction = null } = options;
+  if (chrome.runtime.lastError) {
+    console.error("Spotlight query error", chrome.runtime.lastError);
+    if (inputEl.value.trim() !== "> reindex") {
+      setGhostText("");
+      setStatus("", { force: true });
+    }
+    return;
+  }
+  if (!response || response.requestId !== requestId) {
+    return;
+  }
+
+  resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
+  applyCachedFavicons(resultsState);
+  activeIndex = resultsState.length > 0 ? 0 : -1;
+  activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+
+  if (isNavigation) {
+    const resolvedDirection = activeFilter || direction || "back";
+    activeMode = { id: resolvedDirection, type: "navigation" };
+    resetSubfilterState();
+  } else if (activeFilter && MODE_OPTION_MAP.has(activeFilter)) {
+    const matchedMode = MODE_OPTION_MAP.get(activeFilter);
+    activeMode = { id: matchedMode.id, type: matchedMode.type };
+  } else if (activeMode && activeMode.type === "filter") {
+    activeMode = null;
+  }
+
+  renderModeDropdown();
+  renderResults();
+
+  if (!isNavigation) {
+    updateSubfilterState(response.subfilters);
+  }
+
+  const trimmed = inputEl.value.trim();
+  if (!isNavigation && trimmed === "> reindex") {
+    setGhostText("");
+    return;
+  }
+
+  const ghost = !isNavigation && response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
+  const answer = !isNavigation && typeof response.answer === "string" ? response.answer : "";
+  if (isNavigation) {
+    setGhostText("");
+  } else {
+    setGhostText(ghost);
+  }
+
+  const filterLabel = getFilterStatusLabel(activeFilter);
+  const subfilterLabel = !isNavigation ? getActiveSubfilterLabel() : "";
+  let statusMessage = "";
+  if (filterLabel) {
+    statusMessage = `Filtering ${filterLabel}`;
+    if (subfilterLabel) {
+      statusMessage = `${statusMessage} · ${subfilterLabel}`;
+    }
+  }
+  if (!isNavigation && answer) {
+    statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
+  }
+  if (statusMessage) {
+    setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
+  } else if (!ghostSuggestionText) {
+    setStatus("", { force: true });
+  }
+}
+
 function requestResults(query) {
+  if (activeMode && activeMode.type === "navigation") {
+    requestNavigationResults(query, activeMode.id);
+    return;
+  }
   lastRequestId = ++requestCounter;
   const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
   if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
     message.subfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
   }
-  chrome.runtime.sendMessage(
-    message,
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Spotlight query error", chrome.runtime.lastError);
-        if (inputEl.value.trim() !== "> reindex") {
-          setGhostText("");
-          setStatus("", { force: true });
-        }
-        return;
-      }
-      if (!response || response.requestId !== lastRequestId) {
-        return;
-      }
-      resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
-      applyCachedFavicons(resultsState);
-      activeIndex = resultsState.length > 0 ? 0 : -1;
-      activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
-      renderResults();
-      updateSubfilterState(response.subfilters);
+  chrome.runtime.sendMessage(message, (response) => {
+    handleResultsResponse(response, { requestId: lastRequestId, isNavigation: false });
+  });
+}
 
-      const trimmed = inputEl.value.trim();
-      if (trimmed === "> reindex") {
-        setGhostText("");
-        return;
-      }
-
-      const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
-      const answer = typeof response.answer === "string" ? response.answer : "";
-      setGhostText(ghost);
-      const filterLabel = getFilterStatusLabel(activeFilter);
-      const subfilterLabel = getActiveSubfilterLabel();
-      let statusMessage = "";
-      if (filterLabel) {
-        statusMessage = `Filtering ${filterLabel}`;
-        if (subfilterLabel) {
-          statusMessage = `${statusMessage} · ${subfilterLabel}`;
-        }
-      }
-      if (answer) {
-        statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
-      }
-      if (statusMessage) {
-        setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
-      } else if (!ghostSuggestionText) {
-        setStatus("", { force: true });
-      }
-    }
-  );
+function requestNavigationResults(query, direction) {
+  lastRequestId = ++requestCounter;
+  const message = {
+    type: "SPOTLIGHT_NAVIGATION",
+    direction,
+    query,
+    requestId: lastRequestId,
+  };
+  chrome.runtime.sendMessage(message, (response) => {
+    handleResultsResponse(response, { requestId: lastRequestId, isNavigation: true, direction });
+  });
 }
 
 function setStatus(message, options = {}) {
@@ -556,6 +849,11 @@ function updateActiveResult() {
 
 function openResult(result) {
   if (!result) return;
+  if (result.navigation && result.navigation.url) {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_NAVIGATE", url: result.navigation.url });
+    closeOverlay();
+    return;
+  }
   if (result.type === "command") {
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
@@ -656,6 +954,9 @@ function renderResults() {
     if (result.type === "command") {
       li.classList.add("spotlight-result-command");
     }
+    if (result.navigation) {
+      li.classList.add("spotlight-result-navigation");
+    }
 
     resultsEl.appendChild(li);
   });
@@ -676,6 +977,10 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "back":
+      return "back history";
+    case "forward":
+      return "forward history";
     default:
       return "";
   }
@@ -705,6 +1010,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "navigation":
+      return result?.navigation?.direction === "forward" ? "Forward history" : "Back history";
     case "command":
       return (result && result.label) || "Command";
     default:

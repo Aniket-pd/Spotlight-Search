@@ -1,5 +1,6 @@
 import { createMessageHandler } from "./services/messageHandlers.js";
 import { ensureIndex, rebuildIndex, scheduleRebuild } from "./services/indexService.js";
+import { setupNavigationTracking } from "./services/navigationService.js";
 
 async function sendToggleMessage() {
   try {
@@ -46,3 +47,5 @@ chrome.action?.onClicked?.addListener(() => {
 ensureIndex().catch((err) => {
   console.error("Spotlight: initial index load failed", err);
 });
+
+setupNavigationTracking();
