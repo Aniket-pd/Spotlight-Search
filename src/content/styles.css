@@ -30,7 +30,7 @@
   background: rgba(32, 32, 40, 0.9);
 }
 
-.spotlight-input-container { 
+.spotlight-input-container {
   position: relative;
   display: flex;
   align-items: center;
@@ -38,6 +38,68 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(18, 18, 24, 0.85);
   transition: border 0.2s, box-shadow 0.2s;
+}
+
+.spotlight-slash-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  border-radius: 12px;
+  background: rgba(22, 25, 36, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 34px rgba(15, 20, 40, 0.38);
+  padding: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 6;
+}
+
+.spotlight-slash-menu.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.spotlight-slash-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.spotlight-slash-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.spotlight-slash-option:hover,
+.spotlight-slash-option.active {
+  background: rgba(99, 137, 255, 0.32);
+  color: #fff;
+}
+
+.spotlight-slash-option-label {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.spotlight-slash-option-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .spotlight-input-container.focused {

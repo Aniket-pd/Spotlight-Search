@@ -23,6 +23,48 @@ let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
 let subfilterState = { type: null, options: [], activeId: null };
 let selectedSubfilter = null;
+let slashMenuEl = null;
+let slashMenuListEl = null;
+let slashMenuState = { open: false, items: [], activeIndex: -1, query: "" };
+
+const SLASH_MENU_ID = "spotlight-slash-menu";
+const SLASH_COMMANDS = [
+  {
+    id: "tab",
+    label: "Tab",
+    hint: "Search open tabs",
+    prefix: "tab:",
+    keywords: ["tab", "tabs", "t"],
+  },
+  {
+    id: "bookmark",
+    label: "Bookmark",
+    hint: "Search saved bookmarks",
+    prefix: "bookmark:",
+    keywords: ["bookmark", "bookmarks", "bm", "b"],
+  },
+  {
+    id: "history",
+    label: "History",
+    hint: "Browse your history",
+    prefix: "history:",
+    keywords: ["history", "hist", "h"],
+  },
+  {
+    id: "back",
+    label: "Back",
+    hint: "Show pages visited before this one",
+    prefix: "back:",
+    keywords: ["back", "previous", "prev"],
+  },
+  {
+    id: "forward",
+    label: "Forward",
+    hint: "Show upcoming pages for this tab",
+    prefix: "forward:",
+    keywords: ["forward", "next", "fwd"],
+  },
+];
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -74,6 +116,16 @@ function createOverlay() {
   inputEl.setAttribute("aria-haspopup", "listbox");
   inputEl.setAttribute("aria-autocomplete", "both");
   inputContainerEl.appendChild(inputEl);
+
+  slashMenuEl = document.createElement("div");
+  slashMenuEl.className = "spotlight-slash-menu";
+  slashMenuEl.id = SLASH_MENU_ID;
+  slashMenuEl.setAttribute("role", "listbox");
+  slashMenuEl.hidden = true;
+  slashMenuListEl = document.createElement("ul");
+  slashMenuListEl.className = "spotlight-slash-menu-list";
+  slashMenuEl.appendChild(slashMenuListEl);
+  inputContainerEl.appendChild(slashMenuEl);
   inputWrapper.appendChild(inputContainerEl);
 
   subfilterContainerEl = document.createElement("div");
@@ -174,6 +226,203 @@ function updateSubfilterState(payload) {
     selectedSubfilter = null;
   }
   renderSubfilters();
+}
+
+function resetSlashMenu() {
+  slashMenuState = { open: false, items: [], activeIndex: -1, query: "" };
+  if (slashMenuListEl) {
+    slashMenuListEl.innerHTML = "";
+  }
+  if (slashMenuEl) {
+    slashMenuEl.hidden = true;
+    slashMenuEl.classList.remove("open");
+  }
+  if (inputEl) {
+    inputEl.setAttribute("aria-expanded", "false");
+    const activeDescendant = inputEl.getAttribute("aria-activedescendant") || "";
+    if (activeDescendant.startsWith(`${SLASH_MENU_ID}-option-`)) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
+  }
+}
+
+function isSlashMenuOpen() {
+  return slashMenuState.open && Array.isArray(slashMenuState.items) && slashMenuState.items.length > 0;
+}
+
+function filterSlashCommands(query) {
+  const normalized = (query || "").trim().toLowerCase();
+  const scored = [];
+  SLASH_COMMANDS.forEach((command) => {
+    const keys = [command.label, command.prefix, command.id, ...(command.keywords || [])];
+    let score = 0;
+    for (const key of keys) {
+      if (!key) continue;
+      const lower = key.toLowerCase();
+      if (!normalized) {
+        score = Math.max(score, 2);
+      } else if (lower.startsWith(normalized)) {
+        score = Math.max(score, 3);
+      } else if (lower.includes(normalized)) {
+        score = Math.max(score, 1);
+      }
+    }
+    if (normalized && score === 0) {
+      return;
+    }
+    scored.push({ command, score });
+  });
+  scored.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    return a.command.label.localeCompare(b.command.label);
+  });
+  return scored.map((entry) => entry.command);
+}
+
+function renderSlashMenu() {
+  if (!slashMenuEl || !slashMenuListEl) {
+    return;
+  }
+  slashMenuListEl.innerHTML = "";
+  const items = Array.isArray(slashMenuState.items) ? slashMenuState.items : [];
+  if (!items.length) {
+    slashMenuEl.hidden = true;
+    slashMenuEl.classList.remove("open");
+    return;
+  }
+  slashMenuEl.hidden = false;
+  slashMenuEl.classList.add("open");
+  items.forEach((item, index) => {
+    const option = document.createElement("li");
+    option.className = "spotlight-slash-option";
+    option.setAttribute("role", "option");
+    option.id = `${SLASH_MENU_ID}-option-${item.id}`;
+    if (index === slashMenuState.activeIndex) {
+      option.classList.add("active");
+    }
+
+    const label = document.createElement("div");
+    label.className = "spotlight-slash-option-label";
+    label.textContent = item.label;
+    option.appendChild(label);
+
+    if (item.hint) {
+      const hint = document.createElement("div");
+      hint.className = "spotlight-slash-option-hint";
+      hint.textContent = item.hint;
+      option.appendChild(hint);
+    }
+
+    option.addEventListener("pointerover", () => {
+      if (slashMenuState.activeIndex !== index) {
+        slashMenuState.activeIndex = index;
+        renderSlashMenu();
+      }
+    });
+
+    option.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+
+    option.addEventListener("click", () => {
+      applySlashCommand(item);
+    });
+
+    slashMenuListEl.appendChild(option);
+  });
+
+  if (inputEl) {
+    const active = slashMenuState.items[slashMenuState.activeIndex] || null;
+    if (active) {
+      inputEl.setAttribute("aria-activedescendant", `${SLASH_MENU_ID}-option-${active.id}`);
+    }
+  }
+}
+
+function openSlashMenuWith(items, query) {
+  if (!Array.isArray(items) || !items.length) {
+    resetSlashMenu();
+    return;
+  }
+  slashMenuState = {
+    open: true,
+    items: items.slice(0, RESULTS_LIMIT),
+    activeIndex: 0,
+    query: query || "",
+  };
+  if (inputEl) {
+    inputEl.setAttribute("aria-expanded", "true");
+  }
+  renderSlashMenu();
+}
+
+function closeSlashMenu() {
+  if (!slashMenuState.open) {
+    return;
+  }
+  resetSlashMenu();
+}
+
+function moveSlashMenuSelection(delta) {
+  if (!isSlashMenuOpen()) {
+    return;
+  }
+  const length = slashMenuState.items.length;
+  slashMenuState.activeIndex = (slashMenuState.activeIndex + delta + length) % length;
+  renderSlashMenu();
+}
+
+function applySlashCommand(command) {
+  if (!command || !inputEl) {
+    return;
+  }
+  const prefix = typeof command.prefix === "string" ? command.prefix : "";
+  const insertion = prefix.endsWith(" ") ? prefix : `${prefix} `;
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  inputEl.value = insertion;
+  inputEl.setSelectionRange(insertion.length, insertion.length);
+  closeSlashMenu();
+  setGhostText("");
+  requestResults(inputEl.value);
+}
+
+function updateSlashMenuFromInput() {
+  if (!inputEl) {
+    return;
+  }
+  const value = inputEl.value || "";
+  if (!value.startsWith("/")) {
+    closeSlashMenu();
+    return;
+  }
+  const caret = inputEl.selectionStart === null ? value.length : inputEl.selectionStart;
+  const anchor = inputEl.selectionEnd === null ? value.length : inputEl.selectionEnd;
+  if (caret !== anchor) {
+    closeSlashMenu();
+    return;
+  }
+  if (caret < 1) {
+    openSlashMenuWith(filterSlashCommands(""), "");
+    return;
+  }
+  const spaceIndex = value.indexOf(" ", 1);
+  const segmentEnd = spaceIndex === -1 ? value.length : spaceIndex;
+  if (caret > segmentEnd) {
+    closeSlashMenu();
+    return;
+  }
+  const segment = value.slice(1, segmentEnd);
+  const matches = filterSlashCommands(segment);
+  if (!matches.length) {
+    closeSlashMenu();
+    return;
+  }
+  openSlashMenuWith(matches, segment);
 }
 
 function getActiveSubfilterLabel() {
@@ -290,6 +539,7 @@ function openOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  resetSlashMenu();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -320,6 +570,7 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  resetSlashMenu();
   setGhostText("");
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
@@ -329,17 +580,53 @@ function closeOverlay() {
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
   if (event.key === "Escape") {
+    if (isSlashMenuOpen()) {
+      event.preventDefault();
+      closeSlashMenu();
+      return;
+    }
     event.preventDefault();
     closeOverlay();
     return;
   }
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+  if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !isSlashMenuOpen()) {
     event.preventDefault();
     navigateResults(event.key === "ArrowDown" ? 1 : -1);
   }
 }
 
 function handleInputKeydown(event) {
+  if (isSlashMenuOpen()) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSlashMenuSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if ((event.key === "Tab" && !event.shiftKey) || event.key === "Enter") {
+      const activeCommand = slashMenuState.items[slashMenuState.activeIndex] || slashMenuState.items[0];
+      if (activeCommand) {
+        event.preventDefault();
+        applySlashCommand(activeCommand);
+        return;
+      }
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSlashMenu();
+      return;
+    }
+    if (
+      event.key === "ArrowLeft" ||
+      event.key === "ArrowRight" ||
+      event.key === "Backspace" ||
+      event.key === "Delete"
+    ) {
+      setTimeout(() => {
+        updateSlashMenuFromInput();
+      }, 0);
+    }
+  }
+
   const selectionAtEnd =
     inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
   if (
@@ -380,6 +667,7 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  updateSlashMenuFromInput();
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
     lastRequestId = ++requestCounter;
@@ -489,6 +777,13 @@ function setGhostText(text) {
     return;
   }
 
+  if (isSlashMenuOpen()) {
+    ghostSuggestionText = "";
+    ghostEl.textContent = "";
+    ghostEl.classList.remove("visible");
+    return;
+  }
+
   const value = inputEl.value;
   let suggestion = text && matchesGhostPrefix(value, text) ? text : "";
   if (suggestion) {
@@ -562,8 +857,10 @@ function openResult(result) {
       payload.args = result.args;
     }
     chrome.runtime.sendMessage(payload);
-  } else {
+  } else if (typeof result.id === "number") {
     chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  } else if (result.openUrl || result.url) {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN_URL", url: result.openUrl || result.url });
   }
   closeOverlay();
 }
@@ -676,6 +973,10 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "back":
+      return "back history";
+    case "forward":
+      return "forward history";
     default:
       return "";
   }

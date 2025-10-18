@@ -3,6 +3,7 @@ export function registerMessageHandlers({
   runSearch,
   executeCommand,
   resolveFaviconForTarget,
+  navigation,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -10,11 +11,19 @@ export function registerMessageHandlers({
     }
 
     if (message.type === "SPOTLIGHT_QUERY") {
-      context
-        .ensureIndex()
-        .then((data) => {
+      const navigationPromise = navigation?.getActiveState?.() || Promise.resolve({
+        tabId: null,
+        current: null,
+        back: [],
+        forward: [],
+      });
+      Promise.all([context.ensureIndex(), navigationPromise])
+        .then(([data, navigationState]) => {
           const payload =
-            runSearch(message.query || "", data, { subfilter: message.subfilter }) || {};
+            runSearch(message.query || "", data, {
+              subfilter: message.subfilter,
+              navigation: navigationState,
+            }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
           }
@@ -82,6 +91,22 @@ export function registerMessageHandlers({
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
         });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_OPEN_URL") {
+      const targetUrl = typeof message.url === "string" ? message.url : "";
+      if (!targetUrl) {
+        sendResponse({ success: false, error: "Invalid URL" });
+        return false;
+      }
+      chrome.tabs.create({ url: targetUrl }, () => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        sendResponse({ success: true });
+      });
       return true;
     }
 

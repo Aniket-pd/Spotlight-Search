@@ -19,7 +19,11 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  back: ["back:", "previous:", "prev:", "backward:"],
+  forward: ["forward:", "fwd:", "next:"],
 };
+
+const NAVIGATION_FILTERS = new Set(["back", "forward"]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
@@ -713,6 +717,183 @@ function collectDomainMatches(tabs, query) {
     .slice(0, 5);
 }
 
+function buildItemsByUrlMap(items = []) {
+  const map = new Map();
+  for (const item of items || []) {
+    if (!item || typeof item.url !== "string" || !item.url) {
+      continue;
+    }
+    if (!map.has(item.url)) {
+      map.set(item.url, []);
+    }
+    map.get(item.url).push(item);
+  }
+  return map;
+}
+
+function sortNavigationCandidates(a, b) {
+  const typePreference = { history: 3, tab: 2, bookmark: 1 };
+  const scoreA = typePreference[a.type] || 0;
+  const scoreB = typePreference[b.type] || 0;
+  if (scoreA !== scoreB) {
+    return scoreB - scoreA;
+  }
+  const timeA = a.lastVisitTime || a.lastAccessed || a.dateAdded || 0;
+  const timeB = b.lastVisitTime || b.lastAccessed || b.dateAdded || 0;
+  if (timeA !== timeB) {
+    return timeB - timeA;
+  }
+  const titleA = a.title || "";
+  const titleB = b.title || "";
+  return titleA.localeCompare(titleB);
+}
+
+function pickBestItemForUrl(map, url) {
+  if (!url) {
+    return null;
+  }
+  const candidates = map.get(url);
+  if (!candidates || !candidates.length) {
+    return null;
+  }
+  const sorted = candidates.slice().sort(sortNavigationCandidates);
+  return sorted[0] || null;
+}
+
+function formatRelativeTime(timestamp) {
+  if (!timestamp || typeof timestamp !== "number") {
+    return "";
+  }
+  const now = Date.now();
+  const diff = Math.max(0, now - timestamp);
+  const minutes = Math.round(diff / 60000);
+  if (minutes <= 0) {
+    return "Just now";
+  }
+  if (minutes === 1) {
+    return "1 minute ago";
+  }
+  if (minutes < 60) {
+    return `${minutes} minutes ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours === 1) {
+    return "1 hour ago";
+  }
+  if (hours < 24) {
+    return `${hours} hours ago`;
+  }
+  const days = Math.round(hours / 24);
+  if (days === 1) {
+    return "1 day ago";
+  }
+  if (days < 7) {
+    return `${days} days ago`;
+  }
+  const weeks = Math.round(days / 7);
+  if (weeks === 1) {
+    return "1 week ago";
+  }
+  if (weeks < 5) {
+    return `${weeks} weeks ago`;
+  }
+  const months = Math.round(days / 30);
+  if (months === 1) {
+    return "1 month ago";
+  }
+  if (months < 12) {
+    return `${months} months ago`;
+  }
+  const years = Math.round(days / 365);
+  if (years === 1) {
+    return "1 year ago";
+  }
+  return `${years} years ago`;
+}
+
+function formatNavigationDescription(url, timestamp) {
+  const host = extractHostname(url);
+  const relative = formatRelativeTime(timestamp);
+  if (host && relative) {
+    return `${host} · ${relative}`;
+  }
+  if (host) {
+    return host;
+  }
+  return relative;
+}
+
+function mapNavigationEntryToResult(entry, direction, itemsByUrl) {
+  if (!entry || !entry.url) {
+    return null;
+  }
+  const bestItem = pickBestItemForUrl(itemsByUrl, entry.url);
+  const description = formatNavigationDescription(entry.url, entry.time);
+  if (bestItem) {
+    return {
+      id: bestItem.id,
+      title: bestItem.title || entry.title || bestItem.url,
+      url: bestItem.url || entry.url,
+      type: bestItem.type || "history",
+      description: description || bestItem.url || entry.url,
+      faviconUrl: bestItem.faviconUrl || null,
+      origin: bestItem.origin || "",
+      tabId: bestItem.tabId,
+      navigationEntryId: entry.entryId,
+      navigationDirection: direction,
+    };
+  }
+  return {
+    id: `navigation:${direction}:${entry.entryId}`,
+    title: entry.title || entry.url,
+    url: entry.url,
+    description: description || entry.url,
+    type: "history",
+    faviconUrl: null,
+    origin: "",
+    navigationEntryId: entry.entryId,
+    navigationDirection: direction,
+    openUrl: entry.url,
+  };
+}
+
+function collectNavigationResults(filterType, query, data, navigationState) {
+  const entries =
+    filterType === "back"
+      ? navigationState?.back || []
+      : navigationState?.forward || [];
+  if (!entries.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+  const normalizedQuery = (query || "").trim().toLowerCase();
+  const itemsByUrl = buildItemsByUrlMap(data?.items || []);
+  const results = [];
+  for (const entry of entries) {
+    if (!entry || !entry.url) {
+      continue;
+    }
+    if (normalizedQuery) {
+      const haystack = `${entry.title || ""} ${entry.url}`.toLowerCase();
+      if (!haystack.includes(normalizedQuery)) {
+        continue;
+      }
+    }
+    const mapped = mapNavigationEntryToResult(entry, filterType, itemsByUrl);
+    if (mapped) {
+      results.push(mapped);
+    }
+    if (results.length >= MAX_RESULTS) {
+      break;
+    }
+  }
+  const answer = !normalizedQuery
+    ? filterType === "back"
+      ? "Recently visited pages in this tab."
+      : "Upcoming pages in this tab's history."
+    : "";
+  return { results, ghost: null, answer };
+}
+
 function collectCommandSuggestions(query, context) {
   const suggestions = [];
   let ghost = null;
@@ -828,9 +1009,21 @@ export function runSearch(query, data, options = {}) {
   const { filterType, remainder } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
   const { index, termBuckets, items, metadata = {} } = data;
+  const navigationState = options?.navigation || { current: null, back: [], forward: [] };
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+
+  if (NAVIGATION_FILTERS.has(filterType)) {
+    const navigationResults = collectNavigationResults(filterType, trimmed, data, navigationState);
+    return {
+      results: navigationResults.results,
+      ghost: navigationResults.ghost,
+      answer: navigationResults.answer,
+      filter: filterType,
+      subfilters: null,
+    };
+  }
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
