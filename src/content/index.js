@@ -28,6 +28,9 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 
+const pendingDownloadRenderIds = new Set();
+let downloadRenderScheduled = false;
+
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
 let faviconQueue = [];
@@ -860,6 +863,7 @@ function openResult(result) {
 
 function renderResults(options = {}) {
   const { scrollActive = true } = options;
+  pendingDownloadRenderIds.clear();
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -1192,60 +1196,144 @@ function applyDownloadUpdate(update) {
 }
 
 function refreshDownloadResults(targetIds) {
-  if (!resultsEl || !targetIds || !targetIds.size) {
+  if (!isOpen || !resultsEl || !targetIds || !targetIds.size) {
     return;
   }
-  let updated = false;
-  let visibleMatch = false;
-  const items = Array.from(resultsEl.querySelectorAll(".spotlight-result"));
-  items.forEach((itemEl, index) => {
-    const idAttr = itemEl.dataset.resultId;
-    const numericId = typeof idAttr === "string" ? Number(idAttr) : NaN;
-    const hasNumericMatch = Number.isFinite(numericId) && targetIds.has(numericId);
-    const hasStringMatch = typeof idAttr === "string" && targetIds.has(idAttr);
-    if (!hasNumericMatch && !hasStringMatch) {
+  targetIds.forEach((value) => {
+    if (value === null || value === undefined) {
       return;
     }
-    visibleMatch = true;
-    const result = resultsState.find((entry) => {
-      if (!entry || entry.type !== "download") {
-        return false;
-      }
-      if (Number.isFinite(numericId) && entry.id === numericId) {
-        return true;
-      }
-      return typeof idAttr === "string" && String(entry.id) === idAttr;
-    });
-    if (!result) {
-      return;
-    }
-    const replacement = createResultListItem(result, index);
-    if (replacement) {
-      itemEl.replaceWith(replacement);
-      updated = true;
+    pendingDownloadRenderIds.add(String(value));
+  });
+  scheduleDownloadRender();
+}
+
+function scheduleDownloadRender() {
+  if (downloadRenderScheduled) {
+    return;
+  }
+  downloadRenderScheduled = true;
+  const scheduleFrame =
+    typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame.bind(window)
+      : (callback) => setTimeout(callback, 16);
+  scheduleFrame(() => {
+    downloadRenderScheduled = false;
+    processPendingDownloadRenders();
+  });
+}
+
+function processPendingDownloadRenders() {
+  if (!isOpen || !resultsEl || !pendingDownloadRenderIds.size) {
+    pendingDownloadRenderIds.clear();
+    return;
+  }
+
+  const targetIds = Array.from(pendingDownloadRenderIds);
+  pendingDownloadRenderIds.clear();
+
+  const elements = Array.from(resultsEl.querySelectorAll(".spotlight-result"));
+  const elementLookup = new Map();
+  elements.forEach((itemEl, index) => {
+    const idAttr = typeof itemEl.dataset.resultId === "string" ? itemEl.dataset.resultId : "";
+    if (idAttr) {
+      elementLookup.set(idAttr, { itemEl, index });
     }
   });
-  if (updated) {
+
+  let updatedAny = false;
+  let needsFullRender = false;
+
+  targetIds.forEach((rawId) => {
+    if (needsFullRender) {
+      return;
+    }
+    const normalizedId = String(rawId);
+    const result = resultsState.find((entry) => entry && String(entry.id) === normalizedId);
+    if (!result || result.type !== "download") {
+      return;
+    }
+    const record = elementLookup.get(normalizedId);
+    if (!record) {
+      needsFullRender = true;
+      return;
+    }
+    if (!updateResultElement(record.itemEl, result, record.index)) {
+      needsFullRender = true;
+      return;
+    }
+    updatedAny = true;
+  });
+
+  if (needsFullRender) {
+    const previousScrollTop = resultsEl.scrollTop;
+    renderResults({ scrollActive: false });
+    if (typeof previousScrollTop === "number" && previousScrollTop >= 0) {
+      resultsEl.scrollTop = previousScrollTop;
+    }
+    return;
+  }
+
+  if (updatedAny) {
     updateActiveResult({ scroll: false });
-    return;
   }
-  if (!visibleMatch) {
-    return;
+}
+
+function updateResultElement(itemEl, result, index) {
+  if (!itemEl || !result) {
+    return false;
   }
-  const previousActiveId =
-    activeIndex >= 0 && resultsState[activeIndex] ? resultsState[activeIndex].id : null;
-  const previousScrollTop = resultsEl.scrollTop;
-  const nextActiveIndex =
-    previousActiveId !== null
-      ? resultsState.findIndex((entry) => entry && entry.id === previousActiveId)
-      : -1;
-  if (nextActiveIndex >= 0) {
-    activeIndex = nextActiveIndex;
+
+  if (typeof index === "number" && index >= 0) {
+    itemEl.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
   }
-  renderResults({ scrollActive: false });
-  if (typeof previousScrollTop === "number" && previousScrollTop >= 0) {
-    resultsEl.scrollTop = previousScrollTop;
+  itemEl.dataset.resultId = String(result.id);
+  const origin = getResultOrigin(result);
+  if (origin) {
+    itemEl.dataset.origin = origin;
+  } else {
+    delete itemEl.dataset.origin;
   }
+
+  if (result.type === "command") {
+    itemEl.classList.add("spotlight-result-command");
+  } else {
+    itemEl.classList.remove("spotlight-result-command");
+  }
+
+  const titleEl = itemEl.querySelector(".spotlight-result-title");
+  if (titleEl) {
+    titleEl.textContent = result.title || result.url || "";
+  }
+
+  const metaEl = itemEl.querySelector(".spotlight-result-url");
+  if (metaEl) {
+    if (result.type === "download") {
+      metaEl.textContent = result.displayStatus || result.description || result.url || "";
+    } else {
+      metaEl.textContent = result.description || result.url || "";
+    }
+  }
+
+  const typeEl = itemEl.querySelector(".spotlight-result-type");
+  if (typeEl) {
+    typeEl.textContent = formatTypeLabel(result.type, result);
+    typeEl.className = `spotlight-result-type type-${result.type}`;
+  }
+
+  if (result.type === "download") {
+    if (!updateDownloadIconElement(itemEl, result)) {
+      const icon = createDownloadIcon(result);
+      const existing = itemEl.querySelector(".spotlight-result-icon");
+      if (existing) {
+        existing.replaceWith(icon);
+      } else {
+        itemEl.insertBefore(icon, itemEl.firstChild || null);
+      }
+    }
+  }
+
+  return true;
 }
 
 function createDownloadIcon(result) {
@@ -1276,6 +1364,33 @@ function createDownloadIcon(result) {
   wrapper.appendChild(ring);
 
   return wrapper;
+}
+
+function updateDownloadIconElement(container, result) {
+  if (!container) {
+    return false;
+  }
+  const iconWrapper = container.querySelector(".spotlight-result-icon.download");
+  if (!iconWrapper) {
+    return false;
+  }
+  const ring = iconWrapper.querySelector(".spotlight-download-progress");
+  if (!ring) {
+    return false;
+  }
+  const progressValue =
+    typeof result?.progress === "number" && Number.isFinite(result.progress)
+      ? Math.max(0, Math.min(1, result.progress))
+      : null;
+  if (progressValue !== null) {
+    const degrees = Math.max(0, Math.min(360, Math.round(progressValue * 360)));
+    ring.classList.remove("indeterminate");
+    ring.style.setProperty("--progress", `${degrees}deg`);
+  } else {
+    ring.classList.add("indeterminate");
+    ring.style.removeProperty("--progress");
+  }
+  return true;
 }
 
 function scheduleIdleWork(callback) {
