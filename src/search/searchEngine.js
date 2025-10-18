@@ -24,7 +24,7 @@ const COMMAND_ICON_DATA_URL =
 const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
-  history: ["history:", "hist:", "h:"],
+  history: ["history:", "hist:", "h:", "back:", "forward:"],
 };
 
 const STATIC_COMMANDS = [
