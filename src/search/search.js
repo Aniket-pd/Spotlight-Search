@@ -19,7 +19,14 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  back: ["back:"],
+  forward: ["forward:"],
 };
+
+const NAVIGATION_FILTERS = new Set(["back", "forward"]);
+const MAX_NAVIGATION_RESULTS = 12;
+const NAVIGATION_BASE_SCORE = 120;
+const NAVIGATION_STEP_PENALTY = 6;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
@@ -823,6 +830,98 @@ function extractFilterPrefix(query) {
   return { filterType: null, remainder: query };
 }
 
+function computeNavigationOrigin(url) {
+  if (!url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.origin || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function buildNavigationResults(filterType, query, navigationState) {
+  if (!NAVIGATION_FILTERS.has(filterType)) {
+    return [];
+  }
+  const state = navigationState || {};
+  const tabId = typeof state.tabId === "number" ? state.tabId : null;
+  const sourceList = filterType === "back" ? state.back || [] : state.forward || [];
+  if (!sourceList.length) {
+    return [];
+  }
+  const tokens = tokenize(query).map((token) => token.toLowerCase());
+  const results = [];
+  sourceList.forEach((entry, index) => {
+    if (!entry || !entry.url) {
+      return;
+    }
+    const delta = typeof entry.delta === "number"
+      ? entry.delta
+      : filterType === "back"
+      ? -(index + 1)
+      : index + 1;
+    const normalizedDelta = Math.abs(delta);
+    const baseScore = Math.max(0, NAVIGATION_BASE_SCORE - NAVIGATION_STEP_PENALTY * Math.min(normalizedDelta, 20));
+    const title = entry.title || entry.url || "Untitled";
+    if (tokens.length) {
+      const haystack = `${title} ${entry.url}`.toLowerCase();
+      let matches = 0;
+      for (const token of tokens) {
+        if (haystack.includes(token)) {
+          matches += 1;
+        } else {
+          matches -= 0.35;
+        }
+      }
+      if (matches <= 0) {
+        return;
+      }
+      results.push({
+        id: `nav-${filterType}-${tabId ?? "tab"}-${index}`,
+        title,
+        url: entry.url,
+        description: entry.url,
+        type: "navigation",
+        direction: filterType,
+        navigationDelta: delta,
+        score: baseScore + matches * 14,
+        faviconUrl: entry.faviconUrl || null,
+        origin: entry.origin || computeNavigationOrigin(entry.url),
+        tabId,
+        timeStamp: entry.timeStamp || Date.now(),
+      });
+      return;
+    }
+    results.push({
+      id: `nav-${filterType}-${tabId ?? "tab"}-${index}`,
+      title,
+      url: entry.url,
+      description: entry.url,
+      type: "navigation",
+      direction: filterType,
+      navigationDelta: delta,
+      score: baseScore,
+      faviconUrl: entry.faviconUrl || null,
+      origin: entry.origin || computeNavigationOrigin(entry.url),
+      tabId,
+      timeStamp: entry.timeStamp || Date.now(),
+    });
+  });
+
+  results.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.timeStamp && b.timeStamp && a.timeStamp !== b.timeStamp) {
+      return b.timeStamp - a.timeStamp;
+    }
+    return (a.title || "").localeCompare(b.title || "");
+  });
+
+  return results.slice(0, MAX_NAVIGATION_RESULTS);
+}
+
 export function runSearch(query, data, options = {}) {
   const initial = (query || "").trim();
   const { filterType, remainder } = extractFilterPrefix(initial);
@@ -831,6 +930,19 @@ export function runSearch(query, data, options = {}) {
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+
+  const navigationState = options.navigation || null;
+
+  if (NAVIGATION_FILTERS.has(filterType)) {
+    const navigationResults = buildNavigationResults(filterType, trimmed, navigationState);
+    return {
+      results: navigationResults,
+      ghost: null,
+      answer: "",
+      filter: filterType,
+      subfilters: null,
+    };
+  }
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];

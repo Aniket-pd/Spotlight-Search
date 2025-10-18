@@ -23,6 +23,10 @@ let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
 let subfilterState = { type: null, options: [], activeId: null };
 let selectedSubfilter = null;
+let slashMenuEl = null;
+let slashMenuOptions = [];
+let slashMenuVisible = false;
+let slashMenuActiveIndex = -1;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -43,6 +47,52 @@ const PLACEHOLDER_COLORS = [
   "#F97316",
   "#FBBF24",
 ];
+
+const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
+const SLASH_COMMAND_DEFINITIONS = [
+  {
+    id: "slash-tab",
+    label: "Tabs",
+    hint: "Show open tabs",
+    value: "tab:",
+    keywords: ["tab", "tabs", "open tabs", "t"],
+  },
+  {
+    id: "slash-bookmark",
+    label: "Bookmarks",
+    hint: "Search saved bookmarks",
+    value: "bookmark:",
+    keywords: ["bookmark", "bookmarks", "bm", "saved"],
+  },
+  {
+    id: "slash-history",
+    label: "History",
+    hint: "Browse recent history",
+    value: "history:",
+    keywords: ["history", "hist", "recent", "visited"],
+  },
+  {
+    id: "slash-back",
+    label: "Back",
+    hint: "Current tab back history",
+    value: "back:",
+    keywords: ["back", "previous", "history", "navigate"],
+  },
+  {
+    id: "slash-forward",
+    label: "Forward",
+    hint: "Current tab forward history",
+    value: "forward:",
+    keywords: ["forward", "ahead", "history", "navigate"],
+  },
+];
+
+const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
+  ...definition,
+  searchTokens: [definition.label, ...(definition.keywords || [])]
+    .map((token) => (token || "").toLowerCase())
+    .filter(Boolean),
+}));
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -74,6 +124,13 @@ function createOverlay() {
   inputEl.setAttribute("aria-haspopup", "listbox");
   inputEl.setAttribute("aria-autocomplete", "both");
   inputContainerEl.appendChild(inputEl);
+
+  slashMenuEl = document.createElement("div");
+  slashMenuEl.className = "spotlight-slash-menu";
+  slashMenuEl.setAttribute("role", "listbox");
+  slashMenuEl.setAttribute("aria-hidden", "true");
+  inputContainerEl.appendChild(slashMenuEl);
+
   inputWrapper.appendChild(inputContainerEl);
 
   subfilterContainerEl = document.createElement("div");
@@ -122,6 +179,180 @@ function createOverlay() {
     }
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
+}
+
+function resetSlashMenuState() {
+  slashMenuOptions = [];
+  slashMenuVisible = false;
+  slashMenuActiveIndex = -1;
+  if (slashMenuEl) {
+    slashMenuEl.innerHTML = "";
+    slashMenuEl.classList.remove("visible");
+    slashMenuEl.setAttribute("aria-hidden", "true");
+    slashMenuEl.removeAttribute("aria-activedescendant");
+  }
+}
+
+function extractSlashQuery(value, caretIndex) {
+  if (!value || value[0] !== "/") {
+    return null;
+  }
+  const caret = typeof caretIndex === "number" ? caretIndex : value.length;
+  if (caret < 0) {
+    return null;
+  }
+  const beforeCaret = value.slice(0, caret);
+  if (beforeCaret.includes("\n")) {
+    return null;
+  }
+  if (beforeCaret.indexOf(" ") !== -1) {
+    return null;
+  }
+  return beforeCaret.slice(1);
+}
+
+function computeSlashCandidates(query) {
+  const normalized = (query || "").trim().toLowerCase();
+  const scored = SLASH_COMMANDS.map((option) => {
+    if (!normalized) {
+      return { option, score: 1 };
+    }
+    let score = 0;
+    for (const token of option.searchTokens) {
+      if (!token) continue;
+      if (token.startsWith(normalized)) {
+        score = Math.max(score, 3);
+      } else if (token.includes(normalized)) {
+        score = Math.max(score, 2);
+      }
+    }
+    return { option, score };
+  }).filter((entry) => (normalized ? entry.score > 0 : true));
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.option.label.localeCompare(b.option.label);
+  });
+
+  return scored.map((entry) => entry.option);
+}
+
+function renderSlashMenu() {
+  if (!slashMenuEl) {
+    return;
+  }
+  slashMenuEl.innerHTML = "";
+  if (!slashMenuVisible || !slashMenuOptions.length) {
+    slashMenuEl.classList.remove("visible");
+    slashMenuEl.setAttribute("aria-hidden", "true");
+    slashMenuEl.removeAttribute("aria-activedescendant");
+    return;
+  }
+
+  slashMenuEl.classList.add("visible");
+  slashMenuEl.setAttribute("aria-hidden", "false");
+  slashMenuEl.removeAttribute("aria-activedescendant");
+
+  slashMenuOptions.forEach((option, index) => {
+    const optionId = `${SLASH_OPTION_ID_PREFIX}${option.id}`;
+    const item = document.createElement("div");
+    item.className = "spotlight-slash-option";
+    item.id = optionId;
+    item.setAttribute("role", "option");
+    if (index === slashMenuActiveIndex) {
+      item.classList.add("active");
+      slashMenuEl.setAttribute("aria-activedescendant", optionId);
+    }
+    const label = document.createElement("div");
+    label.className = "spotlight-slash-option-label";
+    label.textContent = option.label;
+    item.appendChild(label);
+
+    if (option.hint) {
+      const hint = document.createElement("div");
+      hint.className = "spotlight-slash-option-hint";
+      hint.textContent = option.hint;
+      item.appendChild(hint);
+    }
+
+    item.addEventListener("pointerenter", () => {
+      if (slashMenuActiveIndex !== index) {
+        slashMenuActiveIndex = index;
+        renderSlashMenu();
+      }
+    });
+
+    item.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+
+    item.addEventListener("click", () => {
+      applySlashSelection(option);
+    });
+
+    slashMenuEl.appendChild(item);
+  });
+}
+
+function updateSlashMenu() {
+  if (!inputEl) {
+    return;
+  }
+  const caret = typeof inputEl.selectionStart === "number" ? inputEl.selectionStart : inputEl.value.length;
+  const slashSegment = extractSlashQuery(inputEl.value, caret);
+  if (slashSegment === null) {
+    if (slashMenuVisible) {
+      resetSlashMenuState();
+    }
+    return;
+  }
+
+  const normalized = slashSegment.trim().toLowerCase();
+  const previousActiveId = slashMenuOptions[slashMenuActiveIndex]?.id || null;
+  const nextOptions = computeSlashCandidates(normalized);
+  if (!nextOptions.length) {
+    resetSlashMenuState();
+    return;
+  }
+
+  slashMenuOptions = nextOptions;
+  slashMenuVisible = true;
+  const reuseIndex = previousActiveId
+    ? slashMenuOptions.findIndex((option) => option.id === previousActiveId)
+    : -1;
+  slashMenuActiveIndex = reuseIndex >= 0 ? reuseIndex : 0;
+  renderSlashMenu();
+  setGhostText("");
+}
+
+function getActiveSlashOption() {
+  if (!slashMenuVisible || !slashMenuOptions.length) {
+    return null;
+  }
+  return slashMenuOptions[Math.max(0, Math.min(slashMenuActiveIndex, slashMenuOptions.length - 1))] || null;
+}
+
+function moveSlashSelection(delta) {
+  if (!slashMenuVisible || !slashMenuOptions.length) {
+    return;
+  }
+  const count = slashMenuOptions.length;
+  slashMenuActiveIndex = (slashMenuActiveIndex + delta + count) % count;
+  renderSlashMenu();
+}
+
+function applySlashSelection(option) {
+  if (!option || !inputEl) {
+    return false;
+  }
+  const base = option.value.endsWith(" ") ? option.value : `${option.value} `;
+  inputEl.focus({ preventScroll: true });
+  inputEl.value = base;
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  resetSlashMenuState();
+  setGhostText("");
+  handleInputChange();
+  return true;
 }
 
 function resetSubfilterState() {
@@ -293,6 +524,7 @@ function openOverlay() {
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
+  resetSlashMenuState();
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -321,6 +553,7 @@ function closeOverlay() {
   activeFilter = null;
   resetSubfilterState();
   setGhostText("");
+  resetSlashMenuState();
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
@@ -328,6 +561,9 @@ function closeOverlay() {
 
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
+  if (slashMenuVisible && slashMenuOptions.length) {
+    return;
+  }
   if (event.key === "Escape") {
     event.preventDefault();
     closeOverlay();
@@ -340,6 +576,26 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  if (slashMenuVisible && slashMenuOptions.length) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSlashSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) {
+      const applied = applySlashSelection(getActiveSlashOption());
+      if (applied) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetSlashMenuState();
+      return;
+    }
+  }
+
   const selectionAtEnd =
     inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
   if (
@@ -348,7 +604,8 @@ function handleInputKeydown(event) {
     !event.ctrlKey &&
     !event.metaKey &&
     selectionAtEnd &&
-    ghostSuggestionText
+    ghostSuggestionText &&
+    !slashMenuVisible
   ) {
     const applied = applyGhostSuggestion();
     if (applied) {
@@ -380,6 +637,7 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  updateSlashMenu();
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
     lastRequestId = ++requestCounter;
@@ -434,7 +692,7 @@ function requestResults(query) {
 
       const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
       const answer = typeof response.answer === "string" ? response.answer : "";
-      setGhostText(ghost);
+      setGhostText(slashMenuVisible ? "" : ghost);
       const filterLabel = getFilterStatusLabel(activeFilter);
       const subfilterLabel = getActiveSubfilterLabel();
       let statusMessage = "";
@@ -562,9 +820,24 @@ function openResult(result) {
       payload.args = result.args;
     }
     chrome.runtime.sendMessage(payload);
-  } else {
-    chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+    closeOverlay();
+    return;
   }
+  if (result.type === "navigation") {
+    if (typeof result.navigationDelta === "number" && typeof result.tabId === "number") {
+      chrome.runtime.sendMessage(
+        { type: "SPOTLIGHT_NAVIGATE", tabId: result.tabId, delta: result.navigationDelta },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.warn("Spotlight navigation error", chrome.runtime.lastError);
+          }
+        }
+      );
+    }
+    closeOverlay();
+    return;
+  }
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   closeOverlay();
 }
 
@@ -676,6 +949,10 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "back":
+      return "back history";
+    case "forward":
+      return "forward history";
     default:
       return "";
   }
@@ -707,6 +984,11 @@ function formatTypeLabel(type, result) {
       return "History";
     case "command":
       return (result && result.label) || "Command";
+    case "navigation":
+      if (result && result.direction === "forward") {
+        return "Forward";
+      }
+      return "Back";
     default:
       return type || "";
   }

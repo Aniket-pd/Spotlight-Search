@@ -3,6 +3,7 @@ export function registerMessageHandlers({
   runSearch,
   executeCommand,
   resolveFaviconForTarget,
+  navigation,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -10,11 +11,18 @@ export function registerMessageHandlers({
     }
 
     if (message.type === "SPOTLIGHT_QUERY") {
+      const senderTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      const navigationState = navigation
+        ? navigation.getStateForTab(senderTabId)
+        : { tabId: senderTabId, back: [], forward: [] };
       context
         .ensureIndex()
         .then((data) => {
           const payload =
-            runSearch(message.query || "", data, { subfilter: message.subfilter }) || {};
+            runSearch(message.query || "", data, {
+              subfilter: message.subfilter,
+              navigation: navigationState,
+            }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
           }
@@ -80,6 +88,21 @@ export function registerMessageHandlers({
         .then(() => sendResponse({ success: true }))
         .catch((err) => {
           console.error("Spotlight: command failed", err);
+          sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_NAVIGATE") {
+      if (!navigation) {
+        sendResponse({ success: false, error: "Navigation service unavailable" });
+        return true;
+      }
+      navigation
+        .navigateByDelta(message.tabId, message.delta)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error("Spotlight: navigation request failed", err);
           sendResponse({ success: false, error: err?.message });
         });
       return true;
