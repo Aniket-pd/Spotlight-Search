@@ -3,7 +3,15 @@
   "name": "Spotlight for Chrome",
   "description": "Spotlight-style universal search overlay for tabs, bookmarks, and history.",
   "version": "0.1.0",
-  "permissions": ["tabs", "bookmarks", "history", "storage", "scripting", "webNavigation"],
+  "permissions": [
+    "tabs",
+    "bookmarks",
+    "history",
+    "downloads",
+    "storage",
+    "scripting",
+    "webNavigation"
+  ],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"

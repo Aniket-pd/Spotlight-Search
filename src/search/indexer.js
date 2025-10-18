@@ -51,6 +51,36 @@ function extractOrigin(url) {
   }
 }
 
+function extractFilename(path) {
+  if (!path) return "";
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  const last = parts[parts.length - 1];
+  return last || path;
+}
+
+function parseChromeTime(value) {
+  if (!value) {
+    return 0;
+  }
+  try {
+    const time = Date.parse(value);
+    return Number.isNaN(time) ? 0 : time;
+  } catch (err) {
+    return 0;
+  }
+}
+
+function computeDownloadProgress(bytesReceived, totalBytes) {
+  if (typeof totalBytes !== "number" || totalBytes <= 0) {
+    return null;
+  }
+  if (typeof bytesReceived !== "number" || bytesReceived < 0) {
+    return 0;
+  }
+  return Math.min(1, bytesReceived / totalBytes);
+}
+
 async function indexTabs(indexMap, termBuckets, items) {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
@@ -169,6 +199,64 @@ async function indexHistory(indexMap, termBuckets, items) {
   }
 }
 
+async function indexDownloads(indexMap, termBuckets, items) {
+  let downloads = [];
+  try {
+    downloads = await chrome.downloads.search({});
+  } catch (err) {
+    console.warn("Spotlight: unable to index downloads", err);
+    return;
+  }
+
+  downloads = downloads
+    .slice()
+    .sort((a, b) => parseChromeTime(b.startTime) - parseChromeTime(a.startTime))
+    .slice(0, 200);
+
+  for (const entry of downloads) {
+    const itemId = items.length;
+    const filename = extractFilename(entry.filename || "");
+    const url = entry.finalUrl || entry.url || "";
+    const downloadId = typeof entry.id === "number" ? entry.id : null;
+    const bytesReceived = typeof entry.bytesReceived === "number" ? entry.bytesReceived : 0;
+    const totalBytes = typeof entry.totalBytes === "number" && entry.totalBytes >= 0 ? entry.totalBytes : null;
+    const progress = computeDownloadProgress(bytesReceived, totalBytes);
+    const startedAt = parseChromeTime(entry.startTime);
+    const completedAt = entry.state === "complete" ? parseChromeTime(entry.endTime) : 0;
+    const estimatedEndTime = entry.estimatedEndTime ? parseChromeTime(entry.estimatedEndTime) : 0;
+
+    items.push({
+      id: itemId,
+      type: "download",
+      title: filename || url || "Download",
+      url,
+      downloadId,
+      filename: entry.filename || "",
+      state: entry.state || "in_progress",
+      danger: entry.danger || "safe",
+      bytesReceived,
+      totalBytes,
+      progress,
+      startedAt,
+      completedAt,
+      estimatedEndTime,
+      canResume: Boolean(entry.canResume),
+      paused: Boolean(entry.paused),
+      exists: entry.exists !== false,
+      originalUrl: entry.url || "",
+      referrer: entry.referrer || "",
+      speedBytesPerSecond: null,
+      etaSeconds: null,
+    });
+
+    addToIndex(indexMap, termBuckets, itemId, filename, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, url, URL_WEIGHT);
+    if (entry.referrer) {
+      addToIndex(indexMap, termBuckets, itemId, entry.referrer, URL_WEIGHT);
+    }
+  }
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -178,6 +266,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -191,6 +280,7 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
   };
 
   return {

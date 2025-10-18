@@ -33,6 +33,8 @@ const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const DOWNLOAD_ICON_DATA_URL =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTEyIDN2MTAuMTdsMy41OS0zLjU4TDE3IDExbC01IDUtNS01IDEuNDEtMS40MUwxMSAxMy4xN1YzaDF6IiBmaWxsPSJ3aGl0ZSIvPjxyZWN0IHg9IjUiIHk9IjE4IiB3aWR0aD0iMTQiIGhlaWdodD0iMiIgcng9IjEiIGZpbGw9IndoaXRlIiBvcGFjaXR5PSIwLjc1Ii8+PC9zdmc+";
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
   "#7DD3FC",
@@ -70,6 +72,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Browse recent history",
     value: "history:",
     keywords: ["history", "hist", "recent", "visited"],
+  },
+  {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Search recent downloads",
+    value: "download:",
+    keywords: ["download", "downloads", "dl", "files"],
   },
   {
     id: "slash-back",
@@ -118,7 +127,10 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history… (try \"tab:\")");
+  inputEl.setAttribute(
+    "placeholder",
+    "Search tabs, bookmarks, history, downloads… (try \"download:\")"
+  );
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -678,6 +690,7 @@ function requestResults(query) {
         return;
       }
       resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
+      resultsState = resultsState.map((result) => decorateDownloadResult(result));
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
@@ -898,7 +911,11 @@ function renderResults() {
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
+    if (result.type === "download") {
+      url.textContent = result.displayStatus || result.description || result.url || "";
+    } else {
+      url.textContent = result.description || result.url || "";
+    }
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
@@ -949,6 +966,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -982,6 +1001,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -992,6 +1013,220 @@ function formatTypeLabel(type, result) {
     default:
       return type || "";
   }
+}
+
+function formatBytes(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let index = 0;
+  let current = value;
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024;
+    index += 1;
+  }
+  const precision = current >= 100 ? 0 : current >= 10 ? 1 : 2;
+  return `${current.toFixed(precision)} ${units[index]}`;
+}
+
+function formatSpeed(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return `${formatBytes(value)}/s`;
+}
+
+function formatEta(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remaining = minutes % 60;
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      return `${days}d left`;
+    }
+    return remaining > 0 ? `${hours}h ${remaining}m left` : `${hours}h left`;
+  }
+  if (minutes > 0) {
+    const secondsRemainder = totalSeconds % 60;
+    return secondsRemainder > 0 ? `${minutes}m ${secondsRemainder}s left` : `${minutes}m left`;
+  }
+  return `${totalSeconds}s left`;
+}
+
+function formatCompletionLabel(timestamp) {
+  if (!timestamp) {
+    return "Completed";
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "Completed";
+  }
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+  const timeString = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay) {
+    return `Completed · ${timeString}`;
+  }
+  if (isYesterday) {
+    return `Completed · Yesterday ${timeString}`;
+  }
+  const dateLabel = date.toLocaleDateString([], { month: "short", day: "numeric" });
+  return `Completed · ${dateLabel} ${timeString}`;
+}
+
+function buildDownloadStatus(result) {
+  if (!result || result.type !== "download") {
+    return result?.description || result?.url || "";
+  }
+  const state = result.state || "";
+  if (state === "complete") {
+    return formatCompletionLabel(result.completedAt || result.estimatedEndTime || result.startedAt || 0);
+  }
+  if (state === "interrupted") {
+    return result.canResume ? "Interrupted · Resume available" : "Interrupted";
+  }
+  if (result.paused) {
+    return "Paused";
+  }
+
+  const parts = [];
+  if (typeof result.progress === "number" && Number.isFinite(result.progress)) {
+    parts.push(`${Math.round(result.progress * 100)}%`);
+  }
+  if (typeof result.bytesReceived === "number" && result.bytesReceived >= 0) {
+    if (typeof result.totalBytes === "number" && result.totalBytes > 0) {
+      parts.push(`${formatBytes(result.bytesReceived)} of ${formatBytes(result.totalBytes)}`);
+    } else if (result.bytesReceived > 0) {
+      parts.push(`${formatBytes(result.bytesReceived)} downloaded`);
+    }
+  }
+  const speedLabel = formatSpeed(result.speedBytesPerSecond);
+  if (speedLabel) {
+    parts.push(speedLabel);
+  }
+  const etaLabel = formatEta(result.etaSeconds);
+  if (etaLabel) {
+    parts.push(etaLabel);
+  }
+  if (!parts.length) {
+    return "In progress";
+  }
+  return parts.join(" • ");
+}
+
+function decorateDownloadResult(result) {
+  if (!result || result.type !== "download") {
+    return result;
+  }
+  const next = { ...result };
+  next.displayStatus = buildDownloadStatus(result);
+  return next;
+}
+
+function applyDownloadUpdate(update) {
+  if (!update) {
+    return;
+  }
+  const itemId = typeof update.itemId === "number" ? update.itemId : null;
+  const downloadId = typeof update.downloadId === "number" ? update.downloadId : null;
+  let changed = false;
+  const targets = new Set();
+  resultsState = resultsState.map((result) => {
+    if (!result || result.type !== "download") {
+      return result;
+    }
+    const matchesItem = itemId !== null && result.id === itemId;
+    const matchesDownload = downloadId !== null && result.downloadId === downloadId;
+    if (!matchesItem && !matchesDownload) {
+      return result;
+    }
+    changed = true;
+    targets.add(result.id);
+    return decorateDownloadResult({ ...result, ...update });
+  });
+  if (changed) {
+    updateDownloadDom(targets);
+  }
+}
+
+function updateDownloadDom(targetIds) {
+  if (!resultsEl) {
+    return;
+  }
+  const items = resultsEl.querySelectorAll(".spotlight-result");
+  items.forEach((itemEl) => {
+    const resultId = Number(itemEl.dataset.resultId);
+    if (targetIds && targetIds.size && !targetIds.has(resultId)) {
+      return;
+    }
+    const result = resultsState.find((entry) => entry && entry.id === resultId && entry.type === "download");
+    if (!result) {
+      return;
+    }
+    const urlEl = itemEl.querySelector(".spotlight-result-url");
+    if (urlEl) {
+      urlEl.textContent = result.displayStatus || result.description || result.url || "";
+    }
+    const titleEl = itemEl.querySelector(".spotlight-result-title");
+    if (titleEl) {
+      titleEl.textContent = result.title || result.url || titleEl.textContent;
+    }
+    const progressEl = itemEl.querySelector(".spotlight-download-progress");
+    if (progressEl) {
+      if (typeof result.progress === "number" && Number.isFinite(result.progress)) {
+        const degrees = Math.max(0, Math.min(360, Math.round(result.progress * 360)));
+        progressEl.style.setProperty("--progress", `${degrees}deg`);
+        progressEl.classList.remove("indeterminate");
+      } else {
+        progressEl.classList.add("indeterminate");
+        progressEl.style.removeProperty("--progress");
+      }
+    }
+  });
+}
+
+function createDownloadIcon(result) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "spotlight-result-icon download";
+
+  const ring = document.createElement("div");
+  ring.className = "spotlight-download-progress";
+  const progressValue =
+    typeof result?.progress === "number" && Number.isFinite(result.progress)
+      ? Math.max(0, Math.min(1, result.progress))
+      : null;
+  if (progressValue !== null) {
+    const degrees = Math.max(0, Math.min(360, Math.round(progressValue * 360)));
+    ring.style.setProperty("--progress", `${degrees}deg`);
+  } else {
+    ring.classList.add("indeterminate");
+  }
+
+  const inner = document.createElement("div");
+  inner.className = "spotlight-download-inner";
+  const icon = document.createElement("img");
+  icon.src = DOWNLOAD_ICON_DATA_URL;
+  icon.alt = "";
+  icon.className = "spotlight-download-icon";
+  inner.appendChild(icon);
+  ring.appendChild(inner);
+  wrapper.appendChild(ring);
+
+  return wrapper;
 }
 
 function scheduleIdleWork(callback) {
@@ -1102,6 +1337,9 @@ function createIconImage(src) {
 }
 
 function createIconElement(result) {
+  if (result && result.type === "download") {
+    return createDownloadIcon(result);
+  }
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
   const origin = getResultOrigin(result);
@@ -1132,6 +1370,9 @@ function applyCachedFavicons(results) {
 
 function shouldRequestFavicon(result) {
   if (!result || result.type === "command") {
+    return false;
+  }
+  if (result.type === "download") {
     return false;
   }
   const origin = getResultOrigin(result);
@@ -1283,12 +1524,21 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
-    openOverlay();
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      openOverlay();
+    }
+    return;
+  }
+  if (message.type === "SPOTLIGHT_DOWNLOAD_UPDATE") {
+    if (!isOpen) {
+      return;
+    }
+    applyDownloadUpdate(message);
   }
 });
