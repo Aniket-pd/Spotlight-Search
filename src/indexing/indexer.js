@@ -114,7 +114,7 @@ async function indexBookmarks(indexMap, termBuckets, items) {
   }
 }
 
-async function indexHistory(indexMap, termBuckets, items) {
+async function indexHistory(indexMap, termBuckets, items, historyUrlToItemId) {
   const historyItems = await chrome.history.search({
     text: "",
     maxResults: HISTORY_LIMIT,
@@ -124,7 +124,7 @@ async function indexHistory(indexMap, termBuckets, items) {
   for (const entry of historyItems) {
     if (!entry.url) continue;
     const itemId = items.length;
-    items.push({
+    const item = {
       id: itemId,
       type: "history",
       title: entry.title || entry.url,
@@ -132,7 +132,11 @@ async function indexHistory(indexMap, termBuckets, items) {
       lastVisitTime: entry.lastVisitTime,
       visitCount: entry.visitCount,
       origin: getOriginFromUrl(entry.url),
-    });
+    };
+    items.push(item);
+    if (historyUrlToItemId) {
+      historyUrlToItemId.set(entry.url, itemId);
+    }
 
     addToIndex(indexMap, termBuckets, itemId, entry.title, TAB_TITLE_WEIGHT);
     addToIndex(indexMap, termBuckets, itemId, entry.url, URL_WEIGHT);
@@ -149,11 +153,12 @@ export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
   const termBuckets = new Map();
+  const historyUrlToItemId = new Map();
 
   await Promise.all([
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
-    indexHistory(indexMap, termBuckets, items),
+    indexHistory(indexMap, termBuckets, items, historyUrlToItemId),
   ]);
 
   const buckets = {};
@@ -174,6 +179,7 @@ export async function buildIndex() {
     index: indexMap,
     termBuckets: buckets,
     metadata,
+    historyUrlToItemId,
     createdAt: Date.now(),
   };
 }

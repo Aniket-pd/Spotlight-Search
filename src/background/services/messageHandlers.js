@@ -2,6 +2,7 @@ import { ensureIndex, rebuildIndex } from "./indexService.js";
 import { executeCommand } from "./commandService.js";
 import { resolveFaviconForTarget } from "./faviconService.js";
 import { runSearch } from "../../search/searchEngine.js";
+import { getTabNavigation } from "./tabHistoryService.js";
 
 export function createMessageHandler() {
   return (message, sender, sendResponse) => {
@@ -12,8 +13,22 @@ export function createMessageHandler() {
     switch (message.type) {
       case "SPOTLIGHT_QUERY":
         ensureIndex()
-          .then((data) => {
-            const payload = runSearch(message.query || "", data, { subfilter: message.subfilter }) || {};
+          .then(async (data) => {
+            let navigation = { backStack: [], forwardStack: [], current: null };
+            try {
+              const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+              if (activeTab && typeof activeTab.id === "number") {
+                navigation = getTabNavigation(activeTab.id);
+              }
+            } catch (err) {
+              console.warn("Spotlight: unable to read active tab for navigation", err);
+            }
+
+            const payload =
+              runSearch(message.query || "", data, {
+                subfilter: message.subfilter,
+                navigation,
+              }) || {};
             if (!payload.results || !Array.isArray(payload.results)) {
               payload.results = [];
             }

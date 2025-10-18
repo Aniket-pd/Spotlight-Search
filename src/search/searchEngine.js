@@ -220,8 +220,27 @@ function getTabDomain(tab) {
   }
 }
 
+function normalizeCloseCommandQuery(query) {
+  const trimmed = (query || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const lower = trimmed.toLowerCase();
+  const prefixes = ["close tabs", "close tab", "close"];
+  for (const prefix of prefixes) {
+    if (lower === prefix) {
+      return "";
+    }
+    const withSpace = `${prefix} `;
+    if (lower.startsWith(withSpace)) {
+      return trimmed.slice(prefix.length).trim();
+    }
+  }
+  return trimmed;
+}
+
 function findMatchingTabsForCloseCommand(tabs, query) {
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = normalizeCloseCommandQuery(query).trim().toLowerCase();
   const scored = [];
 
   for (const tab of tabs) {
@@ -363,6 +382,74 @@ function collectTabCloseByDomainSuggestions(query, context) {
   };
 }
 
+function collectNavigationHistoryResults(mode, query, navigation, data) {
+  const stack = mode === "back" ? navigation?.backStack : navigation?.forwardStack;
+  const normalizedQuery = (query || "").trim().toLowerCase();
+  if (!Array.isArray(stack) || !stack.length) {
+    return {
+      results: [],
+      ghost: null,
+      answer: mode === "back" ? "No back history for current tab." : "No forward history for current tab.",
+    };
+  }
+
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const urlMap = data?.historyUrlToItemId;
+  const results = [];
+  let processed = 0;
+
+  for (const entry of stack) {
+    if (!entry || !entry.url) continue;
+    if (normalizedQuery) {
+      const title = (entry.title || "").toLowerCase();
+      const url = entry.url.toLowerCase();
+      if (!title.includes(normalizedQuery) && !url.includes(normalizedQuery)) {
+        continue;
+      }
+    }
+
+    let item = null;
+    if (urlMap && typeof urlMap.get === "function") {
+      const itemId = urlMap.get(entry.url);
+      if (typeof itemId === "number") {
+        item = items[itemId];
+      }
+    }
+    if (!item) {
+      continue;
+    }
+
+    results.push({
+      id: item.id,
+      title: entry.title || item.title || item.url,
+      url: item.url,
+      type: "history",
+      description: item.url,
+      score: Number.MAX_SAFE_INTEGER - processed,
+      faviconUrl: item.faviconUrl || null,
+      origin: item.origin || "",
+      lastVisitTime: entry.lastVisitTime || item.lastVisitTime || 0,
+    });
+    processed += 1;
+    if (results.length >= MAX_RESULTS) {
+      break;
+    }
+  }
+
+  const countLabel = results.length === 1 ? "1 entry" : `${results.length} entries`;
+  const answer = results.length
+    ? `${mode === "back" ? "Back" : "Forward"} history · ${countLabel}`
+    : mode === "back"
+    ? "No matching back history."
+    : "No matching forward history.";
+
+  return {
+    results,
+    ghost: results[0]?.title || null,
+    answer,
+  };
+}
+
 function collectCommandSuggestions(query, context) {
   const suggestions = [];
   let ghost = null;
@@ -479,22 +566,42 @@ function extractFilterPrefix(query) {
   for (const [type, prefixes] of Object.entries(FILTER_ALIASES)) {
     for (const prefix of prefixes) {
       if (lowerQuery.startsWith(prefix)) {
-        return { filterType: type, remainder: query.slice(prefix.length) };
+        return { filterType: type, remainder: query.slice(prefix.length), matchedPrefix: prefix };
       }
     }
   }
-  return { filterType: null, remainder: query };
+  return { filterType: null, remainder: query, matchedPrefix: null };
 }
 
 export function runSearch(query, data, options = {}) {
   const initial = (query || "").trim();
-  const { filterType, remainder } = extractFilterPrefix(initial);
+  const { filterType, remainder, matchedPrefix } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
-  const { index, termBuckets, items, metadata = {} } = data;
+  const { index, termBuckets, items, metadata = {}, historyUrlToItemId } = data;
+  const navigationMode = matchedPrefix === "back:" ? "back" : matchedPrefix === "forward:" ? "forward" : null;
+  const navigation = options?.navigation || null;
   const tabCount =
     typeof metadata.tabCount === "number"
       ? metadata.tabCount
       : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+
+  if (navigationMode) {
+    const navigationResults = collectNavigationHistoryResults(
+      navigationMode,
+      trimmed,
+      navigation,
+      { items, historyUrlToItemId }
+    );
+    return {
+      results: navigationResults.results,
+      ghost: navigationResults.ghost
+        ? { text: navigationResults.ghost, answer: navigationResults.answer }
+        : null,
+      answer: navigationResults.answer,
+      filter: filterType || "history",
+      subfilters: null,
+    };
+  }
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
