@@ -1,3 +1,5 @@
+const POLL_INTERVAL_MS = 800;
+
 function computeProgress(bytesReceived, totalBytes) {
   if (typeof totalBytes !== "number" || totalBytes <= 0) {
     return null;
@@ -22,6 +24,9 @@ export function registerDownloadListeners({ context }) {
   }
 
   const speedSamples = new Map();
+  const activeDownloads = new Set();
+  let pollTimer = null;
+  let pollInFlight = false;
 
   function recordSpeedSample(downloadId, bytesReceived) {
     const now = Date.now();
@@ -38,6 +43,51 @@ export function registerDownloadListeners({ context }) {
     return (deltaBytes * 1000) / deltaMs;
   }
 
+  function stopPolling() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function ensurePolling() {
+    if (pollTimer || pollInFlight || !activeDownloads.size) {
+      return;
+    }
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      if (!activeDownloads.size) {
+        return;
+      }
+      pollInFlight = true;
+      try {
+        const ids = Array.from(activeDownloads);
+        await Promise.all(ids.map((id) => refreshDownload(id)));
+      } finally {
+        pollInFlight = false;
+        if (activeDownloads.size) {
+          ensurePolling();
+        }
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  function updateActiveDownloads(downloadId, payload) {
+    const state = payload?.state || "";
+    const isInProgress = state === "in_progress" && !payload?.paused;
+    if (isInProgress) {
+      activeDownloads.add(downloadId);
+      ensurePolling();
+      return;
+    }
+    if (activeDownloads.delete(downloadId)) {
+      speedSamples.delete(downloadId);
+    }
+    if (!activeDownloads.size) {
+      stopPolling();
+    }
+  }
+
   async function refreshDownload(downloadId) {
     if (typeof downloadId !== "number") {
       return;
@@ -45,6 +95,11 @@ export function registerDownloadListeners({ context }) {
     try {
       const [item] = await chrome.downloads.search({ id: downloadId });
       if (!item) {
+        activeDownloads.delete(downloadId);
+        speedSamples.delete(downloadId);
+        if (!activeDownloads.size) {
+          stopPolling();
+        }
         return;
       }
 
@@ -56,9 +111,19 @@ export function registerDownloadListeners({ context }) {
       const estimatedEndTime = item.estimatedEndTime ? parseChromeTime(item.estimatedEndTime) : 0;
       const speed = recordSpeedSample(downloadId, bytesReceived);
       const remaining = totalBytes && totalBytes > bytesReceived ? totalBytes - bytesReceived : null;
-      const etaSeconds = speed && remaining ? remaining / speed : null;
+      let etaSeconds = speed && remaining ? remaining / speed : null;
+      if ((!etaSeconds || !Number.isFinite(etaSeconds)) && estimatedEndTime > 0) {
+        const now = Date.now();
+        if (estimatedEndTime > now) {
+          etaSeconds = (estimatedEndTime - now) / 1000;
+        }
+      }
+      let speedBytesPerSecond = speed;
+      if ((!speedBytesPerSecond || !Number.isFinite(speedBytesPerSecond)) && etaSeconds && etaSeconds > 0 && remaining) {
+        speedBytesPerSecond = remaining / etaSeconds;
+      }
 
-      await context.updateDownloadItem({
+      const payload = {
         downloadId,
         filename: item.filename,
         title: item.filename ? item.filename.split(/[/\\]/).pop() : item.finalUrl || item.url || "Download",
@@ -67,7 +132,7 @@ export function registerDownloadListeners({ context }) {
         bytesReceived,
         totalBytes,
         progress,
-        speedBytesPerSecond: speed,
+        speedBytesPerSecond: speedBytesPerSecond && Number.isFinite(speedBytesPerSecond) ? speedBytesPerSecond : null,
         etaSeconds,
         startedAt,
         completedAt,
@@ -75,11 +140,27 @@ export function registerDownloadListeners({ context }) {
         paused: Boolean(item.paused),
         canResume: Boolean(item.canResume),
         exists: item.exists !== false,
-      });
+      };
+
+      await context.updateDownloadItem(payload);
+      updateActiveDownloads(downloadId, payload);
     } catch (err) {
       console.warn("Spotlight: failed to refresh download", err);
     }
   }
+
+  chrome.downloads
+    .search({ state: "in_progress" })
+    .then((items) => {
+      for (const item of items || []) {
+        if (item && typeof item.id === "number") {
+          refreshDownload(item.id);
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn("Spotlight: failed to prime downloads", err);
+    });
 
   chrome.downloads.onChanged.addListener((delta) => {
     if (!delta || typeof delta.id !== "number") {
@@ -95,7 +176,14 @@ export function registerDownloadListeners({ context }) {
     context.scheduleRebuild(500);
   });
 
-  chrome.downloads.onErased.addListener(() => {
+  chrome.downloads.onErased.addListener((downloadId) => {
+    if (typeof downloadId === "number") {
+      activeDownloads.delete(downloadId);
+      speedSamples.delete(downloadId);
+      if (!activeDownloads.size) {
+        stopPolling();
+      }
+    }
     context.scheduleRebuild(1200);
   });
 }
