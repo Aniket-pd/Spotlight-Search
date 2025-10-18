@@ -2,6 +2,60 @@ const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
 const RESULTS_LIMIT = 12;
+const SLASH_MENU_ID = "spotlight-slash-menu";
+const SLASH_MENU_LIST_ID = "spotlight-slash-options";
+const DEFAULT_SLASH_STATE = {
+  open: false,
+  options: [],
+  activeIndex: 0,
+  triggerIndex: -1,
+  commandEnd: -1,
+  query: "",
+};
+const SLASH_COMMANDS = [
+  {
+    id: "bookmark",
+    label: "Bookmark",
+    description: "Show only bookmark results",
+    insertText: "bookmark:",
+    keywords: ["bookmarks", "bm", "b"],
+  },
+  {
+    id: "pipeline",
+    label: "Pipeline",
+    description: "Search pipeline items",
+    insertText: "pipeline:",
+    keywords: ["pipe", "pl"],
+  },
+  {
+    id: "tab",
+    label: "Tab",
+    description: "Focus on open tabs",
+    insertText: "tab:",
+    keywords: ["tabs", "t"],
+  },
+  {
+    id: "history",
+    label: "History",
+    description: "Browse your history",
+    insertText: "history:",
+    keywords: ["hist", "h"],
+  },
+  {
+    id: "back",
+    label: "Back",
+    description: "Current tab backward history",
+    insertText: "back:",
+    keywords: ["backward", "previous"],
+  },
+  {
+    id: "forward",
+    label: "Forward",
+    description: "Current tab forward history",
+    insertText: "forward:",
+    keywords: ["next"],
+  },
+];
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -23,6 +77,11 @@ let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
 let subfilterState = { type: null, options: [], activeId: null };
 let selectedSubfilter = null;
+let slashMenuEl = null;
+let slashMenuListEl = null;
+let slashMenuState = { ...DEFAULT_SLASH_STATE };
+let pendingSlashMenuUpdate = null;
+let cancelSlashMenuUpdate = null;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -91,6 +150,17 @@ function createOverlay() {
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
+  slashMenuEl = document.createElement("div");
+  slashMenuEl.id = SLASH_MENU_ID;
+  slashMenuEl.className = "spotlight-slash-menu";
+  slashMenuEl.setAttribute("role", "listbox");
+  slashMenuEl.setAttribute("aria-hidden", "true");
+  slashMenuListEl = document.createElement("ul");
+  slashMenuListEl.id = SLASH_MENU_LIST_ID;
+  slashMenuListEl.className = "spotlight-slash-options";
+  slashMenuEl.appendChild(slashMenuListEl);
+  inputContainerEl.appendChild(slashMenuEl);
+
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
@@ -111,6 +181,9 @@ function createOverlay() {
 
   inputEl.addEventListener("input", handleInputChange);
   inputEl.addEventListener("keydown", handleInputKeydown);
+  inputEl.addEventListener("keyup", handleInputKeyup);
+  inputEl.addEventListener("click", scheduleSlashMenuUpdate);
+  inputEl.addEventListener("select", scheduleSlashMenuUpdate);
   inputEl.addEventListener("focus", () => {
     if (inputContainerEl) {
       inputContainerEl.classList.add("focused");
@@ -120,6 +193,7 @@ function createOverlay() {
     if (inputContainerEl) {
       inputContainerEl.classList.remove("focused");
     }
+    closeSlashMenu();
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
 }
@@ -128,6 +202,292 @@ function resetSubfilterState() {
   subfilterState = { type: null, options: [], activeId: null };
   selectedSubfilter = null;
   renderSubfilters();
+}
+
+function scheduleSlashMenuUpdate() {
+  if (pendingSlashMenuUpdate !== null && typeof cancelSlashMenuUpdate === "function") {
+    cancelSlashMenuUpdate(pendingSlashMenuUpdate);
+    pendingSlashMenuUpdate = null;
+  }
+  const useRaf = typeof requestAnimationFrame === "function";
+  const scheduler = useRaf ? requestAnimationFrame : (callback) => setTimeout(callback, 16);
+  cancelSlashMenuUpdate = useRaf
+    ? (id) => cancelAnimationFrame(id)
+    : (id) => clearTimeout(id);
+  pendingSlashMenuUpdate = scheduler(() => {
+    pendingSlashMenuUpdate = null;
+    cancelSlashMenuUpdate = null;
+    updateSlashMenuFromInput();
+  });
+}
+
+function handleInputKeyup(event) {
+  if (event.key === "Escape" && isSlashMenuVisible()) {
+    closeSlashMenu();
+    return;
+  }
+  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    scheduleSlashMenuUpdate();
+  }
+}
+
+function isSlashMenuVisible() {
+  return slashMenuState.open && slashMenuState.options.length > 0;
+}
+
+function closeSlashMenu() {
+  if (pendingSlashMenuUpdate !== null && typeof cancelSlashMenuUpdate === "function") {
+    cancelSlashMenuUpdate(pendingSlashMenuUpdate);
+    pendingSlashMenuUpdate = null;
+    cancelSlashMenuUpdate = null;
+  }
+  if (!slashMenuState.open) {
+    return;
+  }
+  slashMenuState = { ...DEFAULT_SLASH_STATE };
+  renderSlashMenu();
+}
+
+function findSlashCommandContext(value, caretIndex) {
+  if (typeof caretIndex !== "number" || caretIndex < 0) {
+    return null;
+  }
+  const beforeCaret = value.slice(0, caretIndex);
+  const lastSlash = beforeCaret.lastIndexOf("/");
+  if (lastSlash === -1) {
+    return null;
+  }
+  const preceding = lastSlash > 0 ? beforeCaret[lastSlash - 1] : "";
+  if (preceding && !/\s/.test(preceding)) {
+    return null;
+  }
+  const fragmentBeforeCaret = beforeCaret.slice(lastSlash + 1);
+  if (!/^[a-zA-Z0-9]*$/.test(fragmentBeforeCaret)) {
+    if (fragmentBeforeCaret === "") {
+      // allow empty fragment
+    } else {
+      return null;
+    }
+  }
+  let commandEnd = caretIndex;
+  while (commandEnd < value.length) {
+    const char = value[commandEnd];
+    if (!char || /[\s/:]/.test(char)) {
+      break;
+    }
+    commandEnd += 1;
+  }
+  const fullFragment = value.slice(lastSlash + 1, commandEnd);
+  if (!/^[a-zA-Z0-9]*$/.test(fullFragment)) {
+    if (fullFragment !== "") {
+      return null;
+    }
+  }
+  return {
+    triggerIndex: lastSlash,
+    caretIndex,
+    commandEnd,
+    fullFragment,
+  };
+}
+
+function filterSlashCommands(term) {
+  const normalized = term ? term.toLowerCase() : "";
+  return SLASH_COMMANDS.filter((command) => {
+    if (!normalized) {
+      return true;
+    }
+    const label = command.label.toLowerCase();
+    if (label.startsWith(normalized)) {
+      return true;
+    }
+    if (command.insertText && command.insertText.toLowerCase().startsWith(normalized)) {
+      return true;
+    }
+    if (Array.isArray(command.keywords)) {
+      return command.keywords.some((keyword) => keyword.toLowerCase().startsWith(normalized));
+    }
+    return false;
+  });
+}
+
+function computeSlashActiveIndex(options, term, fallbackIndex) {
+  if (!options.length) {
+    return 0;
+  }
+  const normalized = term ? term.toLowerCase() : "";
+  if (!normalized) {
+    if (fallbackIndex >= 0 && fallbackIndex < options.length) {
+      return fallbackIndex;
+    }
+    return 0;
+  }
+  let index = options.findIndex((option) => option.label.toLowerCase() === normalized);
+  if (index !== -1) {
+    return index;
+  }
+  index = options.findIndex((option) => option.label.toLowerCase().startsWith(normalized));
+  if (index !== -1) {
+    return index;
+  }
+  index = options.findIndex((option) =>
+    Array.isArray(option.keywords) && option.keywords.some((keyword) => keyword.toLowerCase() === normalized),
+  );
+  if (index !== -1) {
+    return index;
+  }
+  index = options.findIndex((option) =>
+    Array.isArray(option.keywords) && option.keywords.some((keyword) => keyword.toLowerCase().startsWith(normalized)),
+  );
+  if (index !== -1) {
+    return index;
+  }
+  if (fallbackIndex >= 0 && fallbackIndex < options.length) {
+    return fallbackIndex;
+  }
+  return 0;
+}
+
+function updateSlashMenuFromInput() {
+  if (!inputEl || !slashMenuEl || !slashMenuListEl) {
+    return;
+  }
+  if (document.activeElement !== inputEl) {
+    closeSlashMenu();
+    return;
+  }
+  if (inputEl.selectionStart !== inputEl.selectionEnd) {
+    closeSlashMenu();
+    return;
+  }
+  const caretIndex = inputEl.selectionStart || 0;
+  const value = inputEl.value || "";
+  const context = findSlashCommandContext(value, caretIndex);
+  if (!context) {
+    closeSlashMenu();
+    return;
+  }
+  const options = filterSlashCommands(context.fullFragment);
+  if (!options.length) {
+    closeSlashMenu();
+    return;
+  }
+  const activeIndex = computeSlashActiveIndex(options, context.fullFragment, slashMenuState.activeIndex);
+  slashMenuState = {
+    open: true,
+    options,
+    activeIndex,
+    triggerIndex: context.triggerIndex,
+    commandEnd: context.commandEnd,
+    query: context.fullFragment,
+  };
+  renderSlashMenu();
+}
+
+function renderSlashMenu() {
+  if (!slashMenuEl || !slashMenuListEl) {
+    return;
+  }
+  slashMenuListEl.innerHTML = "";
+  if (!isSlashMenuVisible()) {
+    slashMenuEl.classList.remove("visible");
+    slashMenuEl.setAttribute("aria-hidden", "true");
+    return;
+  }
+  slashMenuEl.classList.add("visible");
+  slashMenuEl.setAttribute("aria-hidden", "false");
+  slashMenuState.options.forEach((option, index) => {
+    const li = document.createElement("li");
+    li.className = "spotlight-slash-option";
+    if (index === slashMenuState.activeIndex) {
+      li.classList.add("active");
+    }
+    li.setAttribute("role", "option");
+    li.dataset.optionId = option.id;
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "spotlight-slash-option-label";
+    labelEl.textContent = option.label;
+    li.appendChild(labelEl);
+
+    if (option.description) {
+      const descriptionEl = document.createElement("div");
+      descriptionEl.className = "spotlight-slash-option-description";
+      descriptionEl.textContent = option.description;
+      li.appendChild(descriptionEl);
+    }
+
+    li.addEventListener("mouseenter", () => {
+      if (slashMenuState.activeIndex !== index) {
+        slashMenuState = { ...slashMenuState, activeIndex: index };
+        updateSlashMenuHighlight();
+      }
+    });
+    li.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    li.addEventListener("click", () => {
+      applySlashCommand(option);
+    });
+
+    slashMenuListEl.appendChild(li);
+  });
+}
+
+function updateSlashMenuHighlight() {
+  if (!slashMenuListEl) {
+    return;
+  }
+  const items = slashMenuListEl.querySelectorAll("li");
+  items.forEach((item, index) => {
+    item.classList.toggle("active", index === slashMenuState.activeIndex);
+  });
+}
+
+function moveSlashSelection(delta) {
+  if (!isSlashMenuVisible()) {
+    return;
+  }
+  const total = slashMenuState.options.length;
+  const nextIndex = (slashMenuState.activeIndex + delta + total) % total;
+  slashMenuState = { ...slashMenuState, activeIndex: nextIndex };
+  updateSlashMenuHighlight();
+}
+
+function applySlashMenuSelection() {
+  if (!isSlashMenuVisible()) {
+    return false;
+  }
+  const option = slashMenuState.options[slashMenuState.activeIndex];
+  if (!option) {
+    return false;
+  }
+  applySlashCommand(option);
+  return true;
+}
+
+function applySlashCommand(option) {
+  if (!option || !inputEl) {
+    return;
+  }
+  const value = inputEl.value || "";
+  const before = slashMenuState.triggerIndex >= 0 ? value.slice(0, slashMenuState.triggerIndex) : value;
+  const after = slashMenuState.commandEnd >= 0 ? value.slice(slashMenuState.commandEnd) : "";
+  const trimmedAfter = after.replace(/^\s+/, "");
+  const insertion = option.insertText || "";
+  let nextValue = `${before}${insertion}`;
+  let caretPosition = nextValue.length;
+  if (!insertion.endsWith(" ")) {
+    nextValue += " ";
+    caretPosition += 1;
+  }
+  nextValue += trimmedAfter;
+  inputEl.value = nextValue;
+  inputEl.setSelectionRange(caretPosition, caretPosition);
+  closeSlashMenu();
+  setGhostText("");
+  const syntheticEvent = new Event("input", { bubbles: true, cancelable: false });
+  inputEl.dispatchEvent(syntheticEvent);
 }
 
 function updateSubfilterState(payload) {
@@ -290,6 +650,7 @@ function openOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  closeSlashMenu();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -320,6 +681,7 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  closeSlashMenu();
   setGhostText("");
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
@@ -329,8 +691,17 @@ function closeOverlay() {
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
   if (event.key === "Escape") {
+    if (isSlashMenuVisible()) {
+      event.preventDefault();
+      closeSlashMenu();
+      return;
+    }
     event.preventDefault();
     closeOverlay();
+    return;
+  }
+  if (isSlashMenuVisible() && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
     return;
   }
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -340,6 +711,25 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  if (isSlashMenuVisible()) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSlashSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if ((event.key === "Tab" && !event.shiftKey) || event.key === "Enter") {
+      const handled = applySlashMenuSelection();
+      if (handled) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSlashMenu();
+      return;
+    }
+  }
   const selectionAtEnd =
     inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
   if (
@@ -379,6 +769,7 @@ function handleInputKeydown(event) {
 }
 
 function handleInputChange() {
+  updateSlashMenuFromInput();
   const query = inputEl.value;
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
@@ -518,6 +909,7 @@ function applyGhostSuggestion() {
   inputEl.value = ghostSuggestionText;
   inputEl.setSelectionRange(ghostSuggestionText.length, ghostSuggestionText.length);
   setGhostText("");
+  closeSlashMenu();
   requestResults(inputEl.value);
   return true;
 }
