@@ -84,7 +84,10 @@ function extractFilename(path) {
   return segments[segments.length - 1];
 }
 
-function formatDownloadState(state) {
+function formatDownloadState(state, { paused = false } = {}) {
+  if (paused) {
+    return "Paused";
+  }
   switch (state) {
     case "complete":
       return "Completed";
@@ -118,6 +121,8 @@ async function indexDownloads(indexMap, termBuckets, items) {
     ? downloads.slice(0, DOWNLOAD_SEARCH_LIMIT)
     : [];
 
+  const now = Date.now();
+
   for (const download of limitedDownloads) {
     if (!download || typeof download.id !== "number") {
       continue;
@@ -129,9 +134,11 @@ async function indexDownloads(indexMap, termBuckets, items) {
     const title = extractFilename(download.filename) || hostname || finalUrl || `Download ${download.id}`;
     const startedAt = parseChromeTimestamp(download.startTime);
     const completedAt = parseChromeTimestamp(download.endTime);
-    const timestamp = completedAt || startedAt || Date.now();
+    const estimatedEndAt = parseChromeTimestamp(download.estimatedEndTime);
+    const timestamp = completedAt || startedAt || now;
     const state = download.state || "";
-    const stateLabel = formatDownloadState(state);
+    const paused = Boolean(download.paused);
+    const stateLabel = formatDownloadState(state, { paused });
     const descriptionParts = [stateLabel];
     if (hostname) {
       descriptionParts.push(hostname);
@@ -139,6 +146,44 @@ async function indexDownloads(indexMap, termBuckets, items) {
       descriptionParts.push(extractFilename(download.filename));
     }
     const description = descriptionParts.join(" · ");
+
+    const bytesReceived = typeof download.bytesReceived === "number" && Number.isFinite(download.bytesReceived)
+      ? Math.max(download.bytesReceived, 0)
+      : 0;
+    let totalBytes = typeof download.totalBytes === "number" && Number.isFinite(download.totalBytes)
+      ? Math.max(download.totalBytes, 0)
+      : 0;
+    if (!totalBytes && typeof download.fileSize === "number" && Number.isFinite(download.fileSize)) {
+      totalBytes = Math.max(download.fileSize, 0);
+    }
+    if (!totalBytes && state === "complete" && bytesReceived) {
+      totalBytes = bytesReceived;
+    }
+
+    let progress = null;
+    let progressPercent = null;
+    if (totalBytes > 0) {
+      progress = Math.min(1, Math.max(0, bytesReceived / totalBytes));
+      progressPercent = Math.round(progress * 100);
+    }
+
+    let speedBytesPerSecond = 0;
+    if (state === "in_progress" && bytesReceived > 0 && startedAt) {
+      const elapsedMs = Math.max(now - startedAt, 0);
+      const elapsedSeconds = elapsedMs / 1000;
+      if (elapsedSeconds > 0.5) {
+        speedBytesPerSecond = bytesReceived / elapsedSeconds;
+      }
+    }
+    if (state === "in_progress" && speedBytesPerSecond <= 0 && totalBytes > 0 && estimatedEndAt > now) {
+      const remainingBytes = Math.max(totalBytes - bytesReceived, 0);
+      const remainingSeconds = (estimatedEndAt - now) / 1000;
+      if (remainingBytes > 0 && remainingSeconds > 0.5) {
+        speedBytesPerSecond = remainingBytes / remainingSeconds;
+      }
+    }
+
+    const sizeBytes = totalBytes || bytesReceived || 0;
 
     const itemId = items.length;
     items.push({
@@ -149,11 +194,24 @@ async function indexDownloads(indexMap, termBuckets, items) {
       description,
       downloadId: download.id,
       state,
+      stateLabel,
       filePath: download.filename || "",
       startedAt,
       completedAt,
       timestamp,
       origin,
+      hostname,
+      bytesReceived,
+      totalBytes,
+      sizeBytes,
+      progress,
+      progressPercent,
+      speedBytesPerSecond,
+      paused,
+      canResume: Boolean(download.canResume),
+      exists: typeof download.exists === "boolean" ? download.exists : true,
+      danger: download.danger || "safe",
+      estimatedEndAt,
     });
 
     addToIndex(indexMap, termBuckets, itemId, title, TAB_TITLE_WEIGHT);

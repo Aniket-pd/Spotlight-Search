@@ -27,6 +27,7 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+let liveUpdateTimer = null;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -101,6 +102,210 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .map((token) => (token || "").toLowerCase())
     .filter(Boolean),
 }));
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const fractionDigits = value < 10 && unitIndex > 0 ? 1 : 0;
+  const formatter = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+  return `${formatter.format(value)} ${BYTE_UNITS[unitIndex]}`;
+}
+
+function clampPercent(value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function formatDownloadProgressLabel(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  const state = result.state || "";
+  const bytesReceived = Number.isFinite(result.bytesReceived) ? Math.max(result.bytesReceived, 0) : 0;
+  const totalBytes = Number.isFinite(result.totalBytes) ? Math.max(result.totalBytes, 0) : 0;
+  const percent = clampPercent(result.progressPercent);
+
+  if (state === "complete") {
+    const sizeBytes = Number.isFinite(result.sizeBytes) && result.sizeBytes > 0
+      ? result.sizeBytes
+      : totalBytes || bytesReceived;
+    const sizeLabel = formatBytes(sizeBytes);
+    return sizeLabel;
+  }
+
+  if (state === "interrupted") {
+    if (bytesReceived > 0) {
+      const receivedLabel = formatBytes(bytesReceived);
+      if (receivedLabel) {
+        return `${receivedLabel} downloaded`;
+      }
+    }
+    return null;
+  }
+
+  if (state === "in_progress") {
+    const receivedLabel = formatBytes(bytesReceived);
+    const totalLabel = formatBytes(totalBytes);
+    if (receivedLabel && totalLabel && percent !== null) {
+      return `${receivedLabel} of ${totalLabel} (${percent}%)`;
+    }
+    if (receivedLabel && totalLabel) {
+      return `${receivedLabel} of ${totalLabel}`;
+    }
+    if (percent !== null) {
+      return `${percent}%`;
+    }
+    if (receivedLabel) {
+      return `${receivedLabel} downloaded`;
+    }
+    return null;
+  }
+
+  if (totalBytes > 0) {
+    return formatBytes(totalBytes);
+  }
+  if (bytesReceived > 0) {
+    return formatBytes(bytesReceived);
+  }
+  return null;
+}
+
+function formatDownloadSpeedLabel(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  const speed = Number.isFinite(result.speedBytesPerSecond) ? result.speedBytesPerSecond : 0;
+  if (!speed || speed <= 0) {
+    return null;
+  }
+  const speedLabel = formatBytes(speed);
+  return speedLabel ? `${speedLabel}/s` : null;
+}
+
+function createDownloadDetailsRow(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+
+  const details = [];
+  const progressLabel = formatDownloadProgressLabel(result);
+  if (progressLabel && result.state === "in_progress") {
+    details.push({ text: progressLabel, className: "spotlight-download-progress-text" });
+  } else if (progressLabel && result.state === "complete") {
+    details.push({ text: progressLabel, className: "spotlight-download-size-text" });
+  } else if (progressLabel) {
+    details.push({ text: progressLabel, className: "spotlight-download-progress-text" });
+  }
+
+  if (result.state === "interrupted") {
+    details.push({ text: "Interrupted", className: "spotlight-download-status warning" });
+  } else if (result.paused && result.state === "in_progress") {
+    details.push({ text: "Paused", className: "spotlight-download-status" });
+  }
+
+  const speedLabel = formatDownloadSpeedLabel(result);
+  if (speedLabel && result.state === "in_progress" && !result.paused) {
+    details.push({ text: speedLabel, className: "spotlight-download-speed-text" });
+  }
+
+  if (!details.length) {
+    return null;
+  }
+
+  const row = document.createElement("div");
+  row.className = "spotlight-download-details";
+  details.forEach((detail) => {
+    const span = document.createElement("span");
+    span.className = "spotlight-download-detail";
+    if (detail.className) {
+      span.classList.add(...detail.className.split(/\s+/).filter(Boolean));
+    }
+    span.textContent = detail.text;
+    row.appendChild(span);
+  });
+  return row;
+}
+
+function createDownloadProgressBar(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  if (result.state !== "in_progress") {
+    return null;
+  }
+  const percent = clampPercent(result.progressPercent);
+  const hasProgress = percent !== null || (Number.isFinite(result.progress) && result.progress > 0);
+  if (!hasProgress) {
+    return null;
+  }
+
+  const bar = document.createElement("div");
+  bar.className = "spotlight-download-progress-bar";
+  if (result.paused) {
+    bar.classList.add("paused");
+  }
+  const fill = document.createElement("div");
+  fill.className = "spotlight-download-progress-fill";
+  if (result.paused) {
+    fill.classList.add("paused");
+  }
+  if (percent === null) {
+    fill.classList.add("indeterminate");
+  } else {
+    fill.style.width = `${percent}%`;
+  }
+  bar.appendChild(fill);
+  return bar;
+}
+
+function clearLiveUpdateTimer() {
+  if (liveUpdateTimer) {
+    clearTimeout(liveUpdateTimer);
+    liveUpdateTimer = null;
+  }
+}
+
+function scheduleLiveUpdate() {
+  if (!isOpen || liveUpdateTimer) {
+    return;
+  }
+  liveUpdateTimer = setTimeout(() => {
+    liveUpdateTimer = null;
+    if (!isOpen || !inputEl) {
+      return;
+    }
+    requestResults(inputEl.value);
+  }, 900);
+}
+
+function updateLiveRefreshState() {
+  if (!isOpen) {
+    clearLiveUpdateTimer();
+    return;
+  }
+  const hasActiveDownload = resultsState.some(
+    (result) => result && result.type === "download" && result.state === "in_progress"
+  );
+  if (hasActiveDownload) {
+    scheduleLiveUpdate();
+  } else {
+    clearLiveUpdateTimer();
+  }
+}
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -516,8 +721,10 @@ function handleSubfilterClick(option) {
 
 function openOverlay() {
   if (isOpen) {
-    inputEl.focus();
-    inputEl.select();
+    if (inputEl) {
+      inputEl.focus({ preventScroll: true });
+      inputEl.select();
+    }
     return;
   }
 
@@ -525,6 +732,7 @@ function openOverlay() {
     createOverlay();
   }
 
+  clearLiveUpdateTimer();
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -552,6 +760,7 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
+  clearLiveUpdateTimer();
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
@@ -855,7 +1064,10 @@ function openResult(result) {
 function renderResults() {
   resultsEl.innerHTML = "";
 
-  if (inputEl.value.trim() === "> reindex") {
+  const trimmedValue = inputEl ? inputEl.value.trim() : "";
+
+  if (trimmedValue === "> reindex") {
+    clearLiveUpdateTimer();
     const li = document.createElement("li");
     li.className = "spotlight-result reindex";
     li.textContent = "Press Enter to rebuild the search index";
@@ -867,6 +1079,7 @@ function renderResults() {
   }
 
   if (!resultsState.length) {
+    clearLiveUpdateTimer();
     const li = document.createElement("li");
     li.className = "spotlight-result empty";
     const scopeLabel = getFilterStatusLabel(activeFilter);
@@ -920,6 +1133,16 @@ function renderResults() {
 
     body.appendChild(title);
     body.appendChild(meta);
+    if (result.type === "download") {
+      const detailsRow = createDownloadDetailsRow(result);
+      if (detailsRow) {
+        body.appendChild(detailsRow);
+      }
+      const progressBar = createDownloadProgressBar(result);
+      if (progressBar) {
+        body.appendChild(progressBar);
+      }
+    }
     li.appendChild(body);
 
     li.addEventListener("pointerover", () => {
@@ -950,6 +1173,7 @@ function renderResults() {
   }
   enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
   updateActiveResult();
+  updateLiveRefreshState();
 }
 
 function getFilterStatusLabel(type) {

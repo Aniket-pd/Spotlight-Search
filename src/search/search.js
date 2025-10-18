@@ -40,6 +40,107 @@ const DOWNLOAD_STATE_LABELS = {
   unknown: "Other",
 };
 
+function normalizeProgressPercent(value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function extractFilename(path) {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  const segments = path.split(/[\\/]+/).filter(Boolean);
+  if (!segments.length) {
+    return path;
+  }
+  return segments[segments.length - 1];
+}
+
+function getDownloadStateLabel(item) {
+  if (!item || typeof item !== "object") {
+    return "Download";
+  }
+  if (typeof item.stateLabel === "string" && item.stateLabel) {
+    return item.stateLabel;
+  }
+  const state = typeof item.state === "string" ? item.state : "";
+  const paused = Boolean(item.paused);
+  if (paused && state === "in_progress") {
+    return "Paused";
+  }
+  return DOWNLOAD_STATE_LABELS[state] || "Download";
+}
+
+function buildDownloadDescription(item) {
+  const parts = [];
+  const stateLabel = getDownloadStateLabel(item);
+  if (stateLabel) {
+    parts.push(stateLabel);
+  }
+  const hostname = typeof item?.hostname === "string" && item.hostname ? item.hostname : extractHostname(item?.url || "");
+  if (hostname) {
+    parts.push(hostname);
+  } else {
+    const filename = extractFilename(item?.filePath || "");
+    if (filename) {
+      parts.push(filename);
+    }
+  }
+  return parts.join(" · ");
+}
+
+function mapItemToResult(item, score) {
+  const description =
+    item.type === "download"
+      ? buildDownloadDescription(item)
+      : item.description || item.url;
+  const result = {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    type: item.type,
+    description,
+    score,
+    faviconUrl: item.faviconUrl || null,
+    origin: item.origin || "",
+    tabId: item.tabId,
+  };
+
+  if (item.type === "download") {
+    let progressPercent = null;
+    if (typeof item.progressPercent === "number" && Number.isFinite(item.progressPercent)) {
+      progressPercent = normalizeProgressPercent(item.progressPercent);
+    } else if (typeof item.progress === "number" && Number.isFinite(item.progress)) {
+      progressPercent = normalizeProgressPercent(item.progress * 100);
+    }
+
+    result.state = item.state;
+    result.stateLabel = getDownloadStateLabel(item);
+    result.downloadId = item.downloadId;
+    result.filePath = item.filePath;
+    result.startedAt = item.startedAt;
+    result.completedAt = item.completedAt;
+    result.bytesReceived = item.bytesReceived;
+    result.totalBytes = item.totalBytes;
+    result.sizeBytes = item.sizeBytes;
+    result.progress = typeof item.progress === "number" ? Math.max(0, Math.min(1, item.progress)) : null;
+    result.progressPercent = progressPercent;
+    result.speedBytesPerSecond = Number.isFinite(item.speedBytesPerSecond) ? Math.max(item.speedBytesPerSecond, 0) : 0;
+    result.paused = Boolean(item.paused);
+    result.canResume = Boolean(item.canResume);
+    result.exists = typeof item.exists === "boolean" ? item.exists : true;
+    result.danger = item.danger || "safe";
+    result.hostname = item.hostname || null;
+    result.estimatedEndAt = item.estimatedEndAt || null;
+  } else if (item.state !== undefined) {
+    result.state = item.state;
+  }
+
+  return result;
+}
+
 function toStartOfDay(timestamp) {
   const date = new Date(timestamp);
   date.setHours(0, 0, 0, 0);
@@ -1077,19 +1178,12 @@ export function runSearch(query, data, options = {}) {
         return aTitle.localeCompare(bTitle);
       });
     }
+    const sliced = defaultItems.slice(0, MAX_RESULTS).map((item) => {
+      const baseScore = (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+      return mapItemToResult(item, baseScore);
+    });
     return {
-      results: defaultItems.slice(0, MAX_RESULTS).map((item) => ({
-        id: item.id,
-        title: item.title,
-        url: item.url,
-        type: item.type,
-        description: item.description || item.url,
-        score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-        faviconUrl: item.faviconUrl || null,
-        origin: item.origin || "",
-        tabId: item.tabId,
-        state: item.state,
-      })),
+      results: sliced,
       ghost: null,
       answer: "",
       filter: filterType,
@@ -1147,18 +1241,7 @@ export function runSearch(query, data, options = {}) {
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
-    results.push({
-      id: item.id,
-      title: item.title,
-      url: item.url,
-      type: item.type,
-      description: item.description || item.url,
-      score: finalScore,
-      faviconUrl: item.faviconUrl || null,
-      origin: item.origin || "",
-      tabId: item.tabId,
-      state: item.state,
-    });
+    results.push(mapItemToResult(item, finalScore));
   }
 
   if (commandSuggestions.results.length) {
