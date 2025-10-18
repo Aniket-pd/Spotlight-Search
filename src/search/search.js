@@ -9,6 +9,7 @@ const COMMAND_SCORE = Number.POSITIVE_INFINITY;
 const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
+  download: 3,
   history: 2,
 };
 
@@ -19,6 +20,7 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  download: ["download:", "downloads:", "dl:", "d:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -31,6 +33,12 @@ const NAVIGATION_STEP_PENALTY = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
 const COMMON_SECOND_LEVEL_TLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "go", "ne", "or"]);
+const DOWNLOAD_STATE_LABELS = {
+  complete: "Completed",
+  in_progress: "In Progress",
+  interrupted: "Interrupted",
+  unknown: "Other",
+};
 
 function toStartOfDay(timestamp) {
   const date = new Date(timestamp);
@@ -216,7 +224,40 @@ function buildBookmarkSubfilters(bookmarks) {
   return options;
 }
 
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
+function buildDownloadSubfilters(downloads) {
+  const options = [{ id: "all", label: "All Downloads" }];
+  if (!Array.isArray(downloads) || !downloads.length) {
+    return options;
+  }
+
+  const counts = downloads.reduce((acc, item) => {
+    const state = typeof item?.state === "string" && item.state ? item.state.toLowerCase() : "unknown";
+    acc[state] = (acc[state] || 0) + 1;
+    return acc;
+  }, {});
+
+  const orderedStates = ["complete", "in_progress", "interrupted", "unknown"];
+  orderedStates.forEach((state) => {
+    const count = counts[state];
+    if (!count) {
+      return;
+    }
+    const label = DOWNLOAD_STATE_LABELS[state] || formatTokenLabel(state.replace(/_/g, " "));
+    options.push({ id: `state:${state}`, label, count });
+    delete counts[state];
+  });
+
+  for (const [state, count] of Object.entries(counts)) {
+    if (!count) continue;
+    const formatted = state.replace(/_/g, " ");
+    const label = DOWNLOAD_STATE_LABELS[state] || formatTokenLabel(formatted);
+    options.push({ id: `state:${state}`, label, count });
+  }
+
+  return options;
+}
+
+function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [], downloads = [] } = {}) {
   if (!filterType) {
     return [];
   }
@@ -228,6 +269,9 @@ function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
   }
   if (filterType === "bookmark") {
     return buildBookmarkSubfilters(bookmarks);
+  }
+  if (filterType === "download") {
+    return buildDownloadSubfilters(downloads);
   }
   return [];
 }
@@ -292,6 +336,21 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
     return key === itemKey;
   }
 
+  if (filterType === "download") {
+    if (!subfilterId.startsWith("state:")) {
+      return true;
+    }
+    const requested = subfilterId.slice("state:".length).toLowerCase();
+    if (!requested) {
+      return true;
+    }
+    const itemState = typeof item?.state === "string" ? item.state.toLowerCase() : "";
+    if (!itemState) {
+      return requested === "unknown";
+    }
+    return itemState === requested;
+  }
+
   return true;
 }
 
@@ -341,7 +400,14 @@ function formatTabCount(count) {
 
 function computeRecencyBoost(item) {
   const now = Date.now();
-  const timestamp = item.lastAccessed || item.lastVisitTime || item.dateAdded || 0;
+  const timestamp =
+    item.timestamp ||
+    item.completedAt ||
+    item.lastAccessed ||
+    item.lastVisitTime ||
+    item.startedAt ||
+    item.dateAdded ||
+    0;
   if (!timestamp) return 0;
   const hours = Math.max(0, (now - timestamp) / 36e5);
   if (hours < 1) return 2;
@@ -945,9 +1011,14 @@ export function runSearch(query, data, options = {}) {
   }
 
   const tabs = items.filter((item) => item.type === "tab");
+  const downloads = items.filter((item) => item.type === "download");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
   const historyBoundaries = computeHistoryBoundaries(Date.now());
-  const availableSubfilters = buildSubfilterOptions(filterType, { tabs, bookmarks: bookmarkItems });
+  const availableSubfilters = buildSubfilterOptions(filterType, {
+    tabs,
+    bookmarks: bookmarkItems,
+    downloads,
+  });
   const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
@@ -972,6 +1043,30 @@ export function runSearch(query, data, options = {}) {
         const bTime = b.lastAccessed || 0;
         return bTime - aTime;
       });
+    } else if (filterType === "download") {
+      const stateScore = (state) => {
+        switch (state) {
+          case "complete":
+            return 3;
+          case "in_progress":
+            return 2;
+          case "interrupted":
+            return 1;
+          default:
+            return 0;
+        }
+      };
+      defaultItems.sort((a, b) => {
+        const aState = stateScore(a.state);
+        const bState = stateScore(b.state);
+        if (bState !== aState) return bState - aState;
+        const aTime = a.timestamp || a.completedAt || a.startedAt || 0;
+        const bTime = b.timestamp || b.completedAt || b.startedAt || 0;
+        if (bTime !== aTime) return bTime - aTime;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
     } else {
       defaultItems.sort((a, b) => {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
@@ -988,10 +1083,12 @@ export function runSearch(query, data, options = {}) {
         title: item.title,
         url: item.url,
         type: item.type,
+        description: item.description || item.url,
         score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
         faviconUrl: item.faviconUrl || null,
         origin: item.origin || "",
         tabId: item.tabId,
+        state: item.state,
       })),
       ghost: null,
       answer: "",
@@ -1040,6 +1137,13 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    if (item.type === "download") {
+      if (item.state === "complete") {
+        finalScore += 1.5;
+      } else if (item.state === "interrupted") {
+        finalScore -= 0.5;
+      }
+    }
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
@@ -1048,10 +1152,12 @@ export function runSearch(query, data, options = {}) {
       title: item.title,
       url: item.url,
       type: item.type,
+      description: item.description || item.url,
       score: finalScore,
       faviconUrl: item.faviconUrl || null,
       origin: item.origin || "",
       tabId: item.tabId,
+      state: item.state,
     });
   }
 

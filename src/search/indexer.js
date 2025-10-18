@@ -1,6 +1,7 @@
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+const DOWNLOAD_SEARCH_LIMIT = 200;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -48,6 +49,119 @@ function extractOrigin(url) {
     return parsed.origin || "";
   } catch (err) {
     return "";
+  }
+}
+
+function extractHostname(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function parseChromeTimestamp(value) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+  return 0;
+}
+
+function extractFilename(path) {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  const segments = path.split(/[\\/]+/).filter(Boolean);
+  if (!segments.length) {
+    return path;
+  }
+  return segments[segments.length - 1];
+}
+
+function formatDownloadState(state) {
+  switch (state) {
+    case "complete":
+      return "Completed";
+    case "in_progress":
+      return "In Progress";
+    case "interrupted":
+      return "Interrupted";
+    default:
+      return "Download";
+  }
+}
+
+async function indexDownloads(indexMap, termBuckets, items) {
+  if (!chrome.downloads || typeof chrome.downloads.search !== "function") {
+    return;
+  }
+
+  let downloads = [];
+  try {
+    downloads = await chrome.downloads.search({ orderBy: ["-startTime"], limit: DOWNLOAD_SEARCH_LIMIT });
+  } catch (err) {
+    try {
+      downloads = await chrome.downloads.search({});
+    } catch (fallbackError) {
+      console.warn("Spotlight: unable to index downloads", fallbackError);
+      return;
+    }
+  }
+
+  const limitedDownloads = Array.isArray(downloads)
+    ? downloads.slice(0, DOWNLOAD_SEARCH_LIMIT)
+    : [];
+
+  for (const download of limitedDownloads) {
+    if (!download || typeof download.id !== "number") {
+      continue;
+    }
+
+    const finalUrl = download.finalUrl || download.url || "";
+    const origin = extractOrigin(finalUrl);
+    const hostname = extractHostname(finalUrl);
+    const title = extractFilename(download.filename) || hostname || finalUrl || `Download ${download.id}`;
+    const startedAt = parseChromeTimestamp(download.startTime);
+    const completedAt = parseChromeTimestamp(download.endTime);
+    const timestamp = completedAt || startedAt || Date.now();
+    const state = download.state || "";
+    const stateLabel = formatDownloadState(state);
+    const descriptionParts = [stateLabel];
+    if (hostname) {
+      descriptionParts.push(hostname);
+    } else if (download.filename) {
+      descriptionParts.push(extractFilename(download.filename));
+    }
+    const description = descriptionParts.join(" · ");
+
+    const itemId = items.length;
+    items.push({
+      id: itemId,
+      type: "download",
+      title,
+      url: finalUrl,
+      description,
+      downloadId: download.id,
+      state,
+      filePath: download.filename || "",
+      startedAt,
+      completedAt,
+      timestamp,
+      origin,
+    });
+
+    addToIndex(indexMap, termBuckets, itemId, title, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, download.filename, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, description, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, finalUrl, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, hostname, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, stateLabel, URL_WEIGHT);
   }
 }
 
@@ -178,6 +292,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -191,6 +306,15 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
+    downloadStateCounts: items.reduce((acc, item) => {
+      if (item.type !== "download") {
+        return acc;
+      }
+      const key = item.state || "unknown";
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {}),
   };
 
   return {

@@ -33,6 +33,7 @@ const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const DOWNLOAD_ICON_URL = chrome.runtime.getURL("icons/download.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
   "#7DD3FC",
@@ -70,6 +71,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Browse recent history",
     value: "history:",
     keywords: ["history", "hist", "recent", "visited"],
+  },
+  {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Search recent downloads",
+    value: "download:",
+    keywords: ["download", "downloads", "dl", "files"],
   },
   {
     id: "slash-back",
@@ -118,7 +126,10 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history… (try \"tab:\")");
+  inputEl.setAttribute(
+    "placeholder",
+    "Search tabs, bookmarks, history, downloads… (try \"tab:\" or \"download:\")"
+  );
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -949,6 +960,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -982,6 +995,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1075,6 +1090,18 @@ function createPlaceholderElement(result) {
   const placeholder = document.createElement("div");
   placeholder.className = "spotlight-result-placeholder";
   const origin = getResultOrigin(result);
+  if (result && result.type === "download") {
+    placeholder.classList.add("download");
+    const icon = document.createElement("img");
+    icon.className = "spotlight-result-placeholder-img";
+    icon.src = DOWNLOAD_ICON_URL;
+    icon.alt = "";
+    icon.referrerPolicy = "no-referrer";
+    placeholder.appendChild(icon);
+    const downloadColor = origin ? computePlaceholderColor(origin) : "rgba(96, 165, 250, 0.3)";
+    placeholder.style.backgroundColor = downloadColor;
+    return placeholder;
+  }
   const initial = getPlaceholderInitial(result);
   if (initial) {
     placeholder.textContent = initial;
