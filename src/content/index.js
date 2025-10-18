@@ -28,8 +28,8 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 
-const pendingDownloadRenderIds = new Set();
 let downloadRenderScheduled = false;
+let downloadNeedsFullRender = false;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -559,6 +559,8 @@ function closeOverlay() {
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
+  downloadNeedsFullRender = false;
+  downloadRenderScheduled = false;
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
@@ -863,7 +865,6 @@ function openResult(result) {
 
 function renderResults(options = {}) {
   const { scrollActive = true } = options;
-  pendingDownloadRenderIds.clear();
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -1165,7 +1166,6 @@ function applyDownloadUpdate(update) {
   const itemId = typeof update.itemId === "number" ? update.itemId : null;
   const downloadId = typeof update.downloadId === "number" ? update.downloadId : null;
   let changed = false;
-  const targets = new Set();
   resultsState = resultsState.map((result) => {
     if (!result || result.type !== "download") {
       return result;
@@ -1176,11 +1176,6 @@ function applyDownloadUpdate(update) {
       return result;
     }
     changed = true;
-    const resultId = result.id;
-    targets.add(resultId);
-    if (resultId !== null && resultId !== undefined) {
-      targets.add(String(resultId));
-    }
     const merged = { ...result, ...update };
     if (typeof merged.id !== "number") {
       merged.id = result.id;
@@ -1191,24 +1186,15 @@ function applyDownloadUpdate(update) {
     return decorateDownloadResult(merged);
   });
   if (changed) {
-    refreshDownloadResults(targets);
+    scheduleDownloadRender();
   }
-}
-
-function refreshDownloadResults(targetIds) {
-  if (!isOpen || !resultsEl || !targetIds || !targetIds.size) {
-    return;
-  }
-  targetIds.forEach((value) => {
-    if (value === null || value === undefined) {
-      return;
-    }
-    pendingDownloadRenderIds.add(String(value));
-  });
-  scheduleDownloadRender();
 }
 
 function scheduleDownloadRender() {
+  if (!isOpen || !resultsEl) {
+    return;
+  }
+  downloadNeedsFullRender = true;
   if (downloadRenderScheduled) {
     return;
   }
@@ -1219,121 +1205,30 @@ function scheduleDownloadRender() {
       : (callback) => setTimeout(callback, 16);
   scheduleFrame(() => {
     downloadRenderScheduled = false;
-    processPendingDownloadRenders();
-  });
-}
-
-function processPendingDownloadRenders() {
-  if (!isOpen || !resultsEl || !pendingDownloadRenderIds.size) {
-    pendingDownloadRenderIds.clear();
-    return;
-  }
-
-  const targetIds = Array.from(pendingDownloadRenderIds);
-  pendingDownloadRenderIds.clear();
-
-  const elements = Array.from(resultsEl.querySelectorAll(".spotlight-result"));
-  const elementLookup = new Map();
-  elements.forEach((itemEl, index) => {
-    const idAttr = typeof itemEl.dataset.resultId === "string" ? itemEl.dataset.resultId : "";
-    if (idAttr) {
-      elementLookup.set(idAttr, { itemEl, index });
-    }
-  });
-
-  let updatedAny = false;
-  let needsFullRender = false;
-
-  targetIds.forEach((rawId) => {
-    if (needsFullRender) {
+    if (!downloadNeedsFullRender || !isOpen || !resultsEl) {
+      downloadNeedsFullRender = false;
       return;
     }
-    const normalizedId = String(rawId);
-    const result = resultsState.find((entry) => entry && String(entry.id) === normalizedId);
-    if (!result || result.type !== "download") {
-      return;
-    }
-    const record = elementLookup.get(normalizedId);
-    if (!record) {
-      needsFullRender = true;
-      return;
-    }
-    if (!updateResultElement(record.itemEl, result, record.index)) {
-      needsFullRender = true;
-      return;
-    }
-    updatedAny = true;
-  });
-
-  if (needsFullRender) {
+    downloadNeedsFullRender = false;
     const previousScrollTop = resultsEl.scrollTop;
+    const previousActiveId =
+      activeIndex >= 0 && resultsState[activeIndex] && resultsState[activeIndex].id !== undefined
+        ? String(resultsState[activeIndex].id)
+        : null;
     renderResults({ scrollActive: false });
     if (typeof previousScrollTop === "number" && previousScrollTop >= 0) {
       resultsEl.scrollTop = previousScrollTop;
     }
-    return;
-  }
-
-  if (updatedAny) {
-    updateActiveResult({ scroll: false });
-  }
-}
-
-function updateResultElement(itemEl, result, index) {
-  if (!itemEl || !result) {
-    return false;
-  }
-
-  if (typeof index === "number" && index >= 0) {
-    itemEl.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
-  }
-  itemEl.dataset.resultId = String(result.id);
-  const origin = getResultOrigin(result);
-  if (origin) {
-    itemEl.dataset.origin = origin;
-  } else {
-    delete itemEl.dataset.origin;
-  }
-
-  if (result.type === "command") {
-    itemEl.classList.add("spotlight-result-command");
-  } else {
-    itemEl.classList.remove("spotlight-result-command");
-  }
-
-  const titleEl = itemEl.querySelector(".spotlight-result-title");
-  if (titleEl) {
-    titleEl.textContent = result.title || result.url || "";
-  }
-
-  const metaEl = itemEl.querySelector(".spotlight-result-url");
-  if (metaEl) {
-    if (result.type === "download") {
-      metaEl.textContent = result.displayStatus || result.description || result.url || "";
-    } else {
-      metaEl.textContent = result.description || result.url || "";
-    }
-  }
-
-  const typeEl = itemEl.querySelector(".spotlight-result-type");
-  if (typeEl) {
-    typeEl.textContent = formatTypeLabel(result.type, result);
-    typeEl.className = `spotlight-result-type type-${result.type}`;
-  }
-
-  if (result.type === "download") {
-    if (!updateDownloadIconElement(itemEl, result)) {
-      const icon = createDownloadIcon(result);
-      const existing = itemEl.querySelector(".spotlight-result-icon");
-      if (existing) {
-        existing.replaceWith(icon);
-      } else {
-        itemEl.insertBefore(icon, itemEl.firstChild || null);
+    if (previousActiveId) {
+      const restoredIndex = resultsState.findIndex(
+        (entry) => entry && String(entry.id) === previousActiveId
+      );
+      if (restoredIndex >= 0) {
+        activeIndex = restoredIndex;
       }
     }
-  }
-
-  return true;
+    updateActiveResult({ scroll: false });
+  });
 }
 
 function createDownloadIcon(result) {
@@ -1364,33 +1259,6 @@ function createDownloadIcon(result) {
   wrapper.appendChild(ring);
 
   return wrapper;
-}
-
-function updateDownloadIconElement(container, result) {
-  if (!container) {
-    return false;
-  }
-  const iconWrapper = container.querySelector(".spotlight-result-icon.download");
-  if (!iconWrapper) {
-    return false;
-  }
-  const ring = iconWrapper.querySelector(".spotlight-download-progress");
-  if (!ring) {
-    return false;
-  }
-  const progressValue =
-    typeof result?.progress === "number" && Number.isFinite(result.progress)
-      ? Math.max(0, Math.min(1, result.progress))
-      : null;
-  if (progressValue !== null) {
-    const degrees = Math.max(0, Math.min(360, Math.round(progressValue * 360)));
-    ring.classList.remove("indeterminate");
-    ring.style.setProperty("--progress", `${degrees}deg`);
-  } else {
-    ring.classList.add("indeterminate");
-    ring.style.removeProperty("--progress");
-  }
-  return true;
 }
 
 function scheduleIdleWork(callback) {
