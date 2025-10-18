@@ -799,7 +799,8 @@ function navigateResults(delta) {
   updateActiveResult();
 }
 
-function updateActiveResult() {
+function updateActiveResult(options = {}) {
+  const { scroll = true } = options;
   if (!resultsEl || !inputEl) {
     return;
   }
@@ -813,9 +814,12 @@ function updateActiveResult() {
     } else {
       item.removeAttribute("aria-selected");
     }
-    if (isActive) {
+    if (isActive && scroll) {
       activeItem = item;
       item.scrollIntoView({ block: "nearest" });
+    }
+    if (isActive && !scroll) {
+      activeItem = item;
     }
   });
   if (activeItem && activeItem.id) {
@@ -882,72 +886,10 @@ function renderResults() {
   }
 
   resultsState.forEach((result, index) => {
-    const li = document.createElement("li");
-    li.className = "spotlight-result";
-    li.setAttribute("role", "option");
-    li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
-    li.dataset.resultId = String(result.id);
-    const origin = getResultOrigin(result);
-    if (origin) {
-      li.dataset.origin = origin;
-    } else {
-      delete li.dataset.origin;
+    const li = createResultListItem(result, index);
+    if (li) {
+      resultsEl.appendChild(li);
     }
-
-    const iconEl = createIconElement(result);
-    if (iconEl) {
-      li.appendChild(iconEl);
-    }
-
-    const body = document.createElement("div");
-    body.className = "spotlight-result-content";
-
-    const title = document.createElement("div");
-    title.className = "spotlight-result-title";
-    title.textContent = result.title || result.url;
-
-    const meta = document.createElement("div");
-    meta.className = "spotlight-result-meta";
-
-    const url = document.createElement("span");
-    url.className = "spotlight-result-url";
-    if (result.type === "download") {
-      url.textContent = result.displayStatus || result.description || result.url || "";
-    } else {
-      url.textContent = result.description || result.url || "";
-    }
-
-    const type = document.createElement("span");
-    type.className = `spotlight-result-type type-${result.type}`;
-    type.textContent = formatTypeLabel(result.type, result);
-
-    meta.appendChild(url);
-    meta.appendChild(type);
-
-    body.appendChild(title);
-    body.appendChild(meta);
-    li.appendChild(body);
-
-    li.addEventListener("pointerover", () => {
-      if (activeIndex !== index) {
-        activeIndex = index;
-        updateActiveResult();
-      }
-    });
-
-    li.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-    });
-
-    li.addEventListener("click", () => {
-      openResult(result);
-    });
-
-    if (result.type === "command") {
-      li.classList.add("spotlight-result-command");
-    }
-
-    resultsEl.appendChild(li);
   });
 
   activeIndex = Math.min(activeIndex, resultsState.length - 1);
@@ -956,6 +898,80 @@ function renderResults() {
   }
   enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
   updateActiveResult();
+}
+
+function createResultListItem(result, index) {
+  if (!result) {
+    return null;
+  }
+  const li = document.createElement("li");
+  li.className = "spotlight-result";
+  li.setAttribute("role", "option");
+  li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
+  li.dataset.resultId = String(result.id);
+  const origin = getResultOrigin(result);
+  if (origin) {
+    li.dataset.origin = origin;
+  } else {
+    delete li.dataset.origin;
+  }
+
+  const iconEl = createIconElement(result);
+  if (iconEl) {
+    li.appendChild(iconEl);
+  }
+
+  const body = document.createElement("div");
+  body.className = "spotlight-result-content";
+
+  const title = document.createElement("div");
+  title.className = "spotlight-result-title";
+  title.textContent = result.title || result.url || "";
+
+  const meta = document.createElement("div");
+  meta.className = "spotlight-result-meta";
+
+  const url = document.createElement("span");
+  url.className = "spotlight-result-url";
+  if (result.type === "download") {
+    url.textContent = result.displayStatus || result.description || result.url || "";
+  } else {
+    url.textContent = result.description || result.url || "";
+  }
+
+  const type = document.createElement("span");
+  type.className = `spotlight-result-type type-${result.type}`;
+  type.textContent = formatTypeLabel(result.type, result);
+
+  meta.appendChild(url);
+  meta.appendChild(type);
+
+  body.appendChild(title);
+  body.appendChild(meta);
+  li.appendChild(body);
+
+  const itemIndex = index;
+  li.addEventListener("pointerover", () => {
+    if (activeIndex !== itemIndex) {
+      activeIndex = itemIndex;
+      updateActiveResult();
+    }
+  });
+
+  li.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+
+  li.addEventListener("click", () => {
+    const current = resultsState.find((entry) => entry && entry.id === result.id);
+    openResult(current || result);
+  });
+
+  if (result.type === "command") {
+    li.classList.add("spotlight-result-command");
+  }
+
+  return li;
 }
 
 function getFilterStatusLabel(type) {
@@ -1156,47 +1172,44 @@ function applyDownloadUpdate(update) {
     }
     changed = true;
     targets.add(result.id);
-    return decorateDownloadResult({ ...result, ...update });
+    const merged = { ...result, ...update };
+    if (typeof merged.id !== "number") {
+      merged.id = result.id;
+    }
+    if (typeof merged.type !== "string") {
+      merged.type = result.type;
+    }
+    return decorateDownloadResult(merged);
   });
   if (changed) {
-    updateDownloadDom(targets);
+    refreshDownloadResults(targets);
   }
 }
 
-function updateDownloadDom(targetIds) {
-  if (!resultsEl) {
+function refreshDownloadResults(targetIds) {
+  if (!resultsEl || !targetIds || !targetIds.size) {
     return;
   }
-  const items = resultsEl.querySelectorAll(".spotlight-result");
-  items.forEach((itemEl) => {
+  let updated = false;
+  const items = Array.from(resultsEl.querySelectorAll(".spotlight-result"));
+  items.forEach((itemEl, index) => {
     const resultId = Number(itemEl.dataset.resultId);
-    if (targetIds && targetIds.size && !targetIds.has(resultId)) {
+    if (!targetIds.has(resultId)) {
       return;
     }
     const result = resultsState.find((entry) => entry && entry.id === resultId && entry.type === "download");
     if (!result) {
       return;
     }
-    const urlEl = itemEl.querySelector(".spotlight-result-url");
-    if (urlEl) {
-      urlEl.textContent = result.displayStatus || result.description || result.url || "";
-    }
-    const titleEl = itemEl.querySelector(".spotlight-result-title");
-    if (titleEl) {
-      titleEl.textContent = result.title || result.url || titleEl.textContent;
-    }
-    const progressEl = itemEl.querySelector(".spotlight-download-progress");
-    if (progressEl) {
-      if (typeof result.progress === "number" && Number.isFinite(result.progress)) {
-        const degrees = Math.max(0, Math.min(360, Math.round(result.progress * 360)));
-        progressEl.style.setProperty("--progress", `${degrees}deg`);
-        progressEl.classList.remove("indeterminate");
-      } else {
-        progressEl.classList.add("indeterminate");
-        progressEl.style.removeProperty("--progress");
-      }
+    const replacement = createResultListItem(result, index);
+    if (replacement) {
+      itemEl.replaceWith(replacement);
+      updated = true;
     }
   });
+  if (updated) {
+    updateActiveResult({ scroll: false });
+  }
 }
 
 function createDownloadIcon(result) {
