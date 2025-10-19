@@ -1,9 +1,12 @@
 const OVERLAY_ID = "spotlight-overlay";
+const OVERLAY_HOST_ID = "spotlight-overlay-host";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+let overlayHost = null;
+let overlayRoot = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -122,6 +125,23 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 }));
 
 function createOverlay() {
+  if (!overlayHost) {
+    overlayHost = document.createElement("div");
+    overlayHost.id = OVERLAY_HOST_ID;
+    overlayHost.setAttribute("aria-hidden", "true");
+    if (overlayHost.style && "all" in overlayHost.style) {
+      overlayHost.style.all = "initial";
+    }
+    overlayRoot = overlayHost.attachShadow({ mode: "open" });
+
+    const styleEl = document.createElement("link");
+    styleEl.rel = "stylesheet";
+    styleEl.href = chrome.runtime.getURL("src/content/styles.css");
+    overlayRoot.appendChild(styleEl);
+  } else if (!overlayRoot) {
+    overlayRoot = overlayHost.shadowRoot;
+  }
+
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
   overlayEl.className = "spotlight-overlay";
@@ -208,6 +228,10 @@ function createOverlay() {
     }
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
+
+  if (overlayRoot && !overlayRoot.contains(overlayEl)) {
+    overlayRoot.appendChild(overlayEl);
+  }
 }
 
 function resetSlashMenuState() {
@@ -543,6 +567,21 @@ function openOverlay() {
     createOverlay();
   }
 
+  if (!document.body) {
+    if (document.readyState === "loading") {
+      document.addEventListener(
+        "DOMContentLoaded",
+        () => {
+          openOverlay();
+        },
+        { once: true }
+      );
+    } else {
+      scheduleIdleWork(() => openOverlay());
+    }
+    return;
+  }
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -557,10 +596,20 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
-  bodyOverflowBackup = document.body.style.overflow;
-  document.body.style.overflow = "hidden";
+  bodyOverflowBackup = document.body ? document.body.style.overflow : "";
+  if (document.body) {
+    document.body.style.overflow = "hidden";
+  }
 
-  document.body.appendChild(overlayEl);
+  if (overlayHost && !overlayHost.parentElement && document.body) {
+    document.body.appendChild(overlayHost);
+  }
+  if (overlayHost) {
+    overlayHost.setAttribute("aria-hidden", "false");
+  }
+  if (overlayRoot && !overlayRoot.contains(overlayEl)) {
+    overlayRoot.appendChild(overlayEl);
+  }
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -572,10 +621,15 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
+  if (overlayHost) {
+    overlayHost.setAttribute("aria-hidden", "true");
+    if (overlayHost.parentElement) {
+      overlayHost.parentElement.removeChild(overlayHost);
+    }
   }
-  document.body.style.overflow = bodyOverflowBackup;
+  if (document.body) {
+    document.body.style.overflow = bodyOverflowBackup;
+  }
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
@@ -592,6 +646,19 @@ function closeOverlay() {
   }
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
+  }
+
+  if (
+    typeof globalThis !== "undefined" &&
+    globalThis.SPOTLIGHT_STANDALONE === true &&
+    typeof window !== "undefined" &&
+    typeof window.close === "function"
+  ) {
+    try {
+      window.close();
+    } catch (err) {
+      // ignore close failures
+    }
   }
 }
 
@@ -1645,3 +1712,19 @@ chrome.runtime.onMessage.addListener((message) => {
     openOverlay();
   }
 });
+
+if (typeof globalThis !== "undefined" && globalThis.SPOTLIGHT_AUTO_OPEN) {
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        openOverlay();
+      },
+      { once: true }
+    );
+  } else {
+    scheduleIdleWork(() => {
+      openOverlay();
+    });
+  }
+}
