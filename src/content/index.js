@@ -123,10 +123,12 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 }));
 
 function createOverlay() {
+  const standalone = isStandaloneSurface();
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
   overlayEl.className = "spotlight-overlay-host";
   overlayEl.setAttribute("role", "presentation");
+  overlayEl.dataset.surface = standalone ? "standalone" : "overlay";
 
   overlayRoot = overlayEl.attachShadow({ mode: "open" });
 
@@ -212,11 +214,13 @@ function createOverlay() {
 
   renderSubfilters();
 
-  overlayEl.addEventListener("click", (event) => {
-    if (event.target === overlayEl) {
-      closeOverlay();
-    }
-  });
+  if (!standalone) {
+    overlayEl.addEventListener("click", (event) => {
+      if (event.target === overlayEl) {
+        closeOverlay();
+      }
+    });
+  }
 
   inputEl.addEventListener("input", handleInputChange);
   inputEl.addEventListener("keydown", handleInputKeydown);
@@ -566,6 +570,11 @@ function openOverlay() {
     createOverlay();
   }
 
+  const standalone = isStandaloneSurface();
+  if (overlayEl && overlayEl.dataset) {
+    overlayEl.dataset.surface = standalone ? "standalone" : "overlay";
+  }
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -586,8 +595,10 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
-  bodyOverflowBackup = document.body.style.overflow;
-  document.body.style.overflow = "hidden";
+  if (!standalone) {
+    bodyOverflowBackup = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
 
   document.body.appendChild(overlayEl);
   requestResults("");
@@ -607,7 +618,9 @@ function closeOverlay() {
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
-  document.body.style.overflow = bodyOverflowBackup;
+  if (!isStandaloneSurface()) {
+    document.body.style.overflow = bodyOverflowBackup;
+  }
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
@@ -627,6 +640,27 @@ function closeOverlay() {
   }
 }
 
+function closeStandaloneSurface() {
+  if (!isStandaloneSurface()) {
+    return false;
+  }
+  if (typeof window !== "undefined" && typeof window.close === "function") {
+    try {
+      window.close();
+    } catch (err) {
+      console.warn("Spotlight: unable to close standalone window", err);
+    }
+  }
+  return true;
+}
+
+function dismissSurface() {
+  if (closeStandaloneSurface()) {
+    return;
+  }
+  closeOverlay();
+}
+
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
   if (slashMenuVisible && slashMenuOptions.length) {
@@ -634,7 +668,7 @@ function handleGlobalKeydown(event) {
   }
   if (event.key === "Escape") {
     event.preventDefault();
-    closeOverlay();
+    dismissSurface();
     return;
   }
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -939,7 +973,7 @@ function openResult(result) {
       payload.args = result.args;
     }
     chrome.runtime.sendMessage(payload);
-    closeOverlay();
+    dismissSurface();
     return;
   }
   if (result.type === "navigation") {
@@ -953,11 +987,11 @@ function openResult(result) {
         }
       );
     }
-    closeOverlay();
+    dismissSurface();
     return;
   }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
-  closeOverlay();
+  dismissSurface();
 }
 
 function renderResults() {
@@ -1672,7 +1706,7 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
   if (isOpen) {
-    closeOverlay();
+    dismissSurface();
   } else {
     openOverlay();
   }

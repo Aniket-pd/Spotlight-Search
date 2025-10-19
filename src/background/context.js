@@ -5,8 +5,17 @@ export function createBackgroundContext({ buildIndex }) {
     indexData: null,
     buildingPromise: null,
     rebuildTimer: null,
+    fallbackWindowId: null,
   };
   const faviconCache = new Map();
+
+  if (chrome.windows?.onRemoved) {
+    chrome.windows.onRemoved.addListener((windowId) => {
+      if (windowId === state.fallbackWindowId) {
+        state.fallbackWindowId = null;
+      }
+    });
+  }
 
   async function rebuildIndex() {
     if (!state.buildingPromise) {
@@ -81,10 +90,40 @@ export function createBackgroundContext({ buildIndex }) {
       }
     }
 
+    await openStandaloneWindow();
+  }
+
+  async function openStandaloneWindow() {
+    const url = chrome.runtime.getURL("panel.html");
+
+    if (typeof state.fallbackWindowId === "number") {
+      try {
+        const existing = await chrome.windows.get(state.fallbackWindowId, { populate: true });
+        if (existing) {
+          await chrome.windows.update(state.fallbackWindowId, { focused: true });
+          if (existing.tabs && !existing.tabs.some((tab) => tab.url === url)) {
+            await chrome.tabs.create({ windowId: state.fallbackWindowId, url });
+          }
+          return;
+        }
+      } catch (err) {
+        state.fallbackWindowId = null;
+      }
+    }
+
     try {
-      await chrome.tabs.create({ url: chrome.runtime.getURL("panel.html") });
+      const createdWindow = await chrome.windows.create({
+        url,
+        type: "popup",
+        focused: true,
+        width: 760,
+        height: 640,
+      });
+      if (createdWindow?.id !== undefined) {
+        state.fallbackWindowId = createdWindow.id;
+      }
     } catch (err) {
-      console.error("Spotlight: failed to open fallback page", err);
+      console.error("Spotlight: failed to open fallback window", err);
     }
   }
 

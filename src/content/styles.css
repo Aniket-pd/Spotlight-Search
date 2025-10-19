@@ -3,6 +3,22 @@
   all: initial;
 }
 
+:host([data-surface="standalone"]),
+:host([data-surface="standalone"]).spotlight-overlay-host {
+  position: static;
+  inset: auto;
+  background: transparent;
+  backdrop-filter: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 12px;
+  min-height: 100%;
+  box-sizing: border-box;
+  gap: 12px;
+}
+
 :host *,
 :host *::before,
 :host *::after {
@@ -40,6 +56,17 @@
   color: #f5f5f5;
 }
 
+:host([data-surface="standalone"]) .spotlight-shell {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+
 .spotlight-shell {
   width: min(720px, 92vw);
   border-radius: 18px;
@@ -47,6 +74,11 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   overflow: visible;
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+:host([data-surface="standalone"]) .spotlight-input-wrapper {
+  background: transparent;
+  padding: 18px 16px 12px;
 }
 
 .spotlight-input-wrapper {
@@ -248,6 +280,12 @@
   max-height: 420px;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+:host([data-surface="standalone"]) .spotlight-results {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
 }
 
 .spotlight-results::-webkit-scrollbar {
