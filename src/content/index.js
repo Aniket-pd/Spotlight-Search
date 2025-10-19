@@ -29,6 +29,7 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+let pointerNavigationSuspended = false;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -180,6 +181,7 @@ function createOverlay() {
   resultsEl.id = RESULTS_LIST_ID;
   inputEl.setAttribute("aria-controls", RESULTS_LIST_ID);
   lazyList.attach(resultsEl);
+  resultsEl.addEventListener("pointermove", handleResultsPointerMove);
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
@@ -553,6 +555,7 @@ function openOverlay() {
   inputEl.value = "";
   setGhostText("");
   resetSlashMenuState();
+  pointerNavigationSuspended = true;
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -683,6 +686,9 @@ function handleInputChange() {
   }
   setStatus("", { force: true });
   setGhostText("");
+  activeIndex = -1;
+  updateActiveResult();
+  pointerNavigationSuspended = true;
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
   }
@@ -716,6 +722,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
 
@@ -822,6 +829,46 @@ function navigateResults(delta) {
   if (!expanded) {
     updateActiveResult();
   }
+}
+
+function handlePointerHover(index, event) {
+  if (!Number.isInteger(index) || index < 0 || index >= resultsState.length) {
+    return;
+  }
+  const pointerType = event && typeof event.pointerType === "string" ? event.pointerType : "";
+  const isMouseLike = pointerType === "" || pointerType === "mouse";
+  const force = Boolean(event && event.forceUpdate);
+  if (!force && isMouseLike && pointerNavigationSuspended) {
+    pointerNavigationSuspended = false;
+    return;
+  }
+  pointerNavigationSuspended = false;
+  if (activeIndex !== index) {
+    activeIndex = index;
+    if (!lazyList.ensureVisible(activeIndex)) {
+      updateActiveResult();
+    }
+  }
+}
+
+function handleResultsPointerMove(event) {
+  if (!resultsEl || !event || typeof event.target === "undefined") {
+    return;
+  }
+  const target = event.target;
+  if (!target || typeof target.closest !== "function") {
+    return;
+  }
+  const item = target.closest("li.spotlight-result[role='option']");
+  if (!item || !resultsEl.contains(item)) {
+    return;
+  }
+  const indexAttr = item.dataset ? item.dataset.index : undefined;
+  const itemIndex = typeof indexAttr === "string" ? Number(indexAttr) : Number.NaN;
+  if (!Number.isInteger(itemIndex)) {
+    return;
+  }
+  handlePointerHover(itemIndex, { pointerType: event.pointerType, forceUpdate: true });
 }
 
 function updateActiveResult() {
@@ -998,13 +1045,8 @@ function renderResults() {
     body.appendChild(meta);
     li.appendChild(body);
 
-    li.addEventListener("pointerover", () => {
-      if (activeIndex !== displayIndex) {
-        activeIndex = displayIndex;
-        if (!lazyList.ensureVisible(activeIndex)) {
-          updateActiveResult();
-        }
-      }
+    li.addEventListener("pointerover", (event) => {
+      handlePointerHover(displayIndex, event);
     });
 
     li.addEventListener("mousedown", (event) => {
