@@ -1,7 +1,12 @@
-const OVERLAY_ID = "spotlight-overlay";
-const OVERLAY_HOST_ID = "spotlight-overlay-host";
-const RESULTS_LIST_ID = "spotlight-results-list";
-const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
+const OVERLAY_ID = "sp-overlay";
+const OVERLAY_HOST_ID = "sp-overlay-host";
+const RESULTS_LIST_ID = "sp-results-list";
+const RESULT_OPTION_ID_PREFIX = "sp-option-";
+const RUNTIME_CONTEXT =
+  typeof globalThis !== "undefined" && typeof globalThis.SPOTLIGHT_CONTEXT === "string"
+    ? globalThis.SPOTLIGHT_CONTEXT
+    : "content";
+const IS_PANEL_CONTEXT = RUNTIME_CONTEXT === "panel";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
@@ -71,7 +76,7 @@ const PLACEHOLDER_COLORS = [
   "#FBBF24",
 ];
 
-const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
+const SLASH_OPTION_ID_PREFIX = "sp-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
   {
     id: "slash-tab",
@@ -144,26 +149,29 @@ function createOverlay() {
 
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
-  overlayEl.className = "spotlight-overlay";
+  overlayEl.className = "sp-overlay";
+  if (IS_PANEL_CONTEXT) {
+    overlayEl.classList.add("sp-overlay-panel");
+  }
   overlayEl.setAttribute("role", "presentation");
 
   containerEl = document.createElement("div");
-  containerEl.className = "spotlight-shell";
+  containerEl.className = "sp-shell";
   containerEl.setAttribute("role", "dialog");
   containerEl.setAttribute("aria-modal", "true");
 
   const inputWrapper = document.createElement("div");
-  inputWrapper.className = "spotlight-input-wrapper";
+  inputWrapper.className = "sp-input-wrapper";
   inputContainerEl = document.createElement("div");
-  inputContainerEl.className = "spotlight-input-container";
+  inputContainerEl.className = "sp-input-container";
 
   ghostEl = document.createElement("div");
-  ghostEl.className = "spotlight-ghost";
+  ghostEl.className = "sp-ghost";
   ghostEl.textContent = "";
   inputContainerEl.appendChild(ghostEl);
 
   inputEl = document.createElement("input");
-  inputEl.className = "spotlight-input";
+  inputEl.className = "sp-input";
   inputEl.type = "text";
   inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history, downloads… (try \"tab:\")");
   inputEl.setAttribute("spellcheck", "false");
@@ -173,7 +181,7 @@ function createOverlay() {
   inputContainerEl.appendChild(inputEl);
 
   slashMenuEl = document.createElement("div");
-  slashMenuEl.className = "spotlight-slash-menu";
+  slashMenuEl.className = "sp-slash-menu";
   slashMenuEl.setAttribute("role", "listbox");
   slashMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(slashMenuEl);
@@ -181,22 +189,22 @@ function createOverlay() {
   inputWrapper.appendChild(inputContainerEl);
 
   subfilterContainerEl = document.createElement("div");
-  subfilterContainerEl.className = "spotlight-subfilters";
+  subfilterContainerEl.className = "sp-subfilters";
   subfilterContainerEl.setAttribute("role", "group");
   subfilterContainerEl.setAttribute("aria-label", "Subfilters");
   subfilterScrollerEl = document.createElement("div");
-  subfilterScrollerEl.className = "spotlight-subfilters-scroll";
+  subfilterScrollerEl.className = "sp-subfilters-scroll";
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
 
   statusEl = document.createElement("div");
-  statusEl.className = "spotlight-status";
+  statusEl.className = "sp-status";
   statusEl.textContent = "";
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
   resultsEl = document.createElement("ul");
-  resultsEl.className = "spotlight-results";
+  resultsEl.className = "sp-results";
   resultsEl.setAttribute("role", "listbox");
   resultsEl.id = RESULTS_LIST_ID;
   inputEl.setAttribute("aria-controls", RESULTS_LIST_ID);
@@ -309,7 +317,7 @@ function renderSlashMenu() {
   slashMenuOptions.forEach((option, index) => {
     const optionId = `${SLASH_OPTION_ID_PREFIX}${option.id}`;
     const item = document.createElement("div");
-    item.className = "spotlight-slash-option";
+    item.className = "sp-slash-option";
     item.id = optionId;
     item.setAttribute("role", "option");
     if (index === slashMenuActiveIndex) {
@@ -317,13 +325,13 @@ function renderSlashMenu() {
       slashMenuEl.setAttribute("aria-activedescendant", optionId);
     }
     const label = document.createElement("div");
-    label.className = "spotlight-slash-option-label";
+    label.className = "sp-slash-option-label";
     label.textContent = option.label;
     item.appendChild(label);
 
     if (option.hint) {
       const hint = document.createElement("div");
-      hint.className = "spotlight-slash-option-hint";
+      hint.className = "sp-slash-option-hint";
       hint.textContent = option.hint;
       item.appendChild(hint);
     }
@@ -495,18 +503,18 @@ function renderSubfilters() {
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "spotlight-subfilter";
+    button.className = "sp-subfilter";
     button.dataset.id = option.id;
     button.title = option.hint || option.label;
 
     const labelSpan = document.createElement("span");
-    labelSpan.className = "spotlight-subfilter-label";
+    labelSpan.className = "sp-subfilter-label";
     labelSpan.textContent = option.label;
     button.appendChild(labelSpan);
 
     if (typeof option.count === "number" && option.count > 0) {
       const countSpan = document.createElement("span");
-      countSpan.className = "spotlight-subfilter-count";
+      countSpan.className = "sp-subfilter-count";
       countSpan.textContent = String(option.count);
       button.appendChild(countSpan);
     }
@@ -648,18 +656,6 @@ function closeOverlay() {
     inputEl.removeAttribute("aria-activedescendant");
   }
 
-  if (
-    typeof globalThis !== "undefined" &&
-    globalThis.SPOTLIGHT_STANDALONE === true &&
-    typeof window !== "undefined" &&
-    typeof window.close === "function"
-  ) {
-    try {
-      window.close();
-    } catch (err) {
-      // ignore close failures
-    }
-  }
 }
 
 function handleGlobalKeydown(event) {
@@ -926,7 +922,7 @@ function handleResultsPointerMove(event) {
   if (!target || typeof target.closest !== "function") {
     return;
   }
-  const item = target.closest("li.spotlight-result[role='option']");
+  const item = target.closest("li.sp-result[role='option']");
   if (!item || !resultsEl.contains(item)) {
     return;
   }
@@ -1004,7 +1000,7 @@ function renderResults() {
 
   if (inputEl.value.trim() === "> reindex") {
     const li = document.createElement("li");
-    li.className = "spotlight-result reindex";
+    li.className = "sp-result reindex";
     li.textContent = "Press Enter to rebuild the search index";
     resultsEl.appendChild(li);
     if (inputEl) {
@@ -1015,7 +1011,7 @@ function renderResults() {
 
   if (!resultsState.length) {
     const li = document.createElement("li");
-    li.className = "spotlight-result empty";
+    li.className = "sp-result empty";
     const scopeLabel = getFilterStatusLabel(activeFilter);
     const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
     li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
@@ -1040,7 +1036,7 @@ function renderResults() {
     }
     const displayIndex = index;
     const li = document.createElement("li");
-    li.className = "spotlight-result";
+    li.className = "sp-result";
     li.setAttribute("role", "option");
     li.id = `${RESULT_OPTION_ID_PREFIX}${displayIndex}`;
     li.dataset.resultId = String(result.id);
@@ -1058,17 +1054,17 @@ function renderResults() {
     }
 
     const body = document.createElement("div");
-    body.className = "spotlight-result-content";
+    body.className = "sp-result-content";
 
     const title = document.createElement("div");
-    title.className = "spotlight-result-title";
+    title.className = "sp-result-title";
     title.textContent = result.title || result.url;
 
     const meta = document.createElement("div");
-    meta.className = "spotlight-result-meta";
+    meta.className = "sp-result-meta";
 
     const url = document.createElement("span");
-    url.className = "spotlight-result-url";
+    url.className = "sp-result-url";
     url.textContent = result.description || result.url || "";
     if (url.textContent) {
       url.title = url.textContent;
@@ -1077,7 +1073,7 @@ function renderResults() {
     const timestampLabel = formatResultTimestamp(result);
 
     const type = document.createElement("span");
-    type.className = `spotlight-result-type type-${result.type}`;
+    type.className = `sp-result-type type-${result.type}`;
     type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
@@ -1085,14 +1081,14 @@ function renderResults() {
       const visitLabel = formatVisitCount(result.visitCount);
       if (visitLabel) {
         const visitChip = document.createElement("span");
-        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+        visitChip.className = "sp-result-tag sp-result-tag-topsite";
         visitChip.textContent = visitLabel;
         meta.appendChild(visitChip);
       }
     }
     if (timestampLabel) {
       const timestampEl = document.createElement("span");
-      timestampEl.className = "spotlight-result-timestamp";
+      timestampEl.className = "sp-result-timestamp";
       timestampEl.textContent = timestampLabel;
       timestampEl.title = timestampLabel;
       meta.appendChild(timestampEl);
@@ -1101,7 +1097,7 @@ function renderResults() {
       const stateLabel = formatDownloadStateLabel(result.state);
       if (stateLabel) {
         const stateChip = document.createElement("span");
-        stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
+        stateChip.className = `sp-result-tag ${getDownloadStateClassName(result.state)}`;
         stateChip.textContent = stateLabel;
         meta.appendChild(stateChip);
       }
@@ -1126,7 +1122,7 @@ function renderResults() {
     });
 
     if (result.type === "command") {
-      li.classList.add("spotlight-result-command");
+      li.classList.add("sp-result-command");
     }
 
     resultsEl.appendChild(li);
@@ -1479,7 +1475,7 @@ function computePlaceholderColor(origin) {
 
 function createPlaceholderElement(result) {
   const placeholder = document.createElement("div");
-  placeholder.className = "spotlight-result-placeholder";
+  placeholder.className = "sp-result-placeholder";
   const origin = getResultOrigin(result);
   const initial = getPlaceholderInitial(result);
   if (initial) {
@@ -1487,7 +1483,7 @@ function createPlaceholderElement(result) {
     placeholder.classList.add("has-initial");
   } else {
     const fallback = document.createElement("img");
-    fallback.className = "spotlight-result-placeholder-img";
+    fallback.className = "sp-result-placeholder-img";
     fallback.src = DEFAULT_ICON_URL;
     fallback.alt = "";
     fallback.referrerPolicy = "no-referrer";
@@ -1500,7 +1496,7 @@ function createPlaceholderElement(result) {
 
 function createIconImage(src) {
   const image = document.createElement("img");
-  image.className = "spotlight-result-icon-img";
+  image.className = "sp-result-icon-img";
   image.src = src;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
@@ -1509,9 +1505,9 @@ function createIconImage(src) {
 
 function createIconElement(result) {
   const wrapper = document.createElement("div");
-  wrapper.className = "spotlight-result-icon";
+  wrapper.className = "sp-result-icon";
   if (result && result.iconHint === "download") {
-    wrapper.classList.add("spotlight-result-icon-download");
+    wrapper.classList.add("sp-result-icon-download");
     wrapper.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
     return wrapper;
   }
@@ -1682,7 +1678,7 @@ function applyIconToResults(origin, faviconUrl) {
     if ((itemEl.dataset.origin || "") !== normalizedOrigin) {
       return;
     }
-    const iconContainer = itemEl.querySelector(".spotlight-result-icon");
+    const iconContainer = itemEl.querySelector(".sp-result-icon");
     if (!iconContainer) {
       return;
     }
@@ -1690,7 +1686,7 @@ function applyIconToResults(origin, faviconUrl) {
     const resultId = itemEl.dataset.resultId;
     const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
     if (result && result.iconHint === "download") {
-      iconContainer.classList.add("spotlight-result-icon-download");
+      iconContainer.classList.add("sp-result-icon-download");
       iconContainer.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
       return;
     }
@@ -1703,12 +1699,21 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (IS_PANEL_CONTEXT) {
+      return;
+    }
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      openOverlay();
+    }
+    return;
+  }
+  if (message.type === "SPOTLIGHT_PANEL_SHOW" && IS_PANEL_CONTEXT) {
     openOverlay();
   }
 });

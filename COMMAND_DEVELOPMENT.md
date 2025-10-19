@@ -64,7 +64,7 @@ Guidelines:
 
 ## 4. Wire Optional UI or Telemetry Hooks
 
-If the new command needs additional UI behavior (such as rendering a custom result tile) update `src/content/index.js` accordingly. Ensure any new CSS follows the conventions in `src/content/styles.css` (BEM-like class names prefixed with `spotlight-`).
+If the new command needs additional UI behavior (such as rendering a custom result tile) update `src/content/index.js` accordingly. Ensure any new CSS follows the conventions in `src/content/styles.css` (BEM-like class names prefixed with `sp-`).
 
 ## 5. Validate the Experience
 

@@ -1,5 +1,22 @@
 const DEFAULT_REBUILD_DELAY = 600;
-const STANDALONE_PAGE_URL = chrome.runtime.getURL("standalone/index.html");
+const PANEL_PATH = "src/panel/index.html";
+
+async function notifyPanelToShow() {
+  if (!chrome.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({ type: "SPOTLIGHT_PANEL_SHOW" });
+  } catch (err) {
+    if (err && err.message && err.message.includes("Receiving end does not exist")) {
+      return;
+    }
+    if (err && err.message && err.message.includes("The message port closed")) {
+      return;
+    }
+    console.warn("Spotlight: notifying panel failed", err);
+  }
+}
 
 function isUnsupportedUrl(url) {
   if (!url || typeof url !== "string") {
@@ -26,28 +43,45 @@ function isUnsupportedUrl(url) {
   return false;
 }
 
-async function openStandaloneOverlay(sourceTab) {
-  const standaloneUrl = STANDALONE_PAGE_URL;
+async function openExtensionPanel(sourceTab) {
+  const tabId = sourceTab?.id;
+  if (chrome.sidePanel?.setOptions && typeof tabId === "number") {
+    try {
+      await chrome.sidePanel.setOptions({
+        tabId,
+        path: PANEL_PATH,
+        enabled: true,
+      });
+      await chrome.sidePanel.open({ tabId });
+      await notifyPanelToShow();
+      return;
+    } catch (err) {
+      console.warn("Spotlight: unable to open side panel for tab", err);
+    }
+  }
+
+  const fallbackUrl = chrome.runtime.getURL(PANEL_PATH);
   try {
-    const existing = await chrome.tabs.query({ url: [`${standaloneUrl}*`] });
+    const existing = await chrome.tabs.query({ url: [`${fallbackUrl}*`] });
     if (existing && existing.length) {
       const target = existing[0];
       try {
         await chrome.tabs.update(target.id, { active: true });
       } catch (err) {
-        console.warn("Spotlight: failed to focus standalone tab", err);
+        console.warn("Spotlight: failed to focus fallback tab", err);
       }
       if (typeof target.windowId === "number") {
         try {
           await chrome.windows.update(target.windowId, { focused: true });
         } catch (err) {
-          console.warn("Spotlight: failed to focus window for standalone tab", err);
+          console.warn("Spotlight: failed to focus window for fallback tab", err);
         }
       }
+      await notifyPanelToShow();
       return;
     }
 
-    const createOptions = { url: standaloneUrl, active: true };
+    const createOptions = { url: fallbackUrl, active: true };
     if (sourceTab && typeof sourceTab.windowId === "number") {
       createOptions.windowId = sourceTab.windowId;
     }
@@ -57,8 +91,11 @@ async function openStandaloneOverlay(sourceTab) {
 
     await chrome.tabs.create(createOptions);
   } catch (err) {
-    console.warn("Spotlight: unable to open standalone overlay", err);
+    console.warn("Spotlight: unable to open fallback page", err);
+    return;
   }
+
+  await notifyPanelToShow();
 }
 
 export function createBackgroundContext({ buildIndex }) {
@@ -112,12 +149,12 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     if (!activeTab || activeTab.id === undefined) {
-      await openStandaloneOverlay(null);
+      await openExtensionPanel(null);
       return;
     }
 
     if (isUnsupportedUrl(activeTab.url || "")) {
-      await openStandaloneOverlay(activeTab);
+      await openExtensionPanel(activeTab);
       return;
     }
 
@@ -125,7 +162,7 @@ export function createBackgroundContext({ buildIndex }) {
       await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
     } catch (err) {
       console.warn("Spotlight: unable to toggle overlay", err);
-      await openStandaloneOverlay(activeTab);
+      await openExtensionPanel(activeTab);
     }
   }
 

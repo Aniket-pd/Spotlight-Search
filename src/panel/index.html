@@ -17,20 +17,12 @@
         justify-content: center;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
-      .spotlight-standalone-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(3, 7, 18, 0.92);
-        pointer-events: none;
-        z-index: 0;
-      }
     </style>
   </head>
   <body>
-    <div class="spotlight-standalone-backdrop" aria-hidden="true"></div>
     <script>
       window.SPOTLIGHT_AUTO_OPEN = true;
-      window.SPOTLIGHT_STANDALONE = true;
+      window.SPOTLIGHT_CONTEXT = "panel";
     </script>
     <script src="../content/index.js"></script>
   </body>

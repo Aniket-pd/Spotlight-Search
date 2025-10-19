@@ -40,6 +40,9 @@
       "run_at": "document_idle"
     }
   ],
+  "side_panel": {
+    "default_path": "src/panel/index.html"
+  },
   "web_accessible_resources": [
     {
       "resources": ["src/content/styles.css", "icons/default.svg"],
