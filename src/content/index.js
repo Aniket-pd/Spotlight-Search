@@ -4,6 +4,7 @@ const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+let overlayHostEl = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -122,10 +123,21 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 }));
 
 function createOverlay() {
+  overlayHostEl = document.createElement("div");
+  overlayHostEl.id = OVERLAY_ID;
+  overlayHostEl.setAttribute("role", "presentation");
+
+  const shadowRoot = overlayHostEl.attachShadow({ mode: "open" });
+
+  const styleEl = document.createElement("link");
+  styleEl.rel = "stylesheet";
+  styleEl.href = chrome.runtime.getURL("src/content/styles.css");
+  shadowRoot.appendChild(styleEl);
+
   overlayEl = document.createElement("div");
-  overlayEl.id = OVERLAY_ID;
   overlayEl.className = "spotlight-overlay";
   overlayEl.setAttribute("role", "presentation");
+  shadowRoot.appendChild(overlayEl);
 
   containerEl = document.createElement("div");
   containerEl.className = "spotlight-shell";
@@ -560,7 +572,7 @@ function openOverlay() {
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
 
-  document.body.appendChild(overlayEl);
+  document.body.appendChild(overlayHostEl);
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -572,8 +584,8 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
+  if (overlayHostEl && overlayHostEl.parentElement) {
+    overlayHostEl.parentElement.removeChild(overlayHostEl);
   }
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
