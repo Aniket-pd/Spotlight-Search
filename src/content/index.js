@@ -28,9 +28,6 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 
-let downloadRenderScheduled = false;
-let downloadNeedsFullRender = false;
-
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
 let faviconQueue = [];
@@ -559,8 +556,6 @@ function closeOverlay() {
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
-  downloadNeedsFullRender = false;
-  downloadRenderScheduled = false;
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
@@ -1159,13 +1154,77 @@ function decorateDownloadResult(result) {
   return next;
 }
 
+function updateDownloadProgressElement(itemEl, result) {
+  if (!itemEl) {
+    return;
+  }
+  const ring = itemEl.querySelector(".spotlight-download-progress");
+  if (!ring) {
+    return;
+  }
+  const progressValue =
+    typeof result?.progress === "number" && Number.isFinite(result.progress)
+      ? Math.max(0, Math.min(1, result.progress))
+      : null;
+  if (progressValue === null) {
+    ring.classList.add("indeterminate");
+    ring.style.removeProperty("--progress");
+    return;
+  }
+  const degrees = Math.max(0, Math.min(360, Math.round(progressValue * 360)));
+  ring.style.setProperty("--progress", `${degrees}deg`);
+  ring.classList.remove("indeterminate");
+}
+
+function updateDownloadMetaElement(itemEl, result) {
+  if (!itemEl) {
+    return;
+  }
+  const statusText = result.displayStatus || result.description || result.url || "";
+  const statusEl = itemEl.querySelector(".spotlight-result-url");
+  if (statusEl && statusEl.textContent !== statusText) {
+    statusEl.textContent = statusText;
+  }
+  const titleEl = itemEl.querySelector(".spotlight-result-title");
+  if (titleEl && typeof result.title === "string" && titleEl.textContent !== result.title) {
+    titleEl.textContent = result.title;
+  }
+  const iconWrapper = itemEl.querySelector(".spotlight-result-icon.download");
+  if (iconWrapper) {
+    if (result.state === "complete") {
+      iconWrapper.classList.add("state-complete");
+    } else {
+      iconWrapper.classList.remove("state-complete");
+    }
+  }
+}
+
+function updateDownloadResultElement(result) {
+  if (!resultsEl || !result || typeof result.id === "undefined") {
+    return;
+  }
+  const targetId = String(result.id);
+  const itemEl = resultsEl.querySelector(`li[data-result-id="${targetId}"]`);
+  if (!itemEl) {
+    return;
+  }
+  updateDownloadMetaElement(itemEl, result);
+  updateDownloadProgressElement(itemEl, result);
+  const origin = getResultOrigin(result) || "";
+  if (origin) {
+    itemEl.dataset.origin = origin;
+  } else {
+    delete itemEl.dataset.origin;
+  }
+}
+
 function applyDownloadUpdate(update) {
   if (!update) {
     return;
   }
   const itemId = typeof update.itemId === "number" ? update.itemId : null;
   const downloadId = typeof update.downloadId === "number" ? update.downloadId : null;
-  let changed = false;
+  const updatedResults = [];
   resultsState = resultsState.map((result) => {
     if (!result || result.type !== "download") {
       return result;
@@ -1175,7 +1234,6 @@ function applyDownloadUpdate(update) {
     if (!matchesItem && !matchesDownload) {
       return result;
     }
-    changed = true;
     const merged = { ...result, ...update };
     if (typeof merged.id !== "number") {
       merged.id = result.id;
@@ -1183,57 +1241,22 @@ function applyDownloadUpdate(update) {
     if (typeof merged.type !== "string") {
       merged.type = result.type;
     }
-    return decorateDownloadResult(merged);
+    const decorated = decorateDownloadResult(merged);
+    updatedResults.push(decorated);
+    return decorated;
   });
-  if (changed) {
-    scheduleDownloadRender();
-  }
-}
-
-function scheduleDownloadRender() {
-  if (!isOpen || !resultsEl) {
-    return;
-  }
-  downloadNeedsFullRender = true;
-  if (downloadRenderScheduled) {
-    return;
-  }
-  downloadRenderScheduled = true;
-  const scheduleFrame =
-    typeof window.requestAnimationFrame === "function"
-      ? window.requestAnimationFrame.bind(window)
-      : (callback) => setTimeout(callback, 16);
-  scheduleFrame(() => {
-    downloadRenderScheduled = false;
-    if (!downloadNeedsFullRender || !isOpen || !resultsEl) {
-      downloadNeedsFullRender = false;
-      return;
-    }
-    downloadNeedsFullRender = false;
-    const previousScrollTop = resultsEl.scrollTop;
-    const previousActiveId =
-      activeIndex >= 0 && resultsState[activeIndex] && resultsState[activeIndex].id !== undefined
-        ? String(resultsState[activeIndex].id)
-        : null;
-    renderResults({ scrollActive: false });
-    if (typeof previousScrollTop === "number" && previousScrollTop >= 0) {
-      resultsEl.scrollTop = previousScrollTop;
-    }
-    if (previousActiveId) {
-      const restoredIndex = resultsState.findIndex(
-        (entry) => entry && String(entry.id) === previousActiveId
-      );
-      if (restoredIndex >= 0) {
-        activeIndex = restoredIndex;
-      }
-    }
+  if (updatedResults.length) {
+    updatedResults.forEach((result) => updateDownloadResultElement(result));
     updateActiveResult({ scroll: false });
-  });
+  }
 }
 
 function createDownloadIcon(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon download";
+  if (result && result.state === "complete") {
+    wrapper.classList.add("state-complete");
+  }
 
   const ring = document.createElement("div");
   ring.className = "spotlight-download-progress";
