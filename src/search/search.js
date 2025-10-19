@@ -428,6 +428,14 @@ function compareResults(a, b) {
 
   if (bScore !== aScore) return bScore - aScore;
 
+  if (a?.type === "history" && b?.type === "history") {
+    const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
+    const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+  }
+
   if (a.type !== b.type) {
     return (BASE_TYPE_SCORES[b.type] || 0) - (BASE_TYPE_SCORES[a.type] || 0);
   }
@@ -972,6 +980,18 @@ export function runSearch(query, data, options = {}) {
         const bTime = b.lastAccessed || 0;
         return bTime - aTime;
       });
+    } else if (filterType === "history") {
+      defaultItems.sort((a, b) => {
+        const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
+        const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
+        if (bTime !== aTime) return bTime - aTime;
+        const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
+        const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
+        if (bScore !== aScore) return bScore - aScore;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
     } else {
       defaultItems.sort((a, b) => {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
@@ -983,16 +1003,22 @@ export function runSearch(query, data, options = {}) {
       });
     }
     return {
-      results: defaultItems.slice(0, MAX_RESULTS).map((item) => ({
-        id: item.id,
-        title: item.title,
-        url: item.url,
-        type: item.type,
-        score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-        faviconUrl: item.faviconUrl || null,
-        origin: item.origin || "",
-        tabId: item.tabId,
-      })),
+      results: defaultItems.slice(0, MAX_RESULTS).map((item) => {
+        const result = {
+          id: item.id,
+          title: item.title,
+          url: item.url,
+          type: item.type,
+          score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
+          faviconUrl: item.faviconUrl || null,
+          origin: item.origin || "",
+          tabId: item.tabId,
+        };
+        if (typeof item.lastVisitTime === "number") {
+          result.lastVisitTime = item.lastVisitTime;
+        }
+        return result;
+      }),
       ghost: null,
       answer: "",
       filter: filterType,
@@ -1043,7 +1069,7 @@ export function runSearch(query, data, options = {}) {
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
-    results.push({
+    const result = {
       id: item.id,
       title: item.title,
       url: item.url,
@@ -1052,7 +1078,11 @@ export function runSearch(query, data, options = {}) {
       faviconUrl: item.faviconUrl || null,
       origin: item.origin || "",
       tabId: item.tabId,
-    });
+    };
+    if (typeof item.lastVisitTime === "number") {
+      result.lastVisitTime = item.lastVisitTime;
+    }
+    results.push(result);
   }
 
   if (commandSuggestions.results.length) {
