@@ -265,6 +265,10 @@
   background: linear-gradient(135deg, rgba(14, 165, 233, 0.35), rgba(96, 165, 250, 0.35));
 }
 
+.spotlight-result-icon-topsite {
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.28), rgba(253, 224, 71, 0.28));
+}
+
 .spotlight-result-icon-img {
   width: 100%;
   height: 100%;
@@ -367,6 +371,11 @@
 .spotlight-result-tag.download-state-paused {
   background: rgba(249, 115, 22, 0.28);
   color: #fed7aa;
+}
+
+.spotlight-result-tag.spotlight-result-tag-topsite {
+  background: rgba(250, 204, 21, 0.26);
+  color: #fef08a;
 }
 
 .spotlight-result-timestamp {

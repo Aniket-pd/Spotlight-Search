@@ -2,6 +2,20 @@ const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
 const DOWNLOAD_SEARCH_LIMIT = 200;
+
+const TOP_SITE_TITLE_WEIGHT = TAB_TITLE_WEIGHT;
+
+function extractHostname(url) {
+  if (!url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || "";
+  } catch (err) {
+    return "";
+  }
+}
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -50,6 +64,59 @@ function extractOrigin(url) {
   } catch (err) {
     return "";
   }
+}
+
+function requestTopSites() {
+  if (!chrome?.topSites || typeof chrome.topSites.get !== "function") {
+    return Promise.resolve([]);
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.topSites.get((entries) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(Array.isArray(entries) ? entries : []);
+      });
+    } catch (err) {
+      reject(err);
+    }
+  }).catch((err) => {
+    console.warn("Spotlight: failed to query top sites", err);
+    return [];
+  });
+}
+
+async function indexTopSites(indexMap, termBuckets, items) {
+  const topSites = await requestTopSites();
+  for (const entry of topSites) {
+    if (!entry || !entry.url) {
+      continue;
+    }
+    const title = entry.title || entry.url;
+    const visitCount = typeof entry.visitCount === "number" ? entry.visitCount : null;
+    const hostname = extractHostname(entry.url);
+    const itemId = items.length;
+    const item = {
+      id: itemId,
+      type: "topSite",
+      title,
+      url: entry.url,
+      visitCount,
+      origin: extractOrigin(entry.url),
+      description: hostname || entry.url,
+      iconHint: "topSite",
+    };
+    items.push(item);
+
+    addToIndex(indexMap, termBuckets, itemId, title, TOP_SITE_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, entry.url, URL_WEIGHT);
+    if (hostname) {
+      addToIndex(indexMap, termBuckets, itemId, hostname, URL_WEIGHT);
+    }
+  }
+  return topSites.length;
 }
 
 function parseDownloadTime(value) {
@@ -283,6 +350,7 @@ export async function buildIndex() {
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
     indexDownloads(indexMap, termBuckets, items),
+    indexTopSites(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -297,6 +365,7 @@ export async function buildIndex() {
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
     downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
+    topSiteCount: items.reduce((count, item) => (item.type === "topSite" ? count + 1 : count), 0),
   };
 
   return {

@@ -51,6 +51,8 @@ let faviconQueue = [];
 let faviconProcessing = false;
 const DOWNLOAD_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNiIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI2IiByeD0iMi41IiBmaWxsPSIjMEVBNUU5Ii8+PHBhdGggZD0iTTE2IDV2MTMuMTdsNC41OS00LjU4TDIyIDE1bC02IDYtNi02IDEuNDEtMS40MUwxNCAxOC4xN1Y1aDJ6IiBmaWxsPSIjRTBGMkZFIi8+PC9zdmc+";
+const TOP_SITE_ICON_DATA_URL =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHBhdGggZmlsbD0iI0ZBQ0MxNSIgZD0iTTE2IDQuNWwzLjIzIDYuNTUgNy4yMiAxLjA1LTUuMjIgNS4wOSAxLjIzIDcuMThMMTYgMjAuOTRsLTYuNDYgMy40MyAxLjIzLTcuMTgtNS4yMi01LjA5IDcuMjItMS4wNUwxNiA0LjV6Ii8+PHBhdGggZmlsbD0iI0ZDRDM0RCIgZD0iTTE2IDYuNzNsLTIuNTEgNS4wOC01LjYuODIgNC4wNSAzLjk1LS45NiA1LjU3TDE2IDE4Ljg2bDUuMDIgMi42NC0uOTYtNS41NyA0LjA1LTMuOTUtNS42LS44MkwxNiA2LjczeiIvPjwvc3ZnPg==";
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
@@ -96,6 +98,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Review downloaded files",
     value: "download:",
     keywords: ["download", "downloads", "dl", "files"],
+  },
+  {
+    id: "slash-top-sites",
+    label: "Top Sites",
+    hint: "Show frequent destinations",
+    value: "topsites:",
+    keywords: ["top", "top sites", "popular", "frequent"],
   },
   {
     id: "slash-back",
@@ -967,6 +976,15 @@ function renderResults() {
     type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
+    if (result.type === "topSite") {
+      const visitLabel = formatVisitCount(result.visitCount);
+      if (visitLabel) {
+        const visitChip = document.createElement("span");
+        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+        visitChip.textContent = visitLabel;
+        meta.appendChild(visitChip);
+      }
+    }
     if (timestampLabel) {
       const timestampEl = document.createElement("span");
       timestampEl.className = "spotlight-result-timestamp";
@@ -1036,6 +1054,8 @@ function getFilterStatusLabel(type) {
       return "back history";
     case "forward":
       return "forward history";
+    case "topSite":
+      return "top sites";
     default:
       return "";
   }
@@ -1115,6 +1135,8 @@ function formatTypeLabel(type, result) {
         return "Forward";
       }
       return "Back";
+    case "topSite":
+      return "Top Site";
     default:
       return type || "";
   }
@@ -1152,6 +1174,26 @@ function formatResultTimestamp(result) {
     return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   } catch (err) {
     return date.toLocaleString();
+  }
+}
+
+function formatVisitCount(count) {
+  const visits = typeof count === "number" && Number.isFinite(count) ? count : 0;
+  if (visits <= 0) {
+    return "";
+  }
+  if (visits === 1) {
+    return "1 visit";
+  }
+  try {
+    const formatter = new Intl.NumberFormat(undefined, {
+      notation: visits >= 1000 ? "compact" : "standard",
+      maximumFractionDigits: 1,
+    });
+    const formatted = formatter.format(visits);
+    return `${formatted} visits`;
+  } catch (err) {
+    return `${visits} visits`;
   }
 }
 
@@ -1373,6 +1415,11 @@ function createIconElement(result) {
     wrapper.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
     return wrapper;
   }
+  if (result && result.iconHint === "topSite") {
+    wrapper.classList.add("spotlight-result-icon-topsite");
+    wrapper.appendChild(createIconImage(TOP_SITE_ICON_DATA_URL));
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1550,6 +1597,11 @@ function applyIconToResults(origin, faviconUrl) {
     if (result && result.iconHint === "download") {
       iconContainer.classList.add("spotlight-result-icon-download");
       iconContainer.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
+      return;
+    }
+    if (result && result.iconHint === "topSite") {
+      iconContainer.classList.add("spotlight-result-icon-topsite");
+      iconContainer.appendChild(createIconImage(TOP_SITE_ICON_DATA_URL));
       return;
     }
     if (faviconUrl) {
