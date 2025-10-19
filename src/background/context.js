@@ -6,6 +6,7 @@ export function createBackgroundContext({ buildIndex }) {
     buildingPromise: null,
     rebuildTimer: null,
     fallbackSurface: null,
+    sidePanelBehaviorConfigured: false,
   };
   const faviconCache = new Map();
 
@@ -18,6 +19,65 @@ export function createBackgroundContext({ buildIndex }) {
       state.fallbackSurface = surface;
     } else {
       clearFallbackSurface();
+    }
+  }
+
+  function shouldPreferSidePanel(tab) {
+    const url = typeof tab?.url === "string" ? tab.url : "";
+    if (!url) {
+      return false;
+    }
+    const normalized = url.toLowerCase();
+    if (normalized.startsWith("chrome://") || normalized.startsWith("edge://")) {
+      return true;
+    }
+    if (normalized.startsWith("about:")) {
+      return true;
+    }
+    if (normalized.startsWith("chrome-extension://")) {
+      return true;
+    }
+    if (
+      normalized.startsWith("https://chrome.google.com/webstore") ||
+      normalized.startsWith("https://chromewebstore.google.com")
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  async function ensureSidePanelBehaviorConfigured() {
+    if (state.sidePanelBehaviorConfigured) {
+      return;
+    }
+    if (!chrome.sidePanel || typeof chrome.sidePanel.setPanelBehavior !== "function") {
+      state.sidePanelBehaviorConfigured = true;
+      return;
+    }
+    try {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    } catch (err) {
+      console.warn("Spotlight: unable to configure side panel behavior", err);
+    } finally {
+      state.sidePanelBehaviorConfigured = true;
+    }
+  }
+
+  async function toggleStandaloneSurface() {
+    try {
+      await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "SPOTLIGHT_TOGGLE_STANDALONE" }, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve();
+        });
+      });
+      return true;
+    } catch (err) {
+      console.warn("Spotlight: unable to toggle standalone surface", err);
+      return false;
     }
   }
 
@@ -64,6 +124,7 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     const fallback = state.fallbackSurface;
+    const preferSidePanel = shouldPreferSidePanel(activeTab);
 
     if (activeTab && activeTab.id !== undefined) {
       try {
@@ -80,38 +141,33 @@ export function createBackgroundContext({ buildIndex }) {
         typeof fallback.tabId === "number" &&
         fallback.tabId === activeTab.id
       ) {
-        try {
-          await new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage({ type: "SPOTLIGHT_TOGGLE_STANDALONE" }, () => {
-              if (chrome.runtime.lastError) {
-                reject(chrome.runtime.lastError);
-                return;
-              }
-              resolve();
-            });
-          });
+        const toggled = await toggleStandaloneSurface();
+        if (toggled) {
           return;
-        } catch (err) {
-          console.warn("Spotlight: unable to toggle standalone surface", err);
         }
       }
     }
 
-    await openFallbackSurface(activeTab || null);
+    if (fallback && fallback.type === "sidePanel") {
+      const toggled = await toggleStandaloneSurface();
+      if (toggled) {
+        return;
+      }
+    }
+
+    await openFallbackSurface(activeTab || null, { preferSidePanel });
   }
 
-  async function openFallbackSurface(activeTab) {
+  async function openFallbackSurface(activeTab, options = {}) {
     const fallback = state.fallbackSurface;
-    const fallbackTabId =
-      fallback && fallback.type === "tab" && typeof fallback.tabId === "number"
-        ? fallback.tabId
-        : null;
+    const preferSidePanel = Boolean(options?.preferSidePanel);
+    const activeWindowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
 
-    if (fallbackTabId !== null) {
+    if (fallback && fallback.type === "tab" && typeof fallback.tabId === "number") {
       try {
-        const existingTab = await chrome.tabs.get(fallbackTabId);
+        const existingTab = await chrome.tabs.get(fallback.tabId);
         const targetWindowId = existingTab?.windowId;
-        await chrome.tabs.update(fallbackTabId, { active: true });
+        await chrome.tabs.update(fallback.tabId, { active: true });
         if (typeof targetWindowId === "number") {
           await chrome.windows.update(targetWindowId, { focused: true });
         }
@@ -120,10 +176,36 @@ export function createBackgroundContext({ buildIndex }) {
         console.warn("Spotlight: existing fallback tab unavailable", err);
         clearFallbackSurface();
       }
+    } else if (fallback && fallback.type === "sidePanel") {
+      const windowHint =
+        typeof fallback.windowId === "number" ? fallback.windowId : activeWindowId;
+      const reopened = await openSidePanelSurface(windowHint);
+      if (reopened) {
+        return;
+      }
+      clearFallbackSurface();
     }
 
+    if (preferSidePanel) {
+      const openedPanel = await openSidePanelSurface(activeWindowId);
+      if (openedPanel) {
+        return;
+      }
+    }
+
+    const openedTab = await openFallbackTab(activeTab || null);
+    if (openedTab) {
+      return;
+    }
+
+    if (!preferSidePanel) {
+      await openSidePanelSurface(activeWindowId);
+    }
+  }
+
+  async function openFallbackTab(activeTab) {
     const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : undefined;
-    const url = chrome.runtime.getURL("panel.html");
+    const url = chrome.runtime.getURL("popup.html");
     const createProperties = { url, active: true };
     if (typeof windowId === "number") {
       createProperties.windowId = windowId;
@@ -133,13 +215,54 @@ export function createBackgroundContext({ buildIndex }) {
       const createdTab = await chrome.tabs.create(createProperties);
       if (createdTab && typeof createdTab.id === "number") {
         setFallbackSurface({ type: "tab", tabId: createdTab.id });
-      } else {
-        clearFallbackSurface();
+        return true;
       }
+      clearFallbackSurface();
     } catch (err) {
       console.warn("Spotlight: failed to open fallback tab", err);
       clearFallbackSurface();
     }
+    return false;
+  }
+
+  async function openSidePanelSurface(windowIdHint) {
+    if (!chrome.sidePanel || typeof chrome.sidePanel.open !== "function") {
+      return false;
+    }
+
+    await ensureSidePanelBehaviorConfigured();
+
+    const options = { path: "popup.html", enabled: true };
+    if (typeof windowIdHint === "number") {
+      options.windowId = windowIdHint;
+    }
+
+    if (typeof chrome.sidePanel.setOptions === "function") {
+      try {
+        await chrome.sidePanel.setOptions(options);
+      } catch (err) {
+        console.warn("Spotlight: unable to set side panel options", err);
+      }
+    }
+
+    const openOptions = {};
+    if (typeof windowIdHint === "number") {
+      openOptions.windowId = windowIdHint;
+    }
+
+    try {
+      await chrome.sidePanel.open(openOptions);
+      setFallbackSurface({
+        type: "sidePanel",
+        windowId: typeof windowIdHint === "number" ? windowIdHint : null,
+      });
+      return true;
+    } catch (err) {
+      console.warn("Spotlight: failed to open side panel surface", err);
+      clearFallbackSurface();
+    }
+
+    return false;
   }
 
   async function closeFallbackSurface() {
@@ -155,6 +278,31 @@ export function createBackgroundContext({ buildIndex }) {
         return true;
       } catch (err) {
         console.warn("Spotlight: failed to close fallback tab", err);
+      }
+    }
+
+    if (surface.type === "sidePanel") {
+      if (chrome.sidePanel) {
+        const windowId = typeof surface.windowId === "number" ? surface.windowId : null;
+        try {
+          if (typeof chrome.sidePanel.hide === "function") {
+            const hideOptions = {};
+            if (windowId !== null) {
+              hideOptions.windowId = windowId;
+            }
+            await chrome.sidePanel.hide(hideOptions);
+          } else if (typeof chrome.sidePanel.setOptions === "function") {
+            const disableOptions = { enabled: false };
+            if (windowId !== null) {
+              disableOptions.windowId = windowId;
+            }
+            await chrome.sidePanel.setOptions(disableOptions);
+          }
+          clearFallbackSurface();
+          return true;
+        } catch (err) {
+          console.warn("Spotlight: failed to hide side panel surface", err);
+        }
       }
     }
 

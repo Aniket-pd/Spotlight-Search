@@ -48,6 +48,10 @@
     }
   ],
   "action": {
-    "default_title": "Spotlight for Chrome"
+    "default_title": "Spotlight for Chrome",
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   }
 }
