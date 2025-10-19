@@ -33,6 +33,7 @@ const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const DOWNLOAD_ICON_URL = chrome.runtime.getURL("icons/download.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
   "#7DD3FC",
@@ -72,6 +73,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     keywords: ["history", "hist", "recent", "visited"],
   },
   {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Search recent downloads",
+    value: "download:",
+    keywords: ["download", "downloads", "d", "dl"],
+  },
+  {
     id: "slash-back",
     label: "Back",
     hint: "Current tab back history",
@@ -93,6 +101,12 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .map((token) => (token || "").toLowerCase())
     .filter(Boolean),
 }));
+
+const DOWNLOAD_REFRESH_INTERVAL = 180;
+const downloadLiveData = new Map();
+const downloadRowRefs = new Map();
+const downloadUpdateTimers = new Map();
+let downloadsPort = null;
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -118,7 +132,10 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history… (try \"tab:\")");
+  inputEl.setAttribute(
+    "placeholder",
+    "Search tabs, bookmarks, history, downloads… (try \"tab:\" or \"download:\")"
+  );
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -530,6 +547,7 @@ function openOverlay() {
   document.body.style.overflow = "hidden";
 
   document.body.appendChild(overlayEl);
+  connectDownloadsStream();
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -541,6 +559,7 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
+  disconnectDownloadsStream();
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
@@ -557,6 +576,9 @@ function closeOverlay() {
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  downloadRowRefs.clear();
+  downloadUpdateTimers.forEach((timer) => clearTimeout(timer));
+  downloadUpdateTimers.clear();
 }
 
 function handleGlobalKeydown(event) {
@@ -843,6 +865,11 @@ function openResult(result) {
 
 function renderResults() {
   resultsEl.innerHTML = "";
+  downloadRowRefs.clear();
+  downloadUpdateTimers.forEach((timer) => clearTimeout(timer));
+  downloadUpdateTimers.clear();
+
+  resultsState = resultsState.map((result) => applyLiveDownloadState(result));
 
   if (inputEl.value.trim() === "> reindex") {
     const li = document.createElement("li");
@@ -874,11 +901,15 @@ function renderResults() {
     li.setAttribute("role", "option");
     li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
     li.dataset.resultId = String(result.id);
-    const origin = getResultOrigin(result);
+    const origin = result.type === "download" ? "" : getResultOrigin(result);
     if (origin) {
       li.dataset.origin = origin;
     } else {
       delete li.dataset.origin;
+    }
+
+    if (result.type === "download") {
+      li.classList.add("spotlight-result-download");
     }
 
     const iconEl = createIconElement(result);
@@ -909,6 +940,13 @@ function renderResults() {
 
     body.appendChild(title);
     body.appendChild(meta);
+
+    if (result.type === "download") {
+      const downloadInfo = createDownloadInfo(result);
+      if (downloadInfo) {
+        body.appendChild(downloadInfo);
+      }
+    }
     li.appendChild(body);
 
     li.addEventListener("pointerover", () => {
@@ -949,6 +987,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -982,6 +1022,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1104,6 +1146,11 @@ function createIconImage(src) {
 function createIconElement(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
+  if (result?.type === "download") {
+    wrapper.classList.add("spotlight-result-icon-download");
+    wrapper.appendChild(createIconImage(DOWNLOAD_ICON_URL));
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1131,7 +1178,7 @@ function applyCachedFavicons(results) {
 }
 
 function shouldRequestFavicon(result) {
-  if (!result || result.type === "command") {
+  if (!result || result.type === "command" || result.type === "download") {
     return false;
   }
   const origin = getResultOrigin(result);
@@ -1280,6 +1327,438 @@ function applyIconToResults(origin, faviconUrl) {
     const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
     iconContainer.appendChild(createPlaceholderElement(result || null));
   });
+}
+
+function applyLiveDownloadState(result) {
+  if (!result || result.type !== "download") {
+    return result;
+  }
+  const live = downloadLiveData.get(result.downloadId);
+  if (live) {
+    Object.assign(result, live);
+  }
+  if (typeof result.progress !== "number") {
+    const progress = computeDownloadProgress(result);
+    if (progress !== null) {
+      result.progress = progress;
+    }
+  }
+  return result;
+}
+
+function connectDownloadsStream() {
+  if (downloadsPort) {
+    return;
+  }
+  try {
+    downloadsPort = chrome.runtime.connect({ name: "downloads-stream" });
+    downloadsPort.onMessage.addListener(handleDownloadsPortMessage);
+    downloadsPort.onDisconnect.addListener(() => {
+      downloadsPort = null;
+    });
+  } catch (err) {
+    console.warn("Spotlight: unable to connect to downloads stream", err);
+    downloadsPort = null;
+  }
+}
+
+function disconnectDownloadsStream() {
+  if (!downloadsPort) {
+    return;
+  }
+  try {
+    downloadsPort.disconnect();
+  } catch (err) {
+    // Ignore disconnect errors.
+  }
+  downloadsPort = null;
+}
+
+function handleDownloadsPortMessage(message) {
+  if (!message) {
+    return;
+  }
+  if (message.type === "downloads-snapshot" && Array.isArray(message.downloads)) {
+    message.downloads.forEach((entry) => applyDownloadLiveData(entry));
+    refreshVisibleDownloads();
+    return;
+  }
+  if (message.type === "download-update" && message.download) {
+    applyDownloadLiveData(message.download);
+  }
+}
+
+function applyDownloadLiveData(data) {
+  if (!data || typeof data.downloadId !== "number") {
+    return;
+  }
+  const existing = downloadLiveData.get(data.downloadId) || {};
+  const merged = { ...existing };
+  merged.downloadId = data.downloadId;
+  if (typeof data.state === "string") merged.state = data.state;
+  if (typeof data.paused === "boolean") merged.paused = data.paused;
+  if (typeof data.canResume === "boolean") merged.canResume = data.canResume;
+  if (typeof data.bytesReceived === "number") merged.bytesReceived = data.bytesReceived;
+  if (typeof data.totalBytes === "number") merged.totalBytes = data.totalBytes;
+  if (typeof data.speed === "number") merged.speed = data.speed;
+  if (typeof data.etaSeconds === "number") merged.etaSeconds = data.etaSeconds;
+  if (typeof data.progress === "number") merged.progress = data.progress;
+  if (typeof data.startTime === "number") merged.startTime = data.startTime;
+  if (typeof data.endTime === "number") merged.endTime = data.endTime;
+  if (typeof data.filename === "string") merged.filename = data.filename;
+  if (typeof data.filePath === "string") merged.filePath = data.filePath;
+  if (typeof data.url === "string") merged.url = data.url;
+  if (typeof data.danger === "string") merged.danger = data.danger;
+  downloadLiveData.set(data.downloadId, merged);
+  updateResultsWithDownloadData(data.downloadId, merged);
+}
+
+function updateResultsWithDownloadData(downloadId, data) {
+  let updated = false;
+  resultsState.forEach((result) => {
+    if (result && result.type === "download" && result.downloadId === downloadId) {
+      Object.assign(result, data);
+      if (typeof result.progress !== "number" || typeof data.progress !== "number") {
+        const progress = computeDownloadProgress(result);
+        if (progress !== null) {
+          result.progress = progress;
+        }
+      }
+      updated = true;
+    }
+  });
+  if (updated) {
+    scheduleDownloadRowRefresh(downloadId);
+  }
+}
+
+function scheduleDownloadRowRefresh(downloadId) {
+  const ref = downloadRowRefs.get(downloadId);
+  if (!ref) {
+    return;
+  }
+  if (downloadUpdateTimers.has(downloadId)) {
+    return;
+  }
+  const timer = setTimeout(() => {
+    downloadUpdateTimers.delete(downloadId);
+    const result = resultsState.find(
+      (entry) => entry && entry.type === "download" && entry.downloadId === downloadId
+    );
+    if (result && ref) {
+      renderDownloadRow(ref, result);
+    }
+  }, DOWNLOAD_REFRESH_INTERVAL);
+  downloadUpdateTimers.set(downloadId, timer);
+}
+
+function refreshVisibleDownloads() {
+  downloadRowRefs.forEach((ref, downloadId) => {
+    const result = resultsState.find(
+      (entry) => entry && entry.type === "download" && entry.downloadId === downloadId
+    );
+    if (result) {
+      applyLiveDownloadState(result);
+      renderDownloadRow(ref, result);
+    }
+  });
+}
+
+function createDownloadInfo(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  const info = document.createElement("div");
+  info.className = "spotlight-download-info";
+
+  const progressWrap = document.createElement("div");
+  progressWrap.className = "spotlight-download-progress";
+  const progressBar = document.createElement("div");
+  progressBar.className = "spotlight-download-progress-bar";
+  progressWrap.appendChild(progressBar);
+  info.appendChild(progressWrap);
+
+  const row = document.createElement("div");
+  row.className = "spotlight-download-row";
+
+  const stats = document.createElement("div");
+  stats.className = "spotlight-download-stats";
+
+  const statusEl = document.createElement("span");
+  statusEl.className = "spotlight-download-status";
+  stats.appendChild(statusEl);
+
+  const amountEl = document.createElement("span");
+  amountEl.className = "spotlight-download-amount";
+  stats.appendChild(amountEl);
+
+  const speedEl = document.createElement("span");
+  speedEl.className = "spotlight-download-speed";
+  stats.appendChild(speedEl);
+
+  const etaEl = document.createElement("span");
+  etaEl.className = "spotlight-download-eta";
+  stats.appendChild(etaEl);
+
+  row.appendChild(stats);
+
+  const actions = document.createElement("div");
+  actions.className = "spotlight-download-actions";
+  row.appendChild(actions);
+
+  info.appendChild(row);
+
+  const ref = {
+    infoEl: info,
+    progressBar,
+    statusEl,
+    amountEl,
+    speedEl,
+    etaEl,
+    actionsEl: actions,
+    statsEl: stats,
+  };
+
+  renderDownloadRow(ref, result);
+  if (typeof result.downloadId === "number") {
+    downloadRowRefs.set(result.downloadId, ref);
+  }
+
+  return info;
+}
+
+function renderDownloadRow(ref, result) {
+  if (!ref || !result) {
+    return;
+  }
+  const progress = computeDownloadProgress(result);
+  if (progress === null) {
+    ref.progressBar.style.width = "18%";
+    ref.progressBar.classList.add("indeterminate");
+  } else {
+    const percent = Math.max(0, Math.min(100, progress * 100));
+    ref.progressBar.style.width = `${percent}%`;
+    ref.progressBar.classList.remove("indeterminate");
+  }
+
+  const statusText = formatDownloadStatus(result);
+  ref.statusEl.textContent = statusText;
+  ref.statusEl.classList.remove("hidden");
+
+  const amountText = formatDownloadAmount(result);
+  if (amountText) {
+    ref.amountEl.textContent = amountText;
+    ref.amountEl.classList.remove("hidden");
+  } else {
+    ref.amountEl.textContent = "";
+    ref.amountEl.classList.add("hidden");
+  }
+
+  const speedText = formatDownloadSpeed(result);
+  if (speedText) {
+    ref.speedEl.textContent = speedText;
+    ref.speedEl.classList.remove("hidden", "muted");
+  } else if (result.state === "in_progress" && !result.paused) {
+    ref.speedEl.textContent = "—";
+    ref.speedEl.classList.remove("hidden");
+    ref.speedEl.classList.add("muted");
+  } else {
+    ref.speedEl.textContent = "";
+    ref.speedEl.classList.add("hidden");
+    ref.speedEl.classList.remove("muted");
+  }
+
+  const etaText = formatDownloadEta(result);
+  if (etaText) {
+    ref.etaEl.textContent = etaText;
+    ref.etaEl.classList.remove("hidden", "muted");
+  } else if (result.state === "in_progress" && !result.paused) {
+    ref.etaEl.textContent = "—";
+    ref.etaEl.classList.remove("hidden");
+    ref.etaEl.classList.add("muted");
+  } else {
+    ref.etaEl.textContent = "";
+    ref.etaEl.classList.add("hidden");
+    ref.etaEl.classList.remove("muted");
+  }
+
+  updateDownloadActions(ref.actionsEl, result);
+}
+
+function updateDownloadActions(container, result) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  if (!result || typeof result.downloadId !== "number") {
+    return;
+  }
+
+  const addAction = (label, handler) => {
+    container.appendChild(createDownloadActionButton(label, handler));
+  };
+
+  if (result.state === "complete") {
+    addAction("Open", () => {
+      openResult(result);
+    });
+    addAction("Show in Folder", () => {
+      requestDownloadAction(result.downloadId, "show", { close: true });
+    });
+    return;
+  }
+
+  if (result.state === "in_progress") {
+    if (result.paused) {
+      addAction("Resume", () => {
+        requestDownloadAction(result.downloadId, "resume");
+      });
+    } else if (result.canResume) {
+      addAction("Pause", () => {
+        requestDownloadAction(result.downloadId, "pause");
+      });
+    }
+    addAction("Cancel", () => {
+      requestDownloadAction(result.downloadId, "cancel");
+    });
+    addAction("Show in Folder", () => {
+      requestDownloadAction(result.downloadId, "show", { close: true });
+    });
+    return;
+  }
+
+  addAction("Show in Folder", () => {
+    requestDownloadAction(result.downloadId, "show", { close: true });
+  });
+}
+
+function createDownloadActionButton(label, handler) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "spotlight-download-action";
+  button.textContent = label;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handler(event);
+  });
+  return button;
+}
+
+function requestDownloadAction(downloadId, action, options = {}) {
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_DOWNLOAD_ACTION", downloadId, action },
+    () => {
+      if (chrome.runtime.lastError) {
+        console.warn("Spotlight download action error", chrome.runtime.lastError);
+      }
+      if (options && options.close) {
+        closeOverlay();
+      }
+    }
+  );
+}
+
+function computeDownloadProgress(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  if (typeof result.progress === "number") {
+    return Math.max(0, Math.min(1, result.progress));
+  }
+  const total = typeof result.totalBytes === "number" ? result.totalBytes : 0;
+  if (total > 0) {
+    const received = typeof result.bytesReceived === "number" ? result.bytesReceived : 0;
+    return Math.max(0, Math.min(1, received / total));
+  }
+  return null;
+}
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "";
+  }
+  if (bytes === 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** exponent;
+  const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[exponent]}`;
+}
+
+function formatDownloadAmount(result) {
+  const received = typeof result.bytesReceived === "number" ? result.bytesReceived : 0;
+  const total = typeof result.totalBytes === "number" ? result.totalBytes : 0;
+  if (total > 0) {
+    return `${formatBytes(received)} of ${formatBytes(total)}`;
+  }
+  if (received > 0) {
+    return formatBytes(received);
+  }
+  return "";
+}
+
+function formatDownloadSpeed(result) {
+  const speed = typeof result.speed === "number" ? result.speed : 0;
+  if (speed > 0) {
+    return `${formatBytes(speed)}/s`;
+  }
+  return "";
+}
+
+function formatDownloadEta(result) {
+  if (!result || result.state !== "in_progress") {
+    return "";
+  }
+  if (result.paused) {
+    return "";
+  }
+  const eta = typeof result.etaSeconds === "number" ? result.etaSeconds : null;
+  if (eta === 0) {
+    return "Done";
+  }
+  if (eta && eta > 0 && Number.isFinite(eta)) {
+    return `${formatDuration(eta)} left`;
+  }
+  return "";
+}
+
+function formatDuration(seconds) {
+  const total = Math.ceil(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) {
+    if (minutes > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+    return `${hours}h`;
+  }
+  if (minutes > 0) {
+    if (secs > 0) {
+      return `${minutes}m ${secs}s`;
+    }
+    return `${minutes}m`;
+  }
+  return `${secs}s`;
+}
+
+function formatDownloadStatus(result) {
+  if (!result || result.type !== "download") {
+    return "Download";
+  }
+  if (result.state === "complete") {
+    return "Completed";
+  }
+  if (result.state === "interrupted") {
+    return "Interrupted";
+  }
+  if (result.state === "in_progress") {
+    return result.paused ? "Paused" : "In Progress";
+  }
+  return "Download";
 }
 
 chrome.runtime.onMessage.addListener((message) => {

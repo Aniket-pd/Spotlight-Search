@@ -6,6 +6,7 @@ import { createCommandExecutor } from "./commands.js";
 import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
+import { createDownloadService, registerDownloadRuntimeHooks } from "./downloads.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -18,8 +19,10 @@ const tabActions = createTabActions();
 const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
+const downloads = createDownloadService({ scheduleRebuild: context.scheduleRebuild });
 
 registerNavigationListeners(navigation);
+registerDownloadRuntimeHooks(downloads);
 
 registerMessageHandlers({
   context,
@@ -27,6 +30,7 @@ registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  downloads,
 });
 
 registerLifecycleEvents(context);

@@ -241,6 +241,10 @@
   transition: background 0.15s;
 }
 
+.spotlight-result-download {
+  align-items: flex-start;
+}
+
 .spotlight-result-content {
   display: flex;
   flex-direction: column;
@@ -259,6 +263,15 @@
   justify-content: center;
   overflow: hidden;
   background: transparent;
+}
+
+.spotlight-result-icon-download {
+  background: rgba(96, 165, 250, 0.22);
+}
+
+.spotlight-result-icon-download .spotlight-result-icon-img {
+  width: 18px;
+  height: 18px;
 }
 
 .spotlight-result-icon-img {
@@ -351,4 +364,105 @@
   text-align: center;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.8);
+}
+
+.spotlight-download-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.spotlight-download-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.28);
+  overflow: hidden;
+  position: relative;
+}
+
+.spotlight-download-progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.85), rgba(56, 189, 248, 0.88));
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.spotlight-download-progress-bar.indeterminate {
+  width: 38%;
+  animation: spotlight-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes spotlight-progress-indeterminate {
+  0% {
+    transform: translateX(-60%);
+  }
+  50% {
+    transform: translateX(10%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.spotlight-download-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.spotlight-download-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.spotlight-download-stats span.hidden {
+  display: none;
+}
+
+.spotlight-download-stats span.muted {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.spotlight-download-stats span:not(.hidden) + span:not(.hidden)::before {
+  content: "•";
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 6px 0 2px;
+}
+
+.spotlight-download-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.spotlight-download-action {
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  background: rgba(96, 165, 250, 0.18);
+  color: rgba(224, 231, 255, 0.92);
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, border 0.18s ease, color 0.18s ease;
+}
+
+.spotlight-download-action:hover {
+  background: rgba(96, 165, 250, 0.28);
+  border-color: rgba(96, 165, 250, 0.5);
+  color: #f8fafc;
+}
+
+.spotlight-download-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.45);
 }

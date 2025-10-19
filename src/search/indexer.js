@@ -1,6 +1,7 @@
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+const DOWNLOAD_LIMIT = 200;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -48,6 +49,25 @@ function extractOrigin(url) {
     return parsed.origin || "";
   } catch (err) {
     return "";
+  }
+}
+
+function extractFileName(path = "") {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  const parts = path.split(/[\\/]+/);
+  return parts[parts.length - 1] || path;
+}
+
+function parseChromeTimestamp(value) {
+  if (!value) {
+    return 0;
+  }
+  try {
+    return new Date(value).getTime() || 0;
+  } catch (err) {
+    return 0;
   }
 }
 
@@ -169,6 +189,78 @@ async function indexHistory(indexMap, termBuckets, items) {
   }
 }
 
+function normalizeDownload(download) {
+  if (!download) {
+    return null;
+  }
+
+  const filePath = typeof download.filename === "string" ? download.filename : "";
+  const title = extractFileName(filePath) || extractFileName(download.suggestedFilename) || extractFileName(download.url);
+  const url = typeof download.finalUrl === "string" && download.finalUrl
+    ? download.finalUrl
+    : typeof download.url === "string"
+    ? download.url
+    : "";
+  const startTime = parseChromeTimestamp(download.startTime);
+  const endTime = parseChromeTimestamp(download.endTime);
+  const lastAccessed = endTime || startTime || Date.now();
+
+  return {
+    title: title || url || "Download",
+    url,
+    filePath,
+    filename: title || filePath,
+    description: filePath || url || "",
+    state: download.state || "in_progress",
+    paused: Boolean(download.paused),
+    canResume: Boolean(download.canResume),
+    danger: download.danger || "safe",
+    mime: download.mime || "",
+    totalBytes: typeof download.totalBytes === "number" ? download.totalBytes : 0,
+    bytesReceived: typeof download.bytesReceived === "number" ? download.bytesReceived : 0,
+    startTime,
+    endTime,
+    lastAccessed,
+    referrer: download.referrer || "",
+    byExtensionName: download.byExtensionName || "",
+    downloadId: download.id,
+    origin: extractOrigin(url),
+  };
+}
+
+async function indexDownloads(indexMap, termBuckets, items) {
+  try {
+    const downloads = await chrome.downloads.search({ orderBy: ["-startTime"], limit: DOWNLOAD_LIMIT });
+    for (const entry of downloads) {
+      const normalized = normalizeDownload(entry);
+      if (!normalized) {
+        continue;
+      }
+      const itemId = items.length;
+      const item = {
+        id: itemId,
+        type: "download",
+        ...normalized,
+      };
+      items.push(item);
+
+      addToIndex(indexMap, termBuckets, itemId, normalized.title, TAB_TITLE_WEIGHT);
+      addToIndex(indexMap, termBuckets, itemId, normalized.filename, TAB_TITLE_WEIGHT);
+      addToIndex(indexMap, termBuckets, itemId, normalized.filePath, URL_WEIGHT);
+      addToIndex(indexMap, termBuckets, itemId, normalized.url, URL_WEIGHT);
+      addToIndex(indexMap, termBuckets, itemId, normalized.referrer, URL_WEIGHT);
+      if (normalized.mime) {
+        addToIndex(indexMap, termBuckets, itemId, normalized.mime, 1);
+      }
+      if (normalized.byExtensionName) {
+        addToIndex(indexMap, termBuckets, itemId, normalized.byExtensionName, 1);
+      }
+    }
+  } catch (err) {
+    console.warn("Spotlight: failed to index downloads", err);
+  }
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -178,6 +270,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -191,6 +284,7 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
   };
 
   return {

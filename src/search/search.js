@@ -10,6 +10,7 @@ const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
   history: 2,
+  download: 3,
 };
 
 const COMMAND_ICON_DATA_URL =
@@ -19,6 +20,7 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  download: ["download:", "downloads:", "d:", "dl:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -216,7 +218,46 @@ function buildBookmarkSubfilters(bookmarks) {
   return options;
 }
 
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
+function buildDownloadSubfilters(downloads) {
+  const list = Array.isArray(downloads) ? downloads : [];
+  const counts = {
+    complete: 0,
+    in_progress: 0,
+    interrupted: 0,
+    paused: 0,
+  };
+
+  list.forEach((item) => {
+    const state = item?.state || "";
+    if (state === "complete") {
+      counts.complete += 1;
+    } else if (state === "in_progress") {
+      counts.in_progress += 1;
+      if (item?.paused) {
+        counts.paused += 1;
+      }
+    } else if (state === "interrupted") {
+      counts.interrupted += 1;
+    }
+  });
+
+  const options = [{ id: "all", label: "All Downloads" }];
+  if (counts.in_progress) {
+    options.push({ id: "state:in_progress", label: "In Progress", count: counts.in_progress });
+  }
+  if (counts.paused) {
+    options.push({ id: "state:paused", label: "Paused", count: counts.paused });
+  }
+  if (counts.complete) {
+    options.push({ id: "state:complete", label: "Completed", count: counts.complete });
+  }
+  if (counts.interrupted) {
+    options.push({ id: "state:interrupted", label: "Interrupted", count: counts.interrupted });
+  }
+  return options;
+}
+
+function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [], downloads = [] } = {}) {
   if (!filterType) {
     return [];
   }
@@ -228,6 +269,9 @@ function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
   }
   if (filterType === "bookmark") {
     return buildBookmarkSubfilters(bookmarks);
+  }
+  if (filterType === "download") {
+    return buildDownloadSubfilters(downloads);
   }
   return [];
 }
@@ -292,6 +336,18 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
     return key === itemKey;
   }
 
+  if (filterType === "download") {
+    if (!subfilterId.startsWith("state:")) {
+      return true;
+    }
+    const target = subfilterId.slice("state:".length);
+    if (target === "paused") {
+      return Boolean(item?.paused);
+    }
+    const state = item?.state || "";
+    return state === target;
+  }
+
   return true;
 }
 
@@ -348,6 +404,104 @@ function computeRecencyBoost(item) {
   if (hours < 24) return 1.2;
   if (hours < 168) return 0.4;
   return 0.1;
+}
+
+function computeDownloadStateBonus(item) {
+  if (!item || item.type !== "download") {
+    return 0;
+  }
+  const state = item.state || "";
+  switch (state) {
+    case "complete":
+      return 1.6;
+    case "in_progress":
+      return item.paused ? 0.3 : 0.9;
+    case "interrupted":
+      return -1.2;
+    default:
+      return 0;
+  }
+}
+
+function compareDownloadItems(a, b) {
+  const priority = (item) => {
+    const state = item?.state;
+    if (state === "complete") return 3;
+    if (state === "in_progress") return item?.paused ? 1 : 2;
+    if (state === "interrupted") return 0;
+    return 1;
+  };
+
+  const stateDiff = priority(b) - priority(a);
+  if (stateDiff !== 0) {
+    return stateDiff;
+  }
+
+  const aTime = a.endTime || a.lastAccessed || a.startTime || 0;
+  const bTime = b.endTime || b.lastAccessed || b.startTime || 0;
+  if (bTime !== aTime) {
+    return bTime - aTime;
+  }
+
+  const aTitle = a.title || "";
+  const bTitle = b.title || "";
+  return aTitle.localeCompare(bTitle);
+}
+
+function buildResultFromItem(item, baseScore) {
+  const result = {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    type: item.type,
+    score: baseScore,
+    faviconUrl: item.faviconUrl || null,
+    origin: item.origin || "",
+  };
+
+  if (typeof item.tabId === "number") {
+    result.tabId = item.tabId;
+  }
+  if (typeof item.windowId === "number") {
+    result.windowId = item.windowId;
+  }
+  if (typeof item.dateAdded === "number") {
+    result.dateAdded = item.dateAdded;
+  }
+  if (typeof item.lastVisitTime === "number") {
+    result.lastVisitTime = item.lastVisitTime;
+  }
+  if (typeof item.lastAccessed === "number") {
+    result.lastAccessed = item.lastAccessed;
+  }
+  if (item.description) {
+    result.description = item.description;
+  }
+  if (Array.isArray(item.folderPath)) {
+    result.folderPath = item.folderPath;
+  }
+  if (item.folderKey) {
+    result.folderKey = item.folderKey;
+  }
+
+  if (item.type === "download") {
+    result.downloadId = item.downloadId;
+    result.state = item.state;
+    result.paused = Boolean(item.paused);
+    result.canResume = Boolean(item.canResume);
+    result.totalBytes = typeof item.totalBytes === "number" ? item.totalBytes : 0;
+    result.bytesReceived = typeof item.bytesReceived === "number" ? item.bytesReceived : 0;
+    result.filePath = item.filePath || "";
+    result.filename = item.filename || item.title;
+    result.description = item.description || item.filePath || item.url;
+    result.startTime = item.startTime || 0;
+    result.endTime = item.endTime || 0;
+    result.referrer = item.referrer || "";
+    result.byExtensionName = item.byExtensionName || "";
+    result.danger = item.danger || "safe";
+  }
+
+  return result;
 }
 
 function collectCandidateTerms(token, termBuckets) {
@@ -946,8 +1100,13 @@ export function runSearch(query, data, options = {}) {
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
+  const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
   const historyBoundaries = computeHistoryBoundaries(Date.now());
-  const availableSubfilters = buildSubfilterOptions(filterType, { tabs, bookmarks: bookmarkItems });
+  const availableSubfilters = buildSubfilterOptions(filterType, {
+    tabs,
+    bookmarks: bookmarkItems,
+    downloads: downloadItems,
+  });
   const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
@@ -972,6 +1131,8 @@ export function runSearch(query, data, options = {}) {
         const bTime = b.lastAccessed || 0;
         return bTime - aTime;
       });
+    } else if (filterType === "download") {
+      defaultItems.sort(compareDownloadItems);
     } else {
       defaultItems.sort((a, b) => {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
@@ -983,16 +1144,13 @@ export function runSearch(query, data, options = {}) {
       });
     }
     return {
-      results: defaultItems.slice(0, MAX_RESULTS).map((item) => ({
-        id: item.id,
-        title: item.title,
-        url: item.url,
-        type: item.type,
-        score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-        faviconUrl: item.faviconUrl || null,
-        origin: item.origin || "",
-        tabId: item.tabId,
-      })),
+      results: defaultItems.slice(0, MAX_RESULTS).map((item) => {
+        const baseScore =
+          (BASE_TYPE_SCORES[item.type] || 0) +
+          computeRecencyBoost(item) +
+          computeDownloadStateBonus(item);
+        return buildResultFromItem(item, baseScore);
+      }),
       ghost: null,
       answer: "",
       filter: filterType,
@@ -1039,20 +1197,15 @@ export function runSearch(query, data, options = {}) {
     if (!matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)) {
       continue;
     }
-    let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    let finalScore =
+      score +
+      (BASE_TYPE_SCORES[item.type] || 0) +
+      computeRecencyBoost(item) +
+      computeDownloadStateBonus(item);
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
-    results.push({
-      id: item.id,
-      title: item.title,
-      url: item.url,
-      type: item.type,
-      score: finalScore,
-      faviconUrl: item.faviconUrl || null,
-      origin: item.origin || "",
-      tabId: item.tabId,
-    });
+    results.push(buildResultFromItem(item, finalScore));
   }
 
   if (commandSuggestions.results.length) {
