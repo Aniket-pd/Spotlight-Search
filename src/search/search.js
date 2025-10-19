@@ -1,6 +1,7 @@
 import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
 
-const MAX_RESULTS = 12;
+const DEFAULT_MAX_RESULTS = 12;
+const HISTORY_MAX_RESULTS = Number.POSITIVE_INFINITY;
 const EXACT_BOOST = 1;
 const PREFIX_BOOST = 0.7;
 const FUZZY_BOOST = 0.45;
@@ -11,6 +12,23 @@ const BASE_TYPE_SCORES = {
   bookmark: 4,
   history: 2,
 };
+
+function getResultLimit(filterType) {
+  if (filterType === "history") {
+    return HISTORY_MAX_RESULTS;
+  }
+  return DEFAULT_MAX_RESULTS;
+}
+
+function sliceResultsForLimit(items, limit) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  if (!Number.isFinite(limit)) {
+    return items.slice();
+  }
+  return items.slice(0, limit);
+}
 
 const COMMAND_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
@@ -348,6 +366,38 @@ function computeRecencyBoost(item) {
   if (hours < 24) return 1.2;
   if (hours < 168) return 0.4;
   return 0.1;
+}
+
+function buildResultFromItem(item, scoreValue) {
+  if (!item) {
+    return null;
+  }
+  const result = {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    type: item.type,
+    score:
+      typeof scoreValue === "number"
+        ? scoreValue
+        : (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item),
+    faviconUrl: item.faviconUrl || null,
+    origin: item.origin || "",
+    tabId: item.tabId,
+  };
+  if (typeof item.lastVisitTime === "number") {
+    result.lastVisitTime = item.lastVisitTime;
+  }
+  if (typeof item.lastAccessed === "number") {
+    result.lastAccessed = item.lastAccessed;
+  }
+  if (typeof item.dateAdded === "number") {
+    result.dateAdded = item.dateAdded;
+  }
+  if (typeof item.createdAt === "number") {
+    result.createdAt = item.createdAt;
+  }
+  return result;
 }
 
 function collectCandidateTerms(token, termBuckets) {
@@ -1002,23 +1052,10 @@ export function runSearch(query, data, options = {}) {
         return aTitle.localeCompare(bTitle);
       });
     }
+    const limit = getResultLimit(filterType);
+    const limitedItems = sliceResultsForLimit(defaultItems, limit);
     return {
-      results: defaultItems.slice(0, MAX_RESULTS).map((item) => {
-        const result = {
-          id: item.id,
-          title: item.title,
-          url: item.url,
-          type: item.type,
-          score: BASE_TYPE_SCORES[item.type] + computeRecencyBoost(item),
-          faviconUrl: item.faviconUrl || null,
-          origin: item.origin || "",
-          tabId: item.tabId,
-        };
-        if (typeof item.lastVisitTime === "number") {
-          result.lastVisitTime = item.lastVisitTime;
-        }
-        return result;
-      }),
+      results: limitedItems.map((item) => buildResultFromItem(item)).filter(Boolean),
       ghost: null,
       answer: "",
       filter: filterType,
@@ -1069,20 +1106,10 @@ export function runSearch(query, data, options = {}) {
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
-    const result = {
-      id: item.id,
-      title: item.title,
-      url: item.url,
-      type: item.type,
-      score: finalScore,
-      faviconUrl: item.faviconUrl || null,
-      origin: item.origin || "",
-      tabId: item.tabId,
-    };
-    if (typeof item.lastVisitTime === "number") {
-      result.lastVisitTime = item.lastVisitTime;
+    const mapped = buildResultFromItem(item, finalScore);
+    if (mapped) {
+      results.push(mapped);
     }
-    results.push(result);
   }
 
   if (commandSuggestions.results.length) {
@@ -1091,7 +1118,8 @@ export function runSearch(query, data, options = {}) {
 
   results.sort(compareResults);
 
-  const finalResults = results.slice(0, MAX_RESULTS);
+  const limit = getResultLimit(filterType);
+  const finalResults = sliceResultsForLimit(results, limit);
   const topResult = finalResults[0] || null;
   const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE);
   let ghostPayload = null;
