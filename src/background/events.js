@@ -28,6 +28,8 @@ export function registerDataInvalidationEvents(context) {
   chrome.history.onVisited.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onTitleChanged?.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onVisitRemoved?.addListener(() => context.scheduleRebuild(2000));
+
+  chrome.sessions?.onChanged?.addListener(() => context.scheduleRebuild(2000));
 }
 
 export function registerActionClick(context) {

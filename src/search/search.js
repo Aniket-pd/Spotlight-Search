@@ -12,6 +12,7 @@ const BASE_TYPE_SCORES = {
   bookmark: 4,
   history: 2,
   download: 3,
+  recent: 5,
 };
 
 function getResultLimit(filterType) {
@@ -39,6 +40,7 @@ const FILTER_ALIASES = {
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
   download: ["download:", "downloads:", "dl:", "d:"],
+  recent: ["recent:", "recentlyclosed:", "recently:", "rc:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -450,7 +452,13 @@ function formatTabCount(count) {
 
 function computeRecencyBoost(item) {
   const now = Date.now();
-  const timestamp = item.lastAccessed || item.lastVisitTime || item.dateAdded || 0;
+  const timestamp =
+    item.lastAccessed ||
+    item.lastVisitTime ||
+    item.lastModified ||
+    item.dateAdded ||
+    item.createdAt ||
+    0;
   if (!timestamp) return 0;
   const hours = Math.max(0, (now - timestamp) / 36e5);
   if (hours < 1) return 2;
@@ -519,6 +527,21 @@ function buildResultFromItem(item, scoreValue) {
   }
   if (typeof item.dateAdded === "number") {
     result.dateAdded = item.dateAdded;
+  }
+  if (typeof item.lastModified === "number") {
+    result.lastModified = item.lastModified;
+  }
+  if (Array.isArray(item.urls) && item.urls.length) {
+    result.urls = item.urls.slice(0, 12);
+  }
+  if (typeof item.tabCount === "number") {
+    result.tabCount = item.tabCount;
+  }
+  if (item.sessionId) {
+    result.sessionId = item.sessionId;
+  }
+  if (item.sessionType) {
+    result.sessionType = item.sessionType;
   }
   if (typeof item.createdAt === "number") {
     result.createdAt = item.createdAt;
@@ -640,6 +663,19 @@ function compareResults(a, b) {
     const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
     if (bTime !== aTime) {
       return bTime - aTime;
+    }
+  }
+
+  if (a?.type === "recent" && b?.type === "recent") {
+    const aTime = typeof a.lastModified === "number" ? a.lastModified : 0;
+    const bTime = typeof b.lastModified === "number" ? b.lastModified : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+    const aTabs = typeof a.tabCount === "number" ? a.tabCount : 0;
+    const bTabs = typeof b.tabCount === "number" ? b.tabCount : 0;
+    if (bTabs !== aTabs) {
+      return bTabs - aTabs;
     }
   }
 
@@ -984,6 +1020,7 @@ function collectGhostCandidates(result) {
 
   appendCandidate(candidates, seen, result.title);
   appendCandidate(candidates, seen, result.url);
+  appendCandidate(candidates, seen, result.description);
 
   if (result.url) {
     try {
@@ -993,6 +1030,12 @@ function collectGhostCandidates(result) {
       appendCandidate(candidates, seen, hostPath);
     } catch (err) {
       // Ignore malformed URLs when building ghost candidates.
+    }
+  }
+
+  if (Array.isArray(result.urls)) {
+    for (const url of result.urls) {
+      appendCandidate(candidates, seen, url);
     }
   }
 
@@ -1199,6 +1242,21 @@ export function runSearch(query, data, options = {}) {
         const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
         const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
         if (bTime !== aTime) return bTime - aTime;
+        const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
+        const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
+        if (bScore !== aScore) return bScore - aScore;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
+    } else if (filterType === "recent") {
+      defaultItems.sort((a, b) => {
+        const aTime = typeof a.lastModified === "number" ? a.lastModified : 0;
+        const bTime = typeof b.lastModified === "number" ? b.lastModified : 0;
+        if (bTime !== aTime) return bTime - aTime;
+        const aTabs = typeof a.tabCount === "number" ? a.tabCount : 0;
+        const bTabs = typeof b.tabCount === "number" ? b.tabCount : 0;
+        if (bTabs !== aTabs) return bTabs - aTabs;
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
         const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
         if (bScore !== aScore) return bScore - aScore;

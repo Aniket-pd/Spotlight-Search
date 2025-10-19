@@ -10,7 +10,8 @@
     "storage",
     "scripting",
     "webNavigation",
-    "downloads"
+    "downloads",
+    "sessions"
   ],
   "host_permissions": ["file:///*"],
   "background": {

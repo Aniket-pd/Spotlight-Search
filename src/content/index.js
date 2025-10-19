@@ -98,6 +98,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     keywords: ["download", "downloads", "dl", "files"],
   },
   {
+    id: "slash-recent",
+    label: "Recently closed",
+    hint: "Restore recently closed tabs and windows",
+    value: "recent:",
+    keywords: ["recent", "recently closed", "closed", "restore"],
+  },
+  {
     id: "slash-back",
     label: "Back",
     hint: "Current tab back history",
@@ -144,7 +151,7 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history, downloads… (try \"tab:\")");
+  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history, downloads, recently closed… (try \"tab:\")");
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -1032,6 +1039,8 @@ function getFilterStatusLabel(type) {
       return "history";
     case "download":
       return "downloads";
+    case "recent":
+      return "recently closed";
     case "back":
       return "back history";
     case "forward":
@@ -1108,6 +1117,19 @@ function formatTypeLabel(type, result) {
       const stateLabel = result ? formatDownloadStateLabel(result.state) : "";
       return stateLabel ? `Download · ${stateLabel}` : "Download";
     }
+    case "recent": {
+      const tabCount = typeof result?.tabCount === "number" ? result.tabCount : 0;
+      if (result?.sessionType === "window") {
+        if (tabCount > 1) {
+          return `Closed window · ${tabCount} tabs`;
+        }
+        if (tabCount === 1) {
+          return "Closed window · 1 tab";
+        }
+        return "Closed window";
+      }
+      return "Closed tab";
+    }
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1127,6 +1149,7 @@ function getResultTimestamp(result) {
   const candidates = [
     result.lastVisitTime,
     result.lastAccessed,
+    result.lastModified,
     result.dateAdded,
     result.completedAt,
     result.createdAt,

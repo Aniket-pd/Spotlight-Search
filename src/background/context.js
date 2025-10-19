@@ -100,6 +100,36 @@ export function createBackgroundContext({ buildIndex }) {
       return;
     }
 
+    if (item.type === "recent") {
+      const sessionId = item.sessionId;
+      const fallbackUrls = Array.isArray(item.urls) ? item.urls : [];
+      if (sessionId && typeof chrome.sessions?.restore === "function") {
+        try {
+          const restored = await chrome.sessions.restore(sessionId);
+          if (restored?.tab?.id !== undefined) {
+            const tabId = restored.tab.id;
+            await chrome.tabs.update(tabId, { active: true });
+            if (restored.tab.windowId !== undefined) {
+              await chrome.windows.update(restored.tab.windowId, { focused: true });
+            }
+            return;
+          }
+          if (restored?.window?.id !== undefined) {
+            await chrome.windows.update(restored.window.id, { focused: true });
+            return;
+          }
+        } catch (err) {
+          console.warn("Spotlight: failed to restore recent session", err);
+        }
+      }
+
+      const fallbackUrl = item.url || fallbackUrls[0];
+      if (fallbackUrl) {
+        await chrome.tabs.create({ url: fallbackUrl });
+      }
+      return;
+    }
+
     await chrome.tabs.create({ url: item.url });
   }
 
