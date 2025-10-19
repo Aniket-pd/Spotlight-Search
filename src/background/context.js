@@ -198,19 +198,24 @@ export function createBackgroundContext({ buildIndex }) {
       clearFallbackSurface();
     }
 
-    if (preferSidePanel) {
+    const sidePanelAvailable = Boolean(chrome.sidePanel && typeof chrome.sidePanel.open === "function");
+
+    if (preferSidePanel && sidePanelAvailable) {
       const openedPanel = await openSidePanelSurface(activeTab || null, activeWindowId);
       if (openedPanel) {
         return;
       }
+      console.warn("Spotlight: unable to open side panel on this tab");
     }
 
-    const openedTab = await openFallbackTab(activeTab || null);
-    if (openedTab) {
-      return;
+    if (!preferSidePanel || !sidePanelAvailable) {
+      const openedTab = await openFallbackTab(activeTab || null);
+      if (openedTab) {
+        return;
+      }
     }
 
-    if (!preferSidePanel) {
+    if (!preferSidePanel && sidePanelAvailable) {
       await openSidePanelSurface(activeTab || null, activeWindowId);
     }
   }
@@ -266,39 +271,57 @@ export function createBackgroundContext({ buildIndex }) {
     const targetWindowId =
       typeof tabWindowId === "number" ? tabWindowId : await resolveWindowId(windowIdHint);
 
-    const options = { path: "popup.html", enabled: true };
+    const attempts = [];
+    const baseOptions = { path: "popup.html", enabled: true };
+
     if (tabId !== null) {
-      options.tabId = tabId;
-    } else if (typeof targetWindowId === "number") {
-      options.windowId = targetWindowId;
-    }
-
-    if (typeof chrome.sidePanel.setOptions === "function") {
-      try {
-        await chrome.sidePanel.setOptions(options);
-      } catch (err) {
-        console.warn("Spotlight: unable to set side panel options", err);
-      }
-    }
-
-    const openOptions = {};
-    if (tabId !== null) {
-      openOptions.tabId = tabId;
-    } else if (typeof targetWindowId === "number") {
-      openOptions.windowId = targetWindowId;
-    }
-
-    try {
-      await chrome.sidePanel.open(openOptions);
-      setFallbackSurface({
-        type: "sidePanel",
-        tabId,
-        windowId: typeof targetWindowId === "number" ? targetWindowId : null,
+      attempts.push({
+        options: { ...baseOptions, tabId },
+        open: { tabId },
+        surface: { type: "sidePanel", tabId, windowId: typeof tabWindowId === "number" ? tabWindowId : null },
       });
-      return true;
-    } catch (err) {
-      console.warn("Spotlight: failed to open side panel surface", err);
-      clearFallbackSurface();
+    }
+
+    if (typeof targetWindowId === "number") {
+      attempts.push({
+        options: { ...baseOptions, windowId: targetWindowId },
+        open: { windowId: targetWindowId },
+        surface: { type: "sidePanel", tabId: null, windowId: targetWindowId },
+      });
+    }
+
+    attempts.push({
+      options: baseOptions,
+      open: {},
+      surface: {
+        type: "sidePanel",
+        tabId: null,
+        windowId: typeof targetWindowId === "number" ? targetWindowId : null,
+      },
+    });
+
+    for (const attempt of attempts) {
+      if (!(attempt && attempt.open && attempt.options)) {
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+
+      if (typeof chrome.sidePanel.setOptions === "function") {
+        try {
+          await chrome.sidePanel.setOptions(attempt.options);
+        } catch (err) {
+          console.warn("Spotlight: unable to set side panel options", err);
+        }
+      }
+
+      try {
+        await chrome.sidePanel.open(attempt.open);
+        setFallbackSurface(attempt.surface);
+        return true;
+      } catch (err) {
+        console.warn("Spotlight: failed to open side panel surface", err);
+        clearFallbackSurface();
+      }
     }
 
     return false;
