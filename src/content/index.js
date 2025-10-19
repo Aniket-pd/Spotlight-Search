@@ -107,6 +107,9 @@ const downloadLiveData = new Map();
 const downloadRowRefs = new Map();
 const downloadUpdateTimers = new Map();
 let downloadsPort = null;
+let downloadsReconnectTimer = null;
+let downloadsReconnectAttempts = 0;
+const DOWNLOAD_PORT_HANDLER_KEY = "__spotlightDisconnectHandler";
 
 function createOverlay() {
   overlayEl = document.createElement("div");
@@ -1350,28 +1353,73 @@ function connectDownloadsStream() {
   if (downloadsPort) {
     return;
   }
+  if (downloadsReconnectTimer) {
+    clearTimeout(downloadsReconnectTimer);
+    downloadsReconnectTimer = null;
+  }
   try {
-    downloadsPort = chrome.runtime.connect({ name: "downloads-stream" });
-    downloadsPort.onMessage.addListener(handleDownloadsPortMessage);
-    downloadsPort.onDisconnect.addListener(() => {
+    const port = chrome.runtime.connect({ name: "downloads-stream" });
+    downloadsPort = port;
+    downloadsReconnectAttempts = 0;
+    const disconnectHandler = () => {
+      port.onMessage.removeListener(handleDownloadsPortMessage);
+      port.onDisconnect.removeListener(disconnectHandler);
+      delete port[DOWNLOAD_PORT_HANDLER_KEY];
       downloadsPort = null;
-    });
+      scheduleDownloadsReconnect();
+    };
+    port.onMessage.addListener(handleDownloadsPortMessage);
+    port.onDisconnect.addListener(disconnectHandler);
+    port[DOWNLOAD_PORT_HANDLER_KEY] = disconnectHandler;
   } catch (err) {
     console.warn("Spotlight: unable to connect to downloads stream", err);
     downloadsPort = null;
+    scheduleDownloadsReconnect();
   }
+}
+
+function scheduleDownloadsReconnect() {
+  if (!isOpen || downloadsReconnectTimer) {
+    return;
+  }
+  const attempt = Math.min(downloadsReconnectAttempts + 1, 5);
+  downloadsReconnectAttempts = attempt;
+  const delay = Math.min(200 * attempt, 1500);
+  downloadsReconnectTimer = setTimeout(() => {
+    downloadsReconnectTimer = null;
+    if (isOpen && !downloadsPort) {
+      connectDownloadsStream();
+    }
+  }, delay);
 }
 
 function disconnectDownloadsStream() {
   if (!downloadsPort) {
+    if (downloadsReconnectTimer) {
+      clearTimeout(downloadsReconnectTimer);
+      downloadsReconnectTimer = null;
+    }
+    downloadsReconnectAttempts = 0;
     return;
   }
   try {
-    downloadsPort.disconnect();
+    const port = downloadsPort;
+    const disconnectHandler = port[DOWNLOAD_PORT_HANDLER_KEY];
+    if (typeof disconnectHandler === "function") {
+      port.onDisconnect.removeListener(disconnectHandler);
+      delete port[DOWNLOAD_PORT_HANDLER_KEY];
+    }
+    port.onMessage.removeListener(handleDownloadsPortMessage);
+    downloadsPort = null;
+    port.disconnect();
   } catch (err) {
     // Ignore disconnect errors.
   }
-  downloadsPort = null;
+  if (downloadsReconnectTimer) {
+    clearTimeout(downloadsReconnectTimer);
+    downloadsReconnectTimer = null;
+  }
+  downloadsReconnectAttempts = 0;
 }
 
 function handleDownloadsPortMessage(message) {
@@ -1379,7 +1427,20 @@ function handleDownloadsPortMessage(message) {
     return;
   }
   if (message.type === "downloads-snapshot" && Array.isArray(message.downloads)) {
-    message.downloads.forEach((entry) => applyDownloadLiveData(entry));
+    const seenIds = new Set();
+    message.downloads.forEach((entry) => {
+      if (entry && typeof entry.downloadId === "number") {
+        seenIds.add(entry.downloadId);
+      }
+      applyDownloadLiveData(entry);
+    });
+    if (seenIds.size || downloadLiveData.size) {
+      Array.from(downloadLiveData.keys()).forEach((downloadId) => {
+        if (!seenIds.has(downloadId)) {
+          downloadLiveData.delete(downloadId);
+        }
+      });
+    }
     refreshVisibleDownloads();
     return;
   }
