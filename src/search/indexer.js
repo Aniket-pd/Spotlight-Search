@@ -147,13 +147,14 @@ async function indexHistory(indexMap, termBuckets, items) {
 
   for (const entry of historyItems) {
     if (!entry.url) continue;
+    const lastVisitTime = typeof entry.lastVisitTime === "number" ? entry.lastVisitTime : Number(entry.lastVisitTime) || 0;
     const itemId = items.length;
     items.push({
       id: itemId,
       type: "history",
       title: entry.title || entry.url,
       url: entry.url,
-      lastVisitTime: entry.lastVisitTime,
+      lastVisitTime,
       visitCount: entry.visitCount,
       origin: extractOrigin(entry.url),
     });

@@ -1,7 +1,9 @@
 const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
-const RESULTS_LIMIT = 12;
+const LAZY_INITIAL_BATCH = 30;
+const LAZY_BATCH_SIZE = 24;
+const LAZY_LOAD_THRESHOLD = 160;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -27,6 +29,21 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+
+const lazyList = createLazyList(
+  { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
+  () => {
+    if (!isOpen) {
+      return;
+    }
+    scheduleIdleWork(() => {
+      if (!isOpen) {
+        return;
+      }
+      renderResults();
+    });
+  }
+);
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -153,6 +170,7 @@ function createOverlay() {
   resultsEl.setAttribute("role", "listbox");
   resultsEl.id = RESULTS_LIST_ID;
   inputEl.setAttribute("aria-controls", RESULTS_LIST_ID);
+  lazyList.attach(resultsEl);
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
@@ -517,6 +535,7 @@ function openOverlay() {
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
+  lazyList.reset();
   statusEl.textContent = "";
   statusSticky = false;
   activeFilter = null;
@@ -554,6 +573,11 @@ function closeOverlay() {
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
+  resultsState = [];
+  lazyList.reset();
+  if (resultsEl) {
+    resultsEl.innerHTML = "";
+  }
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
@@ -644,6 +668,7 @@ function handleInputChange() {
     setStatus("Press Enter to rebuild index", { sticky: true, force: true });
     setGhostText("");
     resultsState = [];
+    lazyList.reset();
     renderResults();
     return;
   }
@@ -677,7 +702,8 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
-      resultsState = Array.isArray(response.results) ? response.results.slice(0, RESULTS_LIMIT) : [];
+      resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+      lazyList.setItems(resultsState);
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
@@ -783,7 +809,10 @@ function applyGhostSuggestion() {
 function navigateResults(delta) {
   if (!resultsState.length) return;
   activeIndex = (activeIndex + delta + resultsState.length) % resultsState.length;
-  updateActiveResult();
+  const expanded = lazyList.ensureVisible(activeIndex);
+  if (!expanded) {
+    updateActiveResult();
+  }
 }
 
 function updateActiveResult() {
@@ -792,8 +821,10 @@ function updateActiveResult() {
   }
   const items = resultsEl.querySelectorAll("li");
   let activeItem = null;
-  items.forEach((item, index) => {
-    const isActive = index === activeIndex;
+  items.forEach((item) => {
+    const indexAttr = item.dataset ? item.dataset.index : undefined;
+    const itemIndex = typeof indexAttr === "string" ? Number(indexAttr) : Number.NaN;
+    const isActive = Number.isInteger(itemIndex) && itemIndex === activeIndex;
     item.classList.toggle("active", isActive);
     if (item.getAttribute("role") === "option") {
       item.setAttribute("aria-selected", isActive ? "true" : "false");
@@ -842,6 +873,10 @@ function openResult(result) {
 }
 
 function renderResults() {
+  if (!resultsEl) {
+    return;
+  }
+
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -868,12 +903,25 @@ function renderResults() {
     return;
   }
 
-  resultsState.forEach((result, index) => {
+  activeIndex = Math.min(activeIndex, resultsState.length - 1);
+  if (activeIndex < 0 && resultsState.length > 0) {
+    activeIndex = 0;
+  }
+
+  const visibleResults = lazyList.getVisibleItems();
+  const itemsToRender = visibleResults.length ? visibleResults : resultsState.slice(0, LAZY_INITIAL_BATCH);
+
+  itemsToRender.forEach((result, index) => {
+    if (!result) {
+      return;
+    }
+    const displayIndex = index;
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
-    li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
+    li.id = `${RESULT_OPTION_ID_PREFIX}${displayIndex}`;
     li.dataset.resultId = String(result.id);
+    li.dataset.index = String(displayIndex);
     const origin = getResultOrigin(result);
     if (origin) {
       li.dataset.origin = origin;
@@ -899,12 +947,24 @@ function renderResults() {
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
     url.textContent = result.description || result.url || "";
+    if (url.textContent) {
+      url.title = url.textContent;
+    }
+
+    const timestampLabel = formatResultTimestamp(result);
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
     type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
+    if (timestampLabel) {
+      const timestampEl = document.createElement("span");
+      timestampEl.className = "spotlight-result-timestamp";
+      timestampEl.textContent = timestampLabel;
+      timestampEl.title = timestampLabel;
+      meta.appendChild(timestampEl);
+    }
     meta.appendChild(type);
 
     body.appendChild(title);
@@ -912,9 +972,11 @@ function renderResults() {
     li.appendChild(body);
 
     li.addEventListener("pointerover", () => {
-      if (activeIndex !== index) {
-        activeIndex = index;
-        updateActiveResult();
+      if (activeIndex !== displayIndex) {
+        activeIndex = displayIndex;
+        if (!lazyList.ensureVisible(activeIndex)) {
+          updateActiveResult();
+        }
       }
     });
 
@@ -923,7 +985,8 @@ function renderResults() {
     });
 
     li.addEventListener("click", () => {
-      openResult(result);
+      const target = resultsState[displayIndex] || result;
+      openResult(target);
     });
 
     if (result.type === "command") {
@@ -933,12 +996,12 @@ function renderResults() {
     resultsEl.appendChild(li);
   });
 
-  activeIndex = Math.min(activeIndex, resultsState.length - 1);
-  if (activeIndex < 0 && resultsState.length > 0) {
-    activeIndex = 0;
-  }
-  enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
+  enqueueFavicons(itemsToRender);
   updateActiveResult();
+
+  scheduleIdleWork(() => {
+    lazyList.maybeFill();
+  });
 }
 
 function getFilterStatusLabel(type) {
@@ -994,12 +1057,144 @@ function formatTypeLabel(type, result) {
   }
 }
 
+function getResultTimestamp(result) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const candidates = [result.lastVisitTime, result.lastAccessed, result.dateAdded, result.createdAt];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function formatResultTimestamp(result) {
+  const timestamp = getResultTimestamp(result);
+  if (!timestamp) {
+    return "";
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  try {
+    return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch (err) {
+    return date.toLocaleString();
+  }
+}
+
 function scheduleIdleWork(callback) {
   if (typeof window.requestIdleCallback === "function") {
     window.requestIdleCallback(callback, { timeout: 500 });
   } else {
     setTimeout(callback, 32);
   }
+}
+
+function createLazyList(options = {}, onChange) {
+  const { initial = 30, step = 20, threshold = 160 } = options || {};
+  let container = null;
+  let items = [];
+  let visibleCount = 0;
+  const changeHandler = typeof onChange === "function" ? onChange : null;
+
+  const handleScroll = () => {
+    if (!container || visibleCount >= items.length) {
+      return;
+    }
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    if (scrollHeight - (scrollTop + clientHeight) <= threshold) {
+      increase(step);
+    }
+  };
+
+  function attach(element) {
+    if (container && container !== element) {
+      container.removeEventListener("scroll", handleScroll);
+    }
+    container = element || null;
+    if (container) {
+      container.addEventListener("scroll", handleScroll, { passive: true });
+    }
+  }
+
+  function setItems(nextItems) {
+    items = Array.isArray(nextItems) ? nextItems : [];
+    visibleCount = Math.min(items.length, initial || items.length);
+  }
+
+  function getVisibleItems() {
+    if (!items.length) {
+      return [];
+    }
+    if (!visibleCount) {
+      visibleCount = Math.min(items.length, initial || items.length);
+    }
+    return items.slice(0, visibleCount);
+  }
+
+  function increase(amount = step) {
+    if (!items.length) {
+      return;
+    }
+    const next = Math.min(items.length, visibleCount + amount);
+    if (next > visibleCount) {
+      visibleCount = next;
+      if (changeHandler) {
+        changeHandler();
+      }
+    }
+  }
+
+  function ensureVisible(index) {
+    if (typeof index !== "number" || index < 0) {
+      return false;
+    }
+    if (index < visibleCount) {
+      return false;
+    }
+    const next = Math.min(items.length, index + 1);
+    if (next > visibleCount) {
+      visibleCount = next;
+      if (changeHandler) {
+        changeHandler();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function reset() {
+    items = [];
+    visibleCount = 0;
+  }
+
+  function hasMore() {
+    return visibleCount < items.length;
+  }
+
+  function maybeFill() {
+    if (!container || !hasMore()) {
+      return;
+    }
+    const { scrollHeight, clientHeight } = container;
+    if (scrollHeight <= clientHeight + threshold) {
+      increase(step);
+    }
+  }
+
+  return {
+    attach,
+    setItems,
+    getVisibleItems,
+    ensureVisible,
+    reset,
+    hasMore,
+    maybeFill,
+  };
 }
 
 function getResultOrigin(result) {
