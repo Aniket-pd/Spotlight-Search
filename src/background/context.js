@@ -118,7 +118,7 @@ export function createBackgroundContext({ buildIndex }) {
   async function sendToggleMessage() {
     let activeTab = null;
     try {
-      [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     } catch (err) {
       console.warn("Spotlight: unable to query active tab", err);
     }
@@ -161,7 +161,10 @@ export function createBackgroundContext({ buildIndex }) {
   async function openFallbackSurface(activeTab, options = {}) {
     const fallback = state.fallbackSurface;
     const preferSidePanel = Boolean(options?.preferSidePanel);
-    const activeWindowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
+    let activeWindowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
+    if (activeWindowId === null) {
+      activeWindowId = await resolveWindowId(null);
+    }
 
     if (fallback && fallback.type === "tab" && typeof fallback.tabId === "number") {
       try {
@@ -225,6 +228,23 @@ export function createBackgroundContext({ buildIndex }) {
     return false;
   }
 
+  async function resolveWindowId(windowIdHint) {
+    if (typeof windowIdHint === "number") {
+      return windowIdHint;
+    }
+
+    try {
+      const [focusedTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (focusedTab && typeof focusedTab.windowId === "number") {
+        return focusedTab.windowId;
+      }
+    } catch (err) {
+      console.warn("Spotlight: unable to resolve focused window", err);
+    }
+
+    return null;
+  }
+
   async function openSidePanelSurface(windowIdHint) {
     if (!chrome.sidePanel || typeof chrome.sidePanel.open !== "function") {
       return false;
@@ -232,9 +252,11 @@ export function createBackgroundContext({ buildIndex }) {
 
     await ensureSidePanelBehaviorConfigured();
 
+    const targetWindowId = await resolveWindowId(windowIdHint);
+
     const options = { path: "popup.html", enabled: true };
-    if (typeof windowIdHint === "number") {
-      options.windowId = windowIdHint;
+    if (typeof targetWindowId === "number") {
+      options.windowId = targetWindowId;
     }
 
     if (typeof chrome.sidePanel.setOptions === "function") {
@@ -246,15 +268,15 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     const openOptions = {};
-    if (typeof windowIdHint === "number") {
-      openOptions.windowId = windowIdHint;
+    if (typeof targetWindowId === "number") {
+      openOptions.windowId = targetWindowId;
     }
 
     try {
       await chrome.sidePanel.open(openOptions);
       setFallbackSurface({
         type: "sidePanel",
-        windowId: typeof windowIdHint === "number" ? windowIdHint : null,
+        windowId: typeof targetWindowId === "number" ? targetWindowId : null,
       });
       return true;
     } catch (err) {
