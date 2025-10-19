@@ -307,10 +307,10 @@
 
 .spotlight-result-meta {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  flex-wrap: wrap;
 }
 
 .spotlight-result-url {
@@ -319,6 +319,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
 }
 
 .spotlight-result-type {
@@ -329,6 +330,13 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   color: rgba(255, 255, 255, 0.8);
+  flex-shrink: 0;
+}
+
+.spotlight-result-timestamp {
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
