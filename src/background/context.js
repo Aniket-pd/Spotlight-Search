@@ -73,6 +73,33 @@ export function createBackgroundContext({ buildIndex }) {
       return;
     }
 
+    if (item.type === "download") {
+      const downloadId = item.downloadId;
+      if (typeof downloadId === "number") {
+        try {
+          if (item.state === "complete") {
+            await chrome.downloads.open(downloadId);
+          } else {
+            await chrome.downloads.show(downloadId);
+          }
+          return;
+        } catch (err) {
+          console.warn("Spotlight: failed to open download directly", err);
+          try {
+            await chrome.downloads.open(downloadId);
+            return;
+          } catch (openErr) {
+            console.warn("Spotlight: download open fallback failed", openErr);
+          }
+        }
+      }
+      const fallbackUrl = item.fileUrl || item.url;
+      if (fallbackUrl) {
+        await chrome.tabs.create({ url: fallbackUrl });
+      }
+      return;
+    }
+
     await chrome.tabs.create({ url: item.url });
   }
 

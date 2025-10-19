@@ -261,6 +261,10 @@
   background: transparent;
 }
 
+.spotlight-result-icon-download {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.35), rgba(96, 165, 250, 0.35));
+}
+
 .spotlight-result-icon-img {
   width: 100%;
   height: 100%;
@@ -331,6 +335,38 @@
   background: rgba(255, 255, 255, 0.14);
   color: rgba(255, 255, 255, 0.8);
   flex-shrink: 0;
+}
+
+.spotlight-result-tag {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.25);
+  color: rgba(241, 245, 249, 0.82);
+  flex-shrink: 0;
+}
+
+.spotlight-result-tag.download-state-complete {
+  background: rgba(34, 197, 94, 0.28);
+  color: #bbf7d0;
+}
+
+.spotlight-result-tag.download-state-in_progress {
+  background: rgba(59, 130, 246, 0.28);
+  color: #bfdbfe;
+}
+
+.spotlight-result-tag.download-state-interrupted,
+.spotlight-result-tag.download-state-cancelled {
+  background: rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+}
+
+.spotlight-result-tag.download-state-paused {
+  background: rgba(249, 115, 22, 0.28);
+  color: #fed7aa;
 }
 
 .spotlight-result-timestamp {

@@ -11,6 +11,7 @@ const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
   history: 2,
+  download: 3,
 };
 
 function getResultLimit(filterType) {
@@ -37,6 +38,7 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  download: ["download:", "downloads:", "dl:", "d:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -49,6 +51,25 @@ const NAVIGATION_STEP_PENALTY = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
 const COMMON_SECOND_LEVEL_TLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "go", "ne", "or"]);
+const DOWNLOAD_STATE_PRIORITY = {
+  complete: 0,
+  in_progress: 1,
+  interrupted: 2,
+  paused: 3,
+  cancelled: 4,
+  unknown: 5,
+};
+
+function normalizeDownloadState(state) {
+  if (typeof state !== "string") {
+    return "unknown";
+  }
+  const normalized = state.toLowerCase();
+  if (normalized in DOWNLOAD_STATE_PRIORITY) {
+    return normalized;
+  }
+  return normalized.replace(/[^a-z0-9]+/g, "_") || "unknown";
+}
 
 function toStartOfDay(timestamp) {
   const date = new Date(timestamp);
@@ -234,7 +255,62 @@ function buildBookmarkSubfilters(bookmarks) {
   return options;
 }
 
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
+function formatDownloadStateLabel(state) {
+  const normalized = normalizeDownloadState(state);
+  switch (normalized) {
+    case "complete":
+      return "Completed";
+    case "in_progress":
+      return "In Progress";
+    case "interrupted":
+      return "Interrupted";
+    case "paused":
+      return "Paused";
+    case "cancelled":
+      return "Canceled";
+    default:
+      return toTitleCase(normalized.replace(/_/g, " ")) || "Other";
+  }
+}
+
+function buildDownloadSubfilters(downloads) {
+  const counts = new Map();
+  for (const download of downloads || []) {
+    const state = normalizeDownloadState(download?.state);
+    counts.set(state, (counts.get(state) || 0) + 1);
+  }
+
+  const options = [{ id: "all", label: "All Downloads" }];
+  const states = ["complete", "in_progress", "interrupted", "paused", "cancelled"];
+  for (const state of states) {
+    const count = counts.get(state) || 0;
+    if (!count) {
+      continue;
+    }
+    options.push({
+      id: `state:${state}`,
+      label: formatDownloadStateLabel(state),
+      count,
+    });
+  }
+
+  const remainingStates = Array.from(counts.keys()).filter((state) => !states.includes(state));
+  for (const state of remainingStates) {
+    const count = counts.get(state) || 0;
+    if (!count) {
+      continue;
+    }
+    options.push({
+      id: `state:${state}`,
+      label: formatDownloadStateLabel(state),
+      count,
+    });
+  }
+
+  return options;
+}
+
+function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [], downloads = [] } = {}) {
   if (!filterType) {
     return [];
   }
@@ -246,6 +322,9 @@ function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
   }
   if (filterType === "bookmark") {
     return buildBookmarkSubfilters(bookmarks);
+  }
+  if (filterType === "download") {
+    return buildDownloadSubfilters(downloads);
   }
   return [];
 }
@@ -310,6 +389,18 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
     return key === itemKey;
   }
 
+  if (filterType === "download") {
+    if (!subfilterId.startsWith("state:")) {
+      return true;
+    }
+    const target = normalizeDownloadState(subfilterId.slice("state:".length));
+    if (!target || target === "all") {
+      return true;
+    }
+    const itemState = normalizeDownloadState(item?.state);
+    return itemState === target;
+  }
+
   return true;
 }
 
@@ -368,6 +459,35 @@ function computeRecencyBoost(item) {
   return 0.1;
 }
 
+function resolveDownloadTimestampValue(item) {
+  if (!item || typeof item !== "object") {
+    return 0;
+  }
+  const candidates = [item.endTime, item.completedAt, item.createdAt, item.startTime];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+  return 0;
+}
+
+function compareDownloadItems(a, b) {
+  const aPriority = DOWNLOAD_STATE_PRIORITY[normalizeDownloadState(a?.state)] ?? DOWNLOAD_STATE_PRIORITY.unknown;
+  const bPriority = DOWNLOAD_STATE_PRIORITY[normalizeDownloadState(b?.state)] ?? DOWNLOAD_STATE_PRIORITY.unknown;
+  if (aPriority !== bPriority) {
+    return aPriority - bPriority;
+  }
+  const aTime = resolveDownloadTimestampValue(a);
+  const bTime = resolveDownloadTimestampValue(b);
+  if (bTime !== aTime) {
+    return bTime - aTime;
+  }
+  const aTitle = (a && a.title) || "";
+  const bTitle = (b && b.title) || "";
+  return aTitle.localeCompare(bTitle);
+}
+
 function buildResultFromItem(item, scoreValue) {
   if (!item) {
     return null;
@@ -385,6 +505,12 @@ function buildResultFromItem(item, scoreValue) {
     origin: item.origin || "",
     tabId: item.tabId,
   };
+  if (typeof item.description === "string" && item.description) {
+    result.description = item.description;
+  }
+  if (item.iconHint) {
+    result.iconHint = item.iconHint;
+  }
   if (typeof item.lastVisitTime === "number") {
     result.lastVisitTime = item.lastVisitTime;
   }
@@ -396,6 +522,24 @@ function buildResultFromItem(item, scoreValue) {
   }
   if (typeof item.createdAt === "number") {
     result.createdAt = item.createdAt;
+  }
+  if (item.type === "download") {
+    const normalizedState = normalizeDownloadState(item.state);
+    result.state = normalizedState;
+    result.downloadId = item.downloadId;
+    result.fileUrl = item.fileUrl || null;
+    result.filename = item.filename || "";
+    result.displayPath = item.displayPath || "";
+    if (!result.description) {
+      result.description = item.displayPath || item.filename || item.url || "";
+    }
+    result.iconHint = result.iconHint || "download";
+    if (typeof item.endTime === "number" && Number.isFinite(item.endTime) && item.endTime > 0) {
+      result.completedAt = item.endTime;
+    }
+    if (typeof item.startTime === "number" && Number.isFinite(item.startTime) && item.startTime > 0) {
+      result.startTime = item.startTime;
+    }
   }
   return result;
 }
@@ -477,6 +621,19 @@ function compareResults(a, b) {
   }
 
   if (bScore !== aScore) return bScore - aScore;
+
+  if (a?.type === "download" && b?.type === "download") {
+    const aPriority = DOWNLOAD_STATE_PRIORITY[a.state] ?? DOWNLOAD_STATE_PRIORITY.unknown;
+    const bPriority = DOWNLOAD_STATE_PRIORITY[b.state] ?? DOWNLOAD_STATE_PRIORITY.unknown;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    const aTime = typeof a.completedAt === "number" ? a.completedAt : typeof a.createdAt === "number" ? a.createdAt : 0;
+    const bTime = typeof b.completedAt === "number" ? b.completedAt : typeof b.createdAt === "number" ? b.createdAt : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+  }
 
   if (a?.type === "history" && b?.type === "history") {
     const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
@@ -1004,8 +1161,13 @@ export function runSearch(query, data, options = {}) {
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
+  const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
   const historyBoundaries = computeHistoryBoundaries(Date.now());
-  const availableSubfilters = buildSubfilterOptions(filterType, { tabs, bookmarks: bookmarkItems });
+  const availableSubfilters = buildSubfilterOptions(filterType, {
+    tabs,
+    bookmarks: bookmarkItems,
+    downloads: downloadItems,
+  });
   const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
@@ -1017,7 +1179,9 @@ export function runSearch(query, data, options = {}) {
 
   if (!trimmed) {
     let defaultItems = filterType
-      ? items.filter((item) => item.type === filterType)
+      ? filterType === "download"
+        ? downloadItems.slice()
+        : items.filter((item) => item.type === filterType)
       : items.filter((item) => item.type === "tab");
 
     defaultItems = defaultItems.filter((item) => matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext));
@@ -1042,6 +1206,8 @@ export function runSearch(query, data, options = {}) {
         const bTitle = b.title || "";
         return aTitle.localeCompare(bTitle);
       });
+    } else if (filterType === "download") {
+      defaultItems.sort((a, b) => compareDownloadItems(a, b));
     } else {
       defaultItems.sort((a, b) => {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
@@ -1105,6 +1271,16 @@ export function runSearch(query, data, options = {}) {
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
+    }
+    if (item.type === "download") {
+      const state = normalizeDownloadState(item.state);
+      if (state === "complete") {
+        finalScore += 0.6;
+      } else if (state === "in_progress") {
+        finalScore -= 0.4;
+      } else if (state === "interrupted" || state === "cancelled") {
+        finalScore -= 0.7;
+      }
     }
     const mapped = buildResultFromItem(item, finalScore);
     if (mapped) {

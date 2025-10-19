@@ -49,6 +49,8 @@ const iconCache = new Map();
 const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
+const DOWNLOAD_ICON_DATA_URL =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNiIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI2IiByeD0iMi41IiBmaWxsPSIjMEVBNUU5Ii8+PHBhdGggZD0iTTE2IDV2MTMuMTdsNC41OS00LjU4TDIyIDE1bC02IDYtNi02IDEuNDEtMS40MUwxNCAxOC4xN1Y1aDJ6IiBmaWxsPSIjRTBGMkZFIi8+PC9zdmc+";
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
@@ -87,6 +89,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Browse recent history",
     value: "history:",
     keywords: ["history", "hist", "recent", "visited"],
+  },
+  {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Review downloaded files",
+    value: "download:",
+    keywords: ["download", "downloads", "dl", "files"],
   },
   {
     id: "slash-back",
@@ -135,7 +144,7 @@ function createOverlay() {
   inputEl = document.createElement("input");
   inputEl.className = "spotlight-input";
   inputEl.type = "text";
-  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history… (try \"tab:\")");
+  inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history, downloads… (try \"tab:\")");
   inputEl.setAttribute("spellcheck", "false");
   inputEl.setAttribute("role", "combobox");
   inputEl.setAttribute("aria-haspopup", "listbox");
@@ -965,6 +974,15 @@ function renderResults() {
       timestampEl.title = timestampLabel;
       meta.appendChild(timestampEl);
     }
+    if (result.type === "download") {
+      const stateLabel = formatDownloadStateLabel(result.state);
+      if (stateLabel) {
+        const stateChip = document.createElement("span");
+        stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
+        stateChip.textContent = stateLabel;
+        meta.appendChild(stateChip);
+      }
+    }
     meta.appendChild(type);
 
     body.appendChild(title);
@@ -1012,6 +1030,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -1019,6 +1039,45 @@ function getFilterStatusLabel(type) {
     default:
       return "";
   }
+}
+
+const DOWNLOAD_STATE_LABELS = {
+  complete: "Completed",
+  in_progress: "In Progress",
+  interrupted: "Interrupted",
+  paused: "Paused",
+  cancelled: "Canceled",
+};
+
+function normalizeDownloadState(value) {
+  if (typeof value !== "string" || !value) {
+    return "unknown";
+  }
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (DOWNLOAD_STATE_LABELS[normalized]) {
+    return normalized;
+  }
+  return normalized || "unknown";
+}
+
+function formatDownloadStateLabel(state) {
+  const normalized = normalizeDownloadState(state);
+  if (normalized === "unknown") {
+    return "";
+  }
+  if (DOWNLOAD_STATE_LABELS[normalized]) {
+    return DOWNLOAD_STATE_LABELS[normalized];
+  }
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Unknown";
+}
+
+function getDownloadStateClassName(state) {
+  const normalized = normalizeDownloadState(state);
+  return `download-state-${normalized}`;
 }
 
 function triggerReindex() {
@@ -1045,6 +1104,10 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download": {
+      const stateLabel = result ? formatDownloadStateLabel(result.state) : "";
+      return stateLabel ? `Download · ${stateLabel}` : "Download";
+    }
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1061,7 +1124,13 @@ function getResultTimestamp(result) {
   if (!result || typeof result !== "object") {
     return null;
   }
-  const candidates = [result.lastVisitTime, result.lastAccessed, result.dateAdded, result.createdAt];
+  const candidates = [
+    result.lastVisitTime,
+    result.lastAccessed,
+    result.dateAdded,
+    result.completedAt,
+    result.createdAt,
+  ];
   for (const value of candidates) {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       return value;
@@ -1299,6 +1368,11 @@ function createIconImage(src) {
 function createIconElement(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
+  if (result && result.iconHint === "download") {
+    wrapper.classList.add("spotlight-result-icon-download");
+    wrapper.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1316,6 +1390,7 @@ function applyCachedFavicons(results) {
   }
   results.forEach((result) => {
     if (!result) return;
+    if (result.iconHint) return;
     const origin = getResultOrigin(result);
     if (!origin) return;
     if (iconCache.has(origin)) {
@@ -1326,7 +1401,7 @@ function applyCachedFavicons(results) {
 }
 
 function shouldRequestFavicon(result) {
-  if (!result || result.type === "command") {
+  if (!result || result.type === "command" || result.iconHint) {
     return false;
   }
   const origin = getResultOrigin(result);
@@ -1390,6 +1465,9 @@ function updateResultsWithIcon(origin, faviconUrl) {
   resultsState.forEach((result) => {
     if (!result) return;
     if ((getResultOrigin(result) || "") === normalizedOrigin) {
+      if (result.iconHint) {
+        return;
+      }
       result.faviconUrl = faviconUrl || null;
     }
   });
@@ -1467,12 +1545,17 @@ function applyIconToResults(origin, faviconUrl) {
       return;
     }
     iconContainer.innerHTML = "";
+    const resultId = itemEl.dataset.resultId;
+    const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
+    if (result && result.iconHint === "download") {
+      iconContainer.classList.add("spotlight-result-icon-download");
+      iconContainer.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
+      return;
+    }
     if (faviconUrl) {
       iconContainer.appendChild(createIconImage(faviconUrl));
       return;
     }
-    const resultId = itemEl.dataset.resultId;
-    const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
     iconContainer.appendChild(createPlaceholderElement(result || null));
   });
 }

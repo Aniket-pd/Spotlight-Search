@@ -1,6 +1,7 @@
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+const DOWNLOAD_SEARCH_LIMIT = 200;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -49,6 +50,48 @@ function extractOrigin(url) {
   } catch (err) {
     return "";
   }
+}
+
+function parseDownloadTime(value) {
+  if (!value) {
+    return 0;
+  }
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (Number.isNaN(timestamp)) {
+    return 0;
+  }
+  return timestamp;
+}
+
+function getDownloadDisplayName(filename = "") {
+  if (!filename) {
+    return "";
+  }
+  const parts = filename.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length) {
+    return filename;
+  }
+  return parts[parts.length - 1];
+}
+
+function getDownloadDisplayPath(filename = "") {
+  if (!filename) {
+    return "";
+  }
+  const parts = filename.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length) {
+    return filename;
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  const name = parts.pop();
+  const folder = parts.pop();
+  if (folder) {
+    return `${folder} / ${name}`;
+  }
+  return name || filename;
 }
 
 async function indexTabs(indexMap, termBuckets, items) {
@@ -170,6 +213,66 @@ async function indexHistory(indexMap, termBuckets, items) {
   }
 }
 
+async function indexDownloads(indexMap, termBuckets, items) {
+  let downloads = [];
+  try {
+    downloads = await chrome.downloads.search({ orderBy: ["-startTime"], limit: DOWNLOAD_SEARCH_LIMIT });
+  } catch (err) {
+    console.warn("Spotlight: failed to query downloads", err);
+    return;
+  }
+
+  for (const entry of downloads) {
+    if (!entry) {
+      continue;
+    }
+
+    const filename = typeof entry.filename === "string" ? entry.filename : "";
+    const title = getDownloadDisplayName(filename) || entry.url || "Download";
+    const displayPath = getDownloadDisplayPath(filename);
+    const finalUrl = typeof entry.finalUrl === "string" && entry.finalUrl ? entry.finalUrl : entry.url || "";
+    const itemId = items.length;
+    const endTime = parseDownloadTime(entry.endTime);
+    const startTime = parseDownloadTime(entry.startTime);
+    const createdAt = endTime || startTime || Date.now();
+    const fileUrl = typeof entry.fileUrl === "string" && entry.fileUrl
+      ? entry.fileUrl
+      : filename
+      ? `file://${filename}`
+      : "";
+
+    const item = {
+      id: itemId,
+      type: "download",
+      title,
+      url: finalUrl,
+      downloadId: entry.id,
+      state: entry.state || "in_progress",
+      filename,
+      displayPath,
+      fileUrl,
+      createdAt,
+      startTime: startTime || null,
+      endTime: endTime || null,
+      totalBytes: typeof entry.totalBytes === "number" ? entry.totalBytes : null,
+      bytesReceived: typeof entry.bytesReceived === "number" ? entry.bytesReceived : null,
+      danger: entry.danger || "safe",
+      opened: Boolean(entry.opened),
+      origin: extractOrigin(finalUrl),
+      iconHint: "download",
+    };
+
+    items.push(item);
+
+    addToIndex(indexMap, termBuckets, itemId, title, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, filename, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, finalUrl, URL_WEIGHT);
+    if (entry.mime) {
+      addToIndex(indexMap, termBuckets, itemId, entry.mime, 1);
+    }
+  }
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -179,6 +282,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -192,6 +296,7 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
   };
 
   return {
