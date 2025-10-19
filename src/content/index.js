@@ -1711,13 +1711,25 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    dismissSurface();
-  } else {
-    openOverlay();
+
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      dismissSurface();
+    } else {
+      openOverlay();
+    }
+    return;
+  }
+
+  if (message.type === "SPOTLIGHT_TOGGLE_STANDALONE" && isStandaloneSurface()) {
+    if (isOpen) {
+      dismissSurface();
+    } else {
+      openOverlay();
+    }
   }
 });
 

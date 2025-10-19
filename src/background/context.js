@@ -57,19 +57,43 @@ export function createBackgroundContext({ buildIndex }) {
 
   async function sendToggleMessage() {
     let activeTab = null;
-    clearFallbackSurface();
     try {
       [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     } catch (err) {
       console.warn("Spotlight: unable to query active tab", err);
     }
 
+    const fallback = state.fallbackSurface;
+
     if (activeTab && activeTab.id !== undefined) {
       try {
         await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+        clearFallbackSurface();
         return;
       } catch (err) {
         console.warn("Spotlight: unable to toggle overlay", err);
+      }
+
+      if (
+        fallback &&
+        fallback.type === "tab" &&
+        typeof fallback.tabId === "number" &&
+        fallback.tabId === activeTab.id
+      ) {
+        try {
+          await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ type: "SPOTLIGHT_TOGGLE_STANDALONE" }, () => {
+              if (chrome.runtime.lastError) {
+                reject(chrome.runtime.lastError);
+                return;
+              }
+              resolve();
+            });
+          });
+          return;
+        } catch (err) {
+          console.warn("Spotlight: unable to toggle standalone surface", err);
+        }
       }
     }
 
@@ -77,37 +101,45 @@ export function createBackgroundContext({ buildIndex }) {
   }
 
   async function openFallbackSurface(activeTab) {
-    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : undefined;
-    const tabId = typeof activeTab?.id === "number" ? activeTab.id : undefined;
+    const fallback = state.fallbackSurface;
+    const fallbackTabId =
+      fallback && fallback.type === "tab" && typeof fallback.tabId === "number"
+        ? fallback.tabId
+        : null;
 
-    if (chrome.sidePanel?.open) {
-      if (chrome.sidePanel.setOptions && tabId !== undefined) {
-        try {
-          await chrome.sidePanel.setOptions({ tabId, path: "panel.html", enabled: true });
-        } catch (err) {
-          console.warn("Spotlight: failed to configure side panel", err);
+    if (fallbackTabId !== null) {
+      try {
+        const existingTab = await chrome.tabs.get(fallbackTabId);
+        const targetWindowId = existingTab?.windowId;
+        await chrome.tabs.update(fallbackTabId, { active: true });
+        if (typeof targetWindowId === "number") {
+          await chrome.windows.update(targetWindowId, { focused: true });
         }
-      }
-      try {
-        await chrome.sidePanel.open(windowId !== undefined ? { windowId } : {});
-        setFallbackSurface({ type: "side-panel", tabId, windowId });
         return;
       } catch (err) {
-        console.warn("Spotlight: failed to open side panel", err);
+        console.warn("Spotlight: existing fallback tab unavailable", err);
+        clearFallbackSurface();
       }
     }
 
-    if (chrome.action?.openPopup) {
-      try {
-        await chrome.action.openPopup();
-        setFallbackSurface({ type: "action-popup" });
-        return;
-      } catch (err) {
-        console.warn("Spotlight: failed to open action popup", err);
-      }
+    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : undefined;
+    const url = chrome.runtime.getURL("panel.html");
+    const createProperties = { url, active: true };
+    if (typeof windowId === "number") {
+      createProperties.windowId = windowId;
     }
 
-    clearFallbackSurface();
+    try {
+      const createdTab = await chrome.tabs.create(createProperties);
+      if (createdTab && typeof createdTab.id === "number") {
+        setFallbackSurface({ type: "tab", tabId: createdTab.id });
+      } else {
+        clearFallbackSurface();
+      }
+    } catch (err) {
+      console.warn("Spotlight: failed to open fallback tab", err);
+      clearFallbackSurface();
+    }
   }
 
   async function closeFallbackSurface() {
@@ -116,24 +148,13 @@ export function createBackgroundContext({ buildIndex }) {
       return false;
     }
 
-    if (surface.type === "side-panel") {
-      if (chrome.sidePanel?.setOptions) {
-        const tabId = surface.tabId;
-        const windowId = surface.windowId;
-        try {
-          if (typeof tabId === "number") {
-            await chrome.sidePanel.setOptions({ tabId, enabled: false });
-            clearFallbackSurface();
-            return true;
-          }
-          if (typeof windowId === "number") {
-            await chrome.sidePanel.setOptions({ windowId, enabled: false });
-            clearFallbackSurface();
-            return true;
-          }
-        } catch (err) {
-          console.warn("Spotlight: failed to close side panel", err);
-        }
+    if (surface.type === "tab" && typeof surface.tabId === "number") {
+      try {
+        await chrome.tabs.remove(surface.tabId);
+        clearFallbackSurface();
+        return true;
+      } catch (err) {
+        console.warn("Spotlight: failed to close fallback tab", err);
       }
     }
 

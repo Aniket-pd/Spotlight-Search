@@ -11,8 +11,7 @@
     "scripting",
     "webNavigation",
     "downloads",
-    "topSites",
-    "sidePanel"
+    "topSites"
   ],
   "host_permissions": ["file:///*"],
   "background": {
@@ -42,9 +41,6 @@
       "run_at": "document_idle"
     }
   ],
-  "side_panel": {
-    "default_path": "panel.html"
-  },
   "web_accessible_resources": [
     {
       "resources": ["src/content/styles.css"],
@@ -52,7 +48,6 @@
     }
   ],
   "action": {
-    "default_title": "Spotlight for Chrome",
-    "default_popup": "panel.html"
+    "default_title": "Spotlight for Chrome"
   }
 }

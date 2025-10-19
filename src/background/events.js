@@ -1,26 +1,10 @@
 export function registerLifecycleEvents(context) {
-  if (chrome.sidePanel?.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((err) => {
-      console.warn("Spotlight: unable to configure side panel behavior", err);
-    });
-  }
-
   chrome.runtime.onInstalled.addListener(() => {
     context.rebuildIndex();
-    if (chrome.sidePanel?.setPanelBehavior) {
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((err) => {
-        console.warn("Spotlight: unable to configure side panel behavior", err);
-      });
-    }
   });
 
   chrome.runtime.onStartup.addListener(() => {
     context.rebuildIndex();
-    if (chrome.sidePanel?.setPanelBehavior) {
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((err) => {
-        console.warn("Spotlight: unable to configure side panel behavior", err);
-      });
-    }
   });
 }
 
