@@ -106,7 +106,6 @@ async function indexTopSites(indexMap, termBuckets, items) {
       visitCount,
       origin: extractOrigin(entry.url),
       description: hostname || entry.url,
-      iconHint: "topSite",
     };
     items.push(item);
 
