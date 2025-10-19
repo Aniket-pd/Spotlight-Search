@@ -683,6 +683,8 @@ function handleInputChange() {
   }
   setStatus("", { force: true });
   setGhostText("");
+  activeIndex = -1;
+  updateActiveResult();
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
   }
