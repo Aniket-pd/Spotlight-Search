@@ -1,3 +1,30 @@
+:host,
+:host(.spotlight-overlay-host) {
+  all: initial;
+}
+
+:host *,
+:host *::before,
+:host *::after {
+  box-sizing: border-box;
+  font-family: inherit;
+  color: inherit;
+}
+
+:host button,
+:host input,
+:host textarea,
+:host select {
+  font: inherit;
+  color: inherit;
+}
+
+:host button {
+  cursor: pointer;
+}
+
+:host,
+:host(.spotlight-overlay-host),
 #spotlight-overlay,
 .spotlight-overlay {
   position: fixed;

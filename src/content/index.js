@@ -5,6 +5,7 @@ const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
 let overlayEl = null;
+let overlayRoot = null;
 let containerEl = null;
 let inputEl = null;
 let resultsEl = null;
@@ -124,8 +125,30 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 function createOverlay() {
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
-  overlayEl.className = "spotlight-overlay";
+  overlayEl.className = "spotlight-overlay-host";
   overlayEl.setAttribute("role", "presentation");
+
+  overlayRoot = overlayEl.attachShadow({ mode: "open" });
+
+  const resetStyle = document.createElement("style");
+  resetStyle.textContent = `
+    :host,
+    :host(.spotlight-overlay-host) {
+      color: #f5f5f5;
+    }
+    :host *,
+    :host *::before,
+    :host *::after {
+      margin: 0;
+      padding: 0;
+    }
+  `;
+  overlayRoot.appendChild(resetStyle);
+
+  const styleLink = document.createElement("link");
+  styleLink.rel = "stylesheet";
+  styleLink.href = chrome.runtime.getURL("src/content/styles.css");
+  overlayRoot.appendChild(styleLink);
 
   containerEl = document.createElement("div");
   containerEl.className = "spotlight-shell";
@@ -185,7 +208,7 @@ function createOverlay() {
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
-  overlayEl.appendChild(containerEl);
+  overlayRoot.appendChild(containerEl);
 
   renderSubfilters();
 
@@ -547,12 +570,18 @@ function openOverlay() {
   activeIndex = -1;
   resultsState = [];
   lazyList.reset();
-  statusEl.textContent = "";
+  if (statusEl) {
+    statusEl.textContent = "";
+  }
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
-  resultsEl.innerHTML = "";
-  inputEl.value = "";
+  if (resultsEl) {
+    resultsEl.innerHTML = "";
+  }
+  if (inputEl) {
+    inputEl.value = "";
+  }
   setGhostText("");
   resetSlashMenuState();
   pointerNavigationSuspended = true;
@@ -563,6 +592,9 @@ function openOverlay() {
   document.body.appendChild(overlayEl);
   requestResults("");
   setTimeout(() => {
+    if (!inputEl) {
+      return;
+    }
     inputEl.focus({ preventScroll: true });
     inputEl.select();
   }, 10);
@@ -1645,3 +1677,24 @@ chrome.runtime.onMessage.addListener((message) => {
     openOverlay();
   }
 });
+
+function isStandaloneSurface() {
+  const body = document.body;
+  if (!body || !body.dataset) {
+    return false;
+  }
+  return body.dataset.spotlightStandalone === "true";
+}
+
+function bootstrapStandaloneSurface() {
+  if (!isStandaloneSurface()) {
+    return;
+  }
+  openOverlay();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootstrapStandaloneSurface, { once: true });
+} else {
+  bootstrapStandaloneSurface();
+}

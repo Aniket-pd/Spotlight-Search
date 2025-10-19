@@ -43,13 +43,48 @@ export function createBackgroundContext({ buildIndex }) {
   }
 
   async function sendToggleMessage() {
+    let activeTab = null;
     try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.id !== undefined) {
-        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
-      }
+      [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     } catch (err) {
-      console.warn("Spotlight: unable to toggle overlay", err);
+      console.warn("Spotlight: unable to query active tab", err);
+    }
+
+    if (activeTab && activeTab.id !== undefined) {
+      try {
+        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+        return;
+      } catch (err) {
+        console.warn("Spotlight: unable to toggle overlay", err);
+      }
+    }
+
+    await openFallbackSurface(activeTab || null);
+  }
+
+  async function openFallbackSurface(activeTab) {
+    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : undefined;
+
+    if (chrome.sidePanel?.open) {
+      if (chrome.sidePanel.setOptions && activeTab?.id !== undefined) {
+        try {
+          await chrome.sidePanel.setOptions({ tabId: activeTab.id, path: "panel.html", enabled: true });
+        } catch (err) {
+          console.warn("Spotlight: failed to configure side panel", err);
+        }
+      }
+      try {
+        await chrome.sidePanel.open(windowId !== undefined ? { windowId } : {});
+        return;
+      } catch (err) {
+        console.warn("Spotlight: failed to open side panel", err);
+      }
+    }
+
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("panel.html") });
+    } catch (err) {
+      console.error("Spotlight: failed to open fallback page", err);
     }
   }
 

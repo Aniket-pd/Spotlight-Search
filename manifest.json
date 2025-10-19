@@ -11,7 +11,8 @@
     "scripting",
     "webNavigation",
     "downloads",
-    "topSites"
+    "topSites",
+    "sidePanel"
   ],
   "host_permissions": ["file:///*"],
   "background": {
@@ -39,6 +40,15 @@
       "js": ["src/content/index.js"],
       "css": ["src/content/styles.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/styles.css"],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {
