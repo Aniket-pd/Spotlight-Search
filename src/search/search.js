@@ -15,6 +15,10 @@ const BASE_TYPE_SCORES = {
   topSite: 5,
 };
 
+const MATCHED_TOKEN_BONUS = 4.5;
+const FULL_TOKEN_MATCH_BONUS = 5.5;
+const MISSING_TOKEN_PENALTY = 6;
+
 function getResultLimit(filterType) {
   if (filterType === "history") {
     return HISTORY_MAX_RESULTS;
@@ -687,9 +691,21 @@ function isFuzzyMatch(term, queryToken) {
   return mismatches <= 1;
 }
 
-function applyMatches(entry, multiplier, scores) {
+function applyMatches(entry, multiplier, scores, token, tokenMatches) {
+  if (!entry) {
+    return;
+  }
   for (const [itemId, weight] of entry.entries()) {
     scores.set(itemId, (scores.get(itemId) || 0) + weight * multiplier);
+    if (!token || !tokenMatches) {
+      continue;
+    }
+    let matched = tokenMatches.get(itemId);
+    if (!matched) {
+      matched = new Set();
+      tokenMatches.set(itemId, matched);
+    }
+    matched.add(token);
   }
 }
 
@@ -1368,16 +1384,19 @@ export function runSearch(query, data, options = {}) {
   }
 
   const tokens = tokenize(trimmed);
+  const uniqueTokens = Array.from(new Set(tokens));
+  const totalTokens = uniqueTokens.length;
   if (tokens.length === 0) {
     return { results: [], ghost: null, answer: "", filter: filterType };
   }
 
   const scores = new Map();
+  const tokenMatches = new Map();
 
   for (const token of tokens) {
     const exactEntry = index.get(token);
     if (exactEntry) {
-      applyMatches(exactEntry, EXACT_BOOST, scores);
+      applyMatches(exactEntry, EXACT_BOOST, scores, token, tokenMatches);
     }
 
     const candidates = collectCandidateTerms(token, termBuckets);
@@ -1387,9 +1406,9 @@ export function runSearch(query, data, options = {}) {
       if (!entry) continue;
 
       if (term.startsWith(token) && term !== token) {
-        applyMatches(entry, PREFIX_BOOST, scores);
+        applyMatches(entry, PREFIX_BOOST, scores, token, tokenMatches);
       } else if (isFuzzyMatch(term, token) && term !== token) {
-        applyMatches(entry, FUZZY_BOOST, scores);
+        applyMatches(entry, FUZZY_BOOST, scores, token, tokenMatches);
       }
     }
   }
@@ -1407,6 +1426,21 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    if (totalTokens > 0) {
+      const matchedSet = tokenMatches.get(itemId);
+      const matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
+      if (matchedCount > 0) {
+        finalScore += matchedCount * MATCHED_TOKEN_BONUS;
+        if (matchedCount === totalTokens) {
+          finalScore += FULL_TOKEN_MATCH_BONUS;
+        } else {
+          const missingCount = totalTokens - matchedCount;
+          finalScore -= missingCount * MISSING_TOKEN_PENALTY;
+        }
+      } else {
+        finalScore -= totalTokens * MISSING_TOKEN_PENALTY;
+      }
+    }
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
