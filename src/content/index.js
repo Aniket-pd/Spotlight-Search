@@ -1,9 +1,13 @@
 const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
+const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+let shadowHostEl = null;
+let shadowRootEl = null;
+let shadowContentEl = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -121,7 +125,30 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .filter(Boolean),
 }));
 
+function ensureShadowRoot() {
+  if (shadowRootEl && shadowContentEl) {
+    return shadowRootEl;
+  }
+
+  shadowHostEl = document.createElement("div");
+  shadowHostEl.id = SHADOW_HOST_ID;
+  shadowRootEl = shadowHostEl.attachShadow({ mode: "open" });
+
+  const styleLink = document.createElement("link");
+  styleLink.rel = "stylesheet";
+  styleLink.href = chrome.runtime.getURL("src/content/styles.css");
+  shadowRootEl.appendChild(styleLink);
+
+  shadowContentEl = document.createElement("div");
+  shadowContentEl.className = "spotlight-root";
+  shadowRootEl.appendChild(shadowContentEl);
+
+  return shadowRootEl;
+}
+
 function createOverlay() {
+  ensureShadowRoot();
+
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
   overlayEl.className = "spotlight-overlay";
@@ -186,6 +213,10 @@ function createOverlay() {
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
+
+  if (shadowContentEl && !shadowContentEl.contains(overlayEl)) {
+    shadowContentEl.appendChild(overlayEl);
+  }
 
   renderSubfilters();
 
@@ -557,10 +588,13 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
+  if (shadowHostEl && !shadowHostEl.parentElement) {
+    document.body.appendChild(shadowHostEl);
+  }
+
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
 
-  document.body.appendChild(overlayEl);
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -572,8 +606,8 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
+  if (shadowHostEl && shadowHostEl.parentElement) {
+    shadowHostEl.parentElement.removeChild(shadowHostEl);
   }
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
