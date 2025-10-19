@@ -180,9 +180,18 @@ export function createBackgroundContext({ buildIndex }) {
         clearFallbackSurface();
       }
     } else if (fallback && fallback.type === "sidePanel") {
+      let fallbackTab = null;
+      if (typeof fallback.tabId === "number") {
+        try {
+          fallbackTab = await chrome.tabs.get(fallback.tabId);
+        } catch (err) {
+          console.warn("Spotlight: cached side panel tab unavailable", err);
+          fallbackTab = null;
+        }
+      }
       const windowHint =
         typeof fallback.windowId === "number" ? fallback.windowId : activeWindowId;
-      const reopened = await openSidePanelSurface(windowHint);
+      const reopened = await openSidePanelSurface(fallbackTab || activeTab || null, windowHint);
       if (reopened) {
         return;
       }
@@ -190,7 +199,7 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     if (preferSidePanel) {
-      const openedPanel = await openSidePanelSurface(activeWindowId);
+      const openedPanel = await openSidePanelSurface(activeTab || null, activeWindowId);
       if (openedPanel) {
         return;
       }
@@ -202,7 +211,7 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     if (!preferSidePanel) {
-      await openSidePanelSurface(activeWindowId);
+      await openSidePanelSurface(activeTab || null, activeWindowId);
     }
   }
 
@@ -245,17 +254,22 @@ export function createBackgroundContext({ buildIndex }) {
     return null;
   }
 
-  async function openSidePanelSurface(windowIdHint) {
+  async function openSidePanelSurface(tab, windowIdHint) {
     if (!chrome.sidePanel || typeof chrome.sidePanel.open !== "function") {
       return false;
     }
 
     await ensureSidePanelBehaviorConfigured();
 
-    const targetWindowId = await resolveWindowId(windowIdHint);
+    const tabId = typeof tab?.id === "number" ? tab.id : null;
+    const tabWindowId = typeof tab?.windowId === "number" ? tab.windowId : null;
+    const targetWindowId =
+      typeof tabWindowId === "number" ? tabWindowId : await resolveWindowId(windowIdHint);
 
     const options = { path: "popup.html", enabled: true };
-    if (typeof targetWindowId === "number") {
+    if (tabId !== null) {
+      options.tabId = tabId;
+    } else if (typeof targetWindowId === "number") {
       options.windowId = targetWindowId;
     }
 
@@ -268,7 +282,9 @@ export function createBackgroundContext({ buildIndex }) {
     }
 
     const openOptions = {};
-    if (typeof targetWindowId === "number") {
+    if (tabId !== null) {
+      openOptions.tabId = tabId;
+    } else if (typeof targetWindowId === "number") {
       openOptions.windowId = targetWindowId;
     }
 
@@ -276,6 +292,7 @@ export function createBackgroundContext({ buildIndex }) {
       await chrome.sidePanel.open(openOptions);
       setFallbackSurface({
         type: "sidePanel",
+        tabId,
         windowId: typeof targetWindowId === "number" ? targetWindowId : null,
       });
       return true;
@@ -305,9 +322,12 @@ export function createBackgroundContext({ buildIndex }) {
 
     if (surface.type === "sidePanel") {
       if (chrome.sidePanel) {
+        const tabId = typeof surface.tabId === "number" ? surface.tabId : null;
         const windowId = typeof surface.windowId === "number" ? surface.windowId : null;
         try {
-          if (typeof chrome.sidePanel.hide === "function") {
+          if (tabId !== null && typeof chrome.sidePanel.setOptions === "function") {
+            await chrome.sidePanel.setOptions({ tabId, enabled: false });
+          } else if (typeof chrome.sidePanel.hide === "function") {
             const hideOptions = {};
             if (windowId !== null) {
               hideOptions.windowId = windowId;
