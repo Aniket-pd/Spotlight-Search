@@ -12,6 +12,7 @@ const BASE_TYPE_SCORES = {
   bookmark: 4,
   history: 2,
   download: 3,
+  topSite: 5,
 };
 
 function getResultLimit(filterType) {
@@ -41,6 +42,7 @@ const FILTER_ALIASES = {
   download: ["download:", "downloads:", "dl:", "d:"],
   back: ["back:"],
   forward: ["forward:"],
+  topSite: ["topsites:", "topsite:", "top-sites:", "ts:"],
 };
 
 const NAVIGATION_FILTERS = new Set(["back", "forward"]);
@@ -488,6 +490,97 @@ function compareDownloadItems(a, b) {
   return aTitle.localeCompare(bTitle);
 }
 
+function sortTopSiteItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items
+    .slice()
+    .sort((a, b) => {
+      const aVisits = typeof a?.visitCount === "number" ? a.visitCount : 0;
+      const bVisits = typeof b?.visitCount === "number" ? b.visitCount : 0;
+      if (bVisits !== aVisits) {
+        return bVisits - aVisits;
+      }
+      const aTitle = (a && a.title) || "";
+      const bTitle = (b && b.title) || "";
+      if (aTitle && bTitle) {
+        const diff = aTitle.localeCompare(bTitle);
+        if (diff !== 0) {
+          return diff;
+        }
+      }
+      const aUrl = (a && a.url) || "";
+      const bUrl = (b && b.url) || "";
+      return aUrl.localeCompare(bUrl);
+    });
+}
+
+function computeTopSiteScore(item, rank = 0) {
+  const visits = typeof item?.visitCount === "number" && Number.isFinite(item.visitCount) ? item.visitCount : 0;
+  const visitBoost = Math.log1p(Math.max(visits, 0)) * 2.2;
+  const rankPenalty = Math.max(rank, 0) * 0.05;
+  return (BASE_TYPE_SCORES.topSite || 0) + visitBoost - rankPenalty;
+}
+
+function interleaveTopSiteResults(primaryResults, topSiteResults, limit) {
+  const normalizedLimit = Number.isFinite(limit)
+    ? limit
+    : (Array.isArray(primaryResults) ? primaryResults.length : 0) + (Array.isArray(topSiteResults) ? topSiteResults.length : 0);
+
+  const baseList = Array.isArray(primaryResults) ? primaryResults.slice() : [];
+  const topList = Array.isArray(topSiteResults) ? topSiteResults.slice() : [];
+
+  if (!normalizedLimit) {
+    return [];
+  }
+
+  if (!topList.length) {
+    return baseList.slice(0, normalizedLimit);
+  }
+
+  if (!baseList.length) {
+    return topList.slice(0, normalizedLimit);
+  }
+
+  const allowedTopSites = Math.min(topList.length, Math.max(1, Math.round(normalizedLimit / 3)));
+  const nonTopSlots = Math.max(normalizedLimit - allowedTopSites, 0);
+  const interval = allowedTopSites ? Math.max(1, Math.round(nonTopSlots / allowedTopSites)) : nonTopSlots || 1;
+
+  const merged = [];
+  let primaryIndex = 0;
+  let topIndex = 0;
+  let insertedTop = 0;
+
+  while (merged.length < normalizedLimit && (primaryIndex < baseList.length || insertedTop < allowedTopSites)) {
+    let remainingPrimaryToTake = interval;
+    while (remainingPrimaryToTake > 0 && merged.length < normalizedLimit && primaryIndex < baseList.length) {
+      merged.push(baseList[primaryIndex++]);
+      remainingPrimaryToTake -= 1;
+    }
+
+    if (merged.length >= normalizedLimit) {
+      break;
+    }
+
+    if (insertedTop < allowedTopSites && topIndex < topList.length) {
+      merged.push(topList[topIndex++]);
+      insertedTop += 1;
+    }
+  }
+
+  while (merged.length < normalizedLimit && primaryIndex < baseList.length) {
+    merged.push(baseList[primaryIndex++]);
+  }
+
+  while (merged.length < normalizedLimit && insertedTop < allowedTopSites && topIndex < topList.length) {
+    merged.push(topList[topIndex++]);
+    insertedTop += 1;
+  }
+
+  return merged.slice(0, normalizedLimit);
+}
+
 function buildResultFromItem(item, scoreValue) {
   if (!item) {
     return null;
@@ -510,6 +603,9 @@ function buildResultFromItem(item, scoreValue) {
   }
   if (item.iconHint) {
     result.iconHint = item.iconHint;
+  }
+  if (typeof item.visitCount === "number" && Number.isFinite(item.visitCount)) {
+    result.visitCount = item.visitCount;
   }
   if (typeof item.lastVisitTime === "number") {
     result.lastVisitTime = item.lastVisitTime;
@@ -1162,6 +1258,7 @@ export function runSearch(query, data, options = {}) {
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
   const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
+  const topSiteItems = items.filter((item) => item.type === "topSite");
   const historyBoundaries = computeHistoryBoundaries(Date.now());
   const availableSubfilters = buildSubfilterOptions(filterType, {
     tabs,
@@ -1208,6 +1305,8 @@ export function runSearch(query, data, options = {}) {
       });
     } else if (filterType === "download") {
       defaultItems.sort((a, b) => compareDownloadItems(a, b));
+    } else if (filterType === "topSite") {
+      defaultItems = sortTopSiteItems(defaultItems);
     } else {
       defaultItems.sort((a, b) => {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
@@ -1218,7 +1317,46 @@ export function runSearch(query, data, options = {}) {
         return aTitle.localeCompare(bTitle);
       });
     }
+
     const limit = getResultLimit(filterType);
+
+    if (filterType === "topSite") {
+      const limitedItems = sliceResultsForLimit(defaultItems, limit);
+      return {
+        results: limitedItems
+          .map((item, index) => buildResultFromItem(item, computeTopSiteScore(item, index)))
+          .filter(Boolean),
+        ghost: null,
+        answer: "",
+        filter: filterType,
+        subfilters: subfilterPayload,
+      };
+    }
+
+    if (!filterType) {
+      const sortedTopSites = sortTopSiteItems(topSiteItems);
+      const topSiteCap = sortedTopSites.length
+        ? Math.min(sortedTopSites.length, Math.max(1, Math.round(limit / 3)))
+        : 0;
+      const topSiteSelection = sortedTopSites.slice(0, topSiteCap);
+      const baseLimit = Number.isFinite(limit) ? limit + topSiteSelection.length : defaultItems.length;
+      const baseResults = defaultItems
+        .slice(0, baseLimit)
+        .map((item) => buildResultFromItem(item))
+        .filter(Boolean);
+      const topSiteResults = topSiteSelection
+        .map((item, index) => buildResultFromItem(item, computeTopSiteScore(item, index)))
+        .filter(Boolean);
+      const merged = interleaveTopSiteResults(baseResults, topSiteResults, limit);
+      return {
+        results: merged,
+        ghost: null,
+        answer: "",
+        filter: filterType,
+        subfilters: subfilterPayload,
+      };
+    }
+
     const limitedItems = sliceResultsForLimit(defaultItems, limit);
     return {
       results: limitedItems.map((item) => buildResultFromItem(item)).filter(Boolean),

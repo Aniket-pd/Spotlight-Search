@@ -967,6 +967,15 @@ function renderResults() {
     type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
+    if (result.type === "topSite") {
+      const visitLabel = formatVisitCount(result.visitCount);
+      if (visitLabel) {
+        const visitChip = document.createElement("span");
+        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+        visitChip.textContent = visitLabel;
+        meta.appendChild(visitChip);
+      }
+    }
     if (timestampLabel) {
       const timestampEl = document.createElement("span");
       timestampEl.className = "spotlight-result-timestamp";
@@ -1036,6 +1045,8 @@ function getFilterStatusLabel(type) {
       return "back history";
     case "forward":
       return "forward history";
+    case "topSite":
+      return "top sites";
     default:
       return "";
   }
@@ -1115,6 +1126,8 @@ function formatTypeLabel(type, result) {
         return "Forward";
       }
       return "Back";
+    case "topSite":
+      return "Top Site";
     default:
       return type || "";
   }
@@ -1152,6 +1165,26 @@ function formatResultTimestamp(result) {
     return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   } catch (err) {
     return date.toLocaleString();
+  }
+}
+
+function formatVisitCount(count) {
+  const visits = typeof count === "number" && Number.isFinite(count) ? count : 0;
+  if (visits <= 0) {
+    return "";
+  }
+  if (visits === 1) {
+    return "1 visit";
+  }
+  try {
+    const formatter = new Intl.NumberFormat(undefined, {
+      notation: visits >= 1000 ? "compact" : "standard",
+      maximumFractionDigits: 1,
+    });
+    const formatted = formatter.format(visits);
+    return `${formatted} visits`;
+  } catch (err) {
+    return `${visits} visits`;
   }
 }
 
