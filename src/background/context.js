@@ -42,15 +42,79 @@ export function createBackgroundContext({ buildIndex }) {
     }, delay);
   }
 
-  async function sendToggleMessage() {
+  async function resolveWindowId(fallbackWindowId) {
+    if (typeof fallbackWindowId === "number") {
+      return fallbackWindowId;
+    }
     try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.id !== undefined) {
-        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+      const currentWindow = await chrome.windows.getCurrent?.();
+      if (currentWindow && typeof currentWindow.id === "number") {
+        return currentWindow.id;
       }
     } catch (err) {
-      console.warn("Spotlight: unable to toggle overlay", err);
+      console.warn("Spotlight: unable to resolve current window", err);
     }
+    return undefined;
+  }
+
+  async function openStandaloneUi(preferredWindowId) {
+    const windowId = await resolveWindowId(preferredWindowId);
+    const sidePanel = chrome.sidePanel;
+    if (sidePanel?.setOptions && sidePanel?.open) {
+      try {
+        const setOptions = {
+          enabled: true,
+          path: "src/panel/index.html",
+        };
+        if (typeof windowId === "number") {
+          setOptions.windowId = windowId;
+        }
+        await sidePanel.setOptions(setOptions);
+        const openOptions = {};
+        if (typeof windowId === "number") {
+          openOptions.windowId = windowId;
+        }
+        await sidePanel.open(openOptions);
+        return true;
+      } catch (err) {
+        console.warn("Spotlight: unable to open side panel", err);
+      }
+    }
+
+    if (chrome.action?.openPopup) {
+      try {
+        await chrome.action.openPopup();
+        return true;
+      } catch (err) {
+        console.warn("Spotlight: unable to open action popup", err);
+      }
+    }
+
+    const fallbackUrl = chrome.runtime.getURL("src/panel/index.html");
+    try {
+      await chrome.tabs.create({ url: fallbackUrl });
+      return true;
+    } catch (err) {
+      console.warn("Spotlight: unable to open fallback page", err);
+    }
+    return false;
+  }
+
+  async function sendToggleMessage() {
+    let activeTab;
+    try {
+      [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTab && activeTab.id !== undefined) {
+        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+        return;
+      }
+    } catch (err) {
+      if (!chrome.runtime.lastError) {
+        console.warn("Spotlight: unable to toggle overlay", err);
+      }
+    }
+
+    await openStandaloneUi(activeTab?.windowId);
   }
 
   async function openItem(itemId) {
@@ -118,5 +182,6 @@ export function createBackgroundContext({ buildIndex }) {
     openItem,
     getItemById,
     faviconCache,
+    openStandaloneUi,
   };
 }

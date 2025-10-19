@@ -18,6 +18,9 @@
     "service_worker": "src/background/index.js",
     "type": "module"
   },
+  "side_panel": {
+    "default_path": "src/panel/index.html"
+  },
   "commands": {
     "open-launcher": {
       "suggested_key": {
@@ -42,6 +45,7 @@
     }
   ],
   "action": {
-    "default_title": "Spotlight for Chrome"
+    "default_title": "Spotlight for Chrome",
+    "default_popup": "src/panel/index.html"
   }
 }

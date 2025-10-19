@@ -1,10 +1,20 @@
-const OVERLAY_ID = "spotlight-overlay";
-const RESULTS_LIST_ID = "spotlight-results-list";
-const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
+const OVERLAY_ID = "sp-overlay";
+const OVERLAY_HOST_ID = "sp-overlay-host";
+const RESULTS_LIST_ID = "sp-results-list";
+const RESULT_OPTION_ID_PREFIX = "sp-option-";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+const ENVIRONMENT =
+  typeof window !== "undefined" && typeof window.__SPOTLIGHT_ENV__ === "string"
+    ? window.__SPOTLIGHT_ENV__
+    : window.location.protocol === "chrome-extension:" || window.location.origin.startsWith("chrome-extension://")
+    ? "panel"
+    : "content";
+const IS_CONTENT_ENV = ENVIRONMENT === "content";
 let overlayEl = null;
+let overlayHostEl = null;
+let overlayRoot = null;
 let containerEl = null;
 let inputEl = null;
 let resultsEl = null;
@@ -30,6 +40,8 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 let pointerNavigationSuspended = false;
+const styledRoots = new WeakSet();
+let stylesPromise = null;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -68,7 +80,7 @@ const PLACEHOLDER_COLORS = [
   "#FBBF24",
 ];
 
-const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
+const SLASH_OPTION_ID_PREFIX = "sp-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
   {
     id: "slash-tab",
@@ -121,29 +133,133 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .filter(Boolean),
 }));
 
+function getDocumentRoot() {
+  return document.documentElement || document.body || document;
+}
+
+function ensureStyles(targetRoot) {
+  if (!targetRoot || styledRoots.has(targetRoot)) {
+    return;
+  }
+  if (!stylesPromise) {
+    const url = chrome.runtime.getURL("src/content/styles.css");
+    stylesPromise = fetch(url)
+      .then((response) => (response.ok ? response.text() : ""))
+      .catch((err) => {
+        console.error("Spotlight: unable to load styles", err);
+        return "";
+      });
+  }
+  stylesPromise.then((cssText) => {
+    if (!cssText || styledRoots.has(targetRoot)) {
+      return;
+    }
+    const styleEl = document.createElement("style");
+    styleEl.textContent = cssText;
+    targetRoot.appendChild(styleEl);
+    styledRoots.add(targetRoot);
+  });
+}
+
+function ensureOverlayRoot() {
+  if (!IS_CONTENT_ENV) {
+    ensureStyles(document.head || getDocumentRoot());
+    overlayRoot = document.body;
+    return overlayRoot;
+  }
+
+  if (overlayRoot && overlayHostEl && overlayHostEl.isConnected) {
+    return overlayRoot;
+  }
+
+  overlayHostEl = document.getElementById(OVERLAY_HOST_ID);
+  if (!overlayHostEl) {
+    overlayHostEl = document.createElement("div");
+    overlayHostEl.id = OVERLAY_HOST_ID;
+    overlayHostEl.style.all = "initial";
+    overlayHostEl.setAttribute("data-sp-overlay", "");
+    overlayHostEl.style.position = "fixed";
+    overlayHostEl.style.inset = "0";
+    overlayHostEl.style.zIndex = "2147483647";
+    overlayHostEl.style.pointerEvents = "none";
+    overlayHostEl.style.display = "none";
+    overlayHostEl.style.opacity = "0";
+    overlayHostEl.style.transition = "opacity 120ms ease";
+    const root = getDocumentRoot();
+    root.appendChild(overlayHostEl);
+  }
+
+  overlayRoot = overlayHostEl.shadowRoot;
+  if (!overlayRoot) {
+    overlayRoot = overlayHostEl.attachShadow({ mode: "open" });
+  }
+  ensureStyles(overlayRoot);
+  return overlayRoot;
+}
+
+function setOverlayVisibility(visible) {
+  if (IS_CONTENT_ENV) {
+    if (!overlayHostEl) {
+      return;
+    }
+    if (visible) {
+      overlayHostEl.style.display = "block";
+      overlayHostEl.style.pointerEvents = "auto";
+      requestAnimationFrame(() => {
+        if (overlayHostEl) {
+          overlayHostEl.style.opacity = "1";
+        }
+      });
+    } else {
+      overlayHostEl.style.pointerEvents = "none";
+      overlayHostEl.style.opacity = "0";
+      setTimeout(() => {
+        if (overlayHostEl && !isOpen) {
+          overlayHostEl.style.display = "none";
+        }
+      }, 150);
+    }
+  } else if (overlayEl) {
+    overlayEl.classList.toggle("sp-overlay-hidden", !visible);
+  }
+}
+
 function createOverlay() {
+  if (overlayEl) {
+    return;
+  }
+
+  const root = ensureOverlayRoot();
+  if (!root) {
+    console.warn("Spotlight: unable to create overlay root");
+    return;
+  }
+
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
-  overlayEl.className = "spotlight-overlay";
+  overlayEl.className = "sp-overlay";
+  if (!IS_CONTENT_ENV) {
+    overlayEl.classList.add("sp-overlay-hidden");
+  }
   overlayEl.setAttribute("role", "presentation");
 
   containerEl = document.createElement("div");
-  containerEl.className = "spotlight-shell";
+  containerEl.className = "sp-shell";
   containerEl.setAttribute("role", "dialog");
   containerEl.setAttribute("aria-modal", "true");
 
   const inputWrapper = document.createElement("div");
-  inputWrapper.className = "spotlight-input-wrapper";
+  inputWrapper.className = "sp-input-wrapper";
   inputContainerEl = document.createElement("div");
-  inputContainerEl.className = "spotlight-input-container";
+  inputContainerEl.className = "sp-input-container";
 
   ghostEl = document.createElement("div");
-  ghostEl.className = "spotlight-ghost";
+  ghostEl.className = "sp-ghost";
   ghostEl.textContent = "";
   inputContainerEl.appendChild(ghostEl);
 
   inputEl = document.createElement("input");
-  inputEl.className = "spotlight-input";
+  inputEl.className = "sp-input";
   inputEl.type = "text";
   inputEl.setAttribute("placeholder", "Search tabs, bookmarks, history, downloads… (try \"tab:\")");
   inputEl.setAttribute("spellcheck", "false");
@@ -153,7 +269,7 @@ function createOverlay() {
   inputContainerEl.appendChild(inputEl);
 
   slashMenuEl = document.createElement("div");
-  slashMenuEl.className = "spotlight-slash-menu";
+  slashMenuEl.className = "sp-slash-menu";
   slashMenuEl.setAttribute("role", "listbox");
   slashMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(slashMenuEl);
@@ -161,22 +277,22 @@ function createOverlay() {
   inputWrapper.appendChild(inputContainerEl);
 
   subfilterContainerEl = document.createElement("div");
-  subfilterContainerEl.className = "spotlight-subfilters";
+  subfilterContainerEl.className = "sp-subfilters";
   subfilterContainerEl.setAttribute("role", "group");
   subfilterContainerEl.setAttribute("aria-label", "Subfilters");
   subfilterScrollerEl = document.createElement("div");
-  subfilterScrollerEl.className = "spotlight-subfilters-scroll";
+  subfilterScrollerEl.className = "sp-subfilters-scroll";
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
 
   statusEl = document.createElement("div");
-  statusEl.className = "spotlight-status";
+  statusEl.className = "sp-status";
   statusEl.textContent = "";
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
   resultsEl = document.createElement("ul");
-  resultsEl.className = "spotlight-results";
+  resultsEl.className = "sp-results";
   resultsEl.setAttribute("role", "listbox");
   resultsEl.id = RESULTS_LIST_ID;
   inputEl.setAttribute("aria-controls", RESULTS_LIST_ID);
@@ -186,6 +302,12 @@ function createOverlay() {
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
+
+  if (root instanceof ShadowRoot) {
+    root.appendChild(overlayEl);
+  } else {
+    root.appendChild(overlayEl);
+  }
 
   renderSubfilters();
 
@@ -285,7 +407,7 @@ function renderSlashMenu() {
   slashMenuOptions.forEach((option, index) => {
     const optionId = `${SLASH_OPTION_ID_PREFIX}${option.id}`;
     const item = document.createElement("div");
-    item.className = "spotlight-slash-option";
+    item.className = "sp-slash-option";
     item.id = optionId;
     item.setAttribute("role", "option");
     if (index === slashMenuActiveIndex) {
@@ -293,13 +415,13 @@ function renderSlashMenu() {
       slashMenuEl.setAttribute("aria-activedescendant", optionId);
     }
     const label = document.createElement("div");
-    label.className = "spotlight-slash-option-label";
+    label.className = "sp-slash-option-label";
     label.textContent = option.label;
     item.appendChild(label);
 
     if (option.hint) {
       const hint = document.createElement("div");
-      hint.className = "spotlight-slash-option-hint";
+      hint.className = "sp-slash-option-hint";
       hint.textContent = option.hint;
       item.appendChild(hint);
     }
@@ -471,18 +593,18 @@ function renderSubfilters() {
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "spotlight-subfilter";
+    button.className = "sp-subfilter";
     button.dataset.id = option.id;
     button.title = option.hint || option.label;
 
     const labelSpan = document.createElement("span");
-    labelSpan.className = "spotlight-subfilter-label";
+    labelSpan.className = "sp-subfilter-label";
     labelSpan.textContent = option.label;
     button.appendChild(labelSpan);
 
     if (typeof option.count === "number" && option.count > 0) {
       const countSpan = document.createElement("span");
-      countSpan.className = "spotlight-subfilter-count";
+      countSpan.className = "sp-subfilter-count";
       countSpan.textContent = String(option.count);
       button.appendChild(countSpan);
     }
@@ -543,6 +665,10 @@ function openOverlay() {
     createOverlay();
   }
 
+  if (!overlayEl) {
+    return;
+  }
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -557,10 +683,15 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
-  bodyOverflowBackup = document.body.style.overflow;
-  document.body.style.overflow = "hidden";
+  if (IS_CONTENT_ENV) {
+    const body = document.body;
+    if (body) {
+      bodyOverflowBackup = body.style.overflow;
+      body.style.overflow = "hidden";
+    }
+  }
 
-  document.body.appendChild(overlayEl);
+  setOverlayVisibility(true);
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -572,10 +703,13 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
+  setOverlayVisibility(false);
+  if (IS_CONTENT_ENV) {
+    const body = document.body;
+    if (body) {
+      body.style.overflow = bodyOverflowBackup;
+    }
   }
-  document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
@@ -859,7 +993,7 @@ function handleResultsPointerMove(event) {
   if (!target || typeof target.closest !== "function") {
     return;
   }
-  const item = target.closest("li.spotlight-result[role='option']");
+  const item = target.closest("li.sp-result[role='option']");
   if (!item || !resultsEl.contains(item)) {
     return;
   }
@@ -937,7 +1071,7 @@ function renderResults() {
 
   if (inputEl.value.trim() === "> reindex") {
     const li = document.createElement("li");
-    li.className = "spotlight-result reindex";
+    li.className = "sp-result reindex";
     li.textContent = "Press Enter to rebuild the search index";
     resultsEl.appendChild(li);
     if (inputEl) {
@@ -948,7 +1082,7 @@ function renderResults() {
 
   if (!resultsState.length) {
     const li = document.createElement("li");
-    li.className = "spotlight-result empty";
+    li.className = "sp-result empty";
     const scopeLabel = getFilterStatusLabel(activeFilter);
     const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
     li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
@@ -973,7 +1107,7 @@ function renderResults() {
     }
     const displayIndex = index;
     const li = document.createElement("li");
-    li.className = "spotlight-result";
+    li.className = "sp-result";
     li.setAttribute("role", "option");
     li.id = `${RESULT_OPTION_ID_PREFIX}${displayIndex}`;
     li.dataset.resultId = String(result.id);
@@ -991,17 +1125,17 @@ function renderResults() {
     }
 
     const body = document.createElement("div");
-    body.className = "spotlight-result-content";
+    body.className = "sp-result-content";
 
     const title = document.createElement("div");
-    title.className = "spotlight-result-title";
+    title.className = "sp-result-title";
     title.textContent = result.title || result.url;
 
     const meta = document.createElement("div");
-    meta.className = "spotlight-result-meta";
+    meta.className = "sp-result-meta";
 
     const url = document.createElement("span");
-    url.className = "spotlight-result-url";
+    url.className = "sp-result-url";
     url.textContent = result.description || result.url || "";
     if (url.textContent) {
       url.title = url.textContent;
@@ -1010,7 +1144,7 @@ function renderResults() {
     const timestampLabel = formatResultTimestamp(result);
 
     const type = document.createElement("span");
-    type.className = `spotlight-result-type type-${result.type}`;
+    type.className = `sp-result-type type-${result.type}`;
     type.textContent = formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
@@ -1018,14 +1152,14 @@ function renderResults() {
       const visitLabel = formatVisitCount(result.visitCount);
       if (visitLabel) {
         const visitChip = document.createElement("span");
-        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+        visitChip.className = "sp-result-tag sp-result-tag-topsite";
         visitChip.textContent = visitLabel;
         meta.appendChild(visitChip);
       }
     }
     if (timestampLabel) {
       const timestampEl = document.createElement("span");
-      timestampEl.className = "spotlight-result-timestamp";
+      timestampEl.className = "sp-result-timestamp";
       timestampEl.textContent = timestampLabel;
       timestampEl.title = timestampLabel;
       meta.appendChild(timestampEl);
@@ -1034,7 +1168,7 @@ function renderResults() {
       const stateLabel = formatDownloadStateLabel(result.state);
       if (stateLabel) {
         const stateChip = document.createElement("span");
-        stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
+        stateChip.className = `sp-result-tag ${getDownloadStateClassName(result.state)}`;
         stateChip.textContent = stateLabel;
         meta.appendChild(stateChip);
       }
@@ -1059,7 +1193,7 @@ function renderResults() {
     });
 
     if (result.type === "command") {
-      li.classList.add("spotlight-result-command");
+      li.classList.add("sp-result-command");
     }
 
     resultsEl.appendChild(li);
@@ -1412,7 +1546,7 @@ function computePlaceholderColor(origin) {
 
 function createPlaceholderElement(result) {
   const placeholder = document.createElement("div");
-  placeholder.className = "spotlight-result-placeholder";
+  placeholder.className = "sp-result-placeholder";
   const origin = getResultOrigin(result);
   const initial = getPlaceholderInitial(result);
   if (initial) {
@@ -1420,7 +1554,7 @@ function createPlaceholderElement(result) {
     placeholder.classList.add("has-initial");
   } else {
     const fallback = document.createElement("img");
-    fallback.className = "spotlight-result-placeholder-img";
+    fallback.className = "sp-result-placeholder-img";
     fallback.src = DEFAULT_ICON_URL;
     fallback.alt = "";
     fallback.referrerPolicy = "no-referrer";
@@ -1433,7 +1567,7 @@ function createPlaceholderElement(result) {
 
 function createIconImage(src) {
   const image = document.createElement("img");
-  image.className = "spotlight-result-icon-img";
+  image.className = "sp-result-icon-img";
   image.src = src;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
@@ -1442,9 +1576,9 @@ function createIconImage(src) {
 
 function createIconElement(result) {
   const wrapper = document.createElement("div");
-  wrapper.className = "spotlight-result-icon";
+  wrapper.className = "sp-result-icon";
   if (result && result.iconHint === "download") {
-    wrapper.classList.add("spotlight-result-icon-download");
+    wrapper.classList.add("sp-result-icon-download");
     wrapper.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
     return wrapper;
   }
@@ -1615,7 +1749,7 @@ function applyIconToResults(origin, faviconUrl) {
     if ((itemEl.dataset.origin || "") !== normalizedOrigin) {
       return;
     }
-    const iconContainer = itemEl.querySelector(".spotlight-result-icon");
+    const iconContainer = itemEl.querySelector(".sp-result-icon");
     if (!iconContainer) {
       return;
     }
@@ -1623,7 +1757,7 @@ function applyIconToResults(origin, faviconUrl) {
     const resultId = itemEl.dataset.resultId;
     const result = resultsState.find((entry) => String(entry?.id) === String(resultId));
     if (result && result.iconHint === "download") {
-      iconContainer.classList.add("spotlight-result-icon-download");
+      iconContainer.classList.add("sp-result-icon-download");
       iconContainer.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
       return;
     }
@@ -1645,3 +1779,20 @@ chrome.runtime.onMessage.addListener((message) => {
     openOverlay();
   }
 });
+
+function bootstrapEnvironment() {
+  if (IS_CONTENT_ENV) {
+    ensureOverlayRoot();
+    return;
+  }
+  createOverlay();
+  openOverlay();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootstrapEnvironment, {
+    once: true,
+  });
+} else {
+  bootstrapEnvironment();
+}
