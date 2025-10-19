@@ -73,6 +73,22 @@ export function createBackgroundContext({ buildIndex }) {
       return;
     }
 
+    if (item.type === "download" && typeof item.downloadId === "number") {
+      try {
+        if (item.state === "complete") {
+          await chrome.downloads.open(item.downloadId);
+        }
+      } catch (err) {
+        console.warn("Spotlight: failed to open download", err);
+      }
+      try {
+        await chrome.downloads.show(item.downloadId);
+      } catch (err) {
+        console.warn("Spotlight: failed to reveal download", err);
+      }
+      return;
+    }
+
     await chrome.tabs.create({ url: item.url });
   }
 

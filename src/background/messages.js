@@ -4,6 +4,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  downloads,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -103,6 +104,21 @@ export function registerMessageHandlers({
         .then(() => sendResponse({ success: true }))
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
+          sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_DOWNLOAD_ACTION") {
+      if (!downloads || typeof downloads.handleAction !== "function") {
+        sendResponse({ success: false, error: "Download service unavailable" });
+        return true;
+      }
+      downloads
+        .handleAction(message.action, message.downloadId)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error("Spotlight: download action failed", err);
           sendResponse({ success: false, error: err?.message });
         });
       return true;

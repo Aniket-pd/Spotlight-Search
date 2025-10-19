@@ -10,6 +10,7 @@ const COMMAND_SCORE = Number.POSITIVE_INFINITY;
 const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
+  download: 3,
   history: 2,
 };
 
@@ -37,6 +38,7 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  download: ["download:", "downloads:", "d:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -234,7 +236,39 @@ function buildBookmarkSubfilters(bookmarks) {
   return options;
 }
 
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
+function buildDownloadSubfilters(downloads) {
+  const counters = {
+    all: 0,
+    completed: 0,
+    inProgress: 0,
+    paused: 0,
+    interrupted: 0,
+  };
+
+  for (const download of downloads || []) {
+    counters.all += 1;
+    const state = download?.state || "";
+    if (state === "complete") {
+      counters.completed += 1;
+    } else if (state === "in_progress") {
+      counters.inProgress += 1;
+      if (download?.paused) {
+        counters.paused += 1;
+      }
+    } else {
+      counters.interrupted += 1;
+    }
+  }
+
+  const options = [{ id: "all", label: "All Downloads", count: counters.all }];
+  options.push({ id: "completed", label: "Completed", count: counters.completed });
+  options.push({ id: "in-progress", label: "In Progress", count: counters.inProgress });
+  options.push({ id: "paused", label: "Paused", count: counters.paused });
+  options.push({ id: "canceled", label: "Canceled", count: counters.interrupted });
+  return options;
+}
+
+function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [], downloads = [] } = {}) {
   if (!filterType) {
     return [];
   }
@@ -246,6 +280,9 @@ function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
   }
   if (filterType === "bookmark") {
     return buildBookmarkSubfilters(bookmarks);
+  }
+  if (filterType === "download") {
+    return buildDownloadSubfilters(downloads);
   }
   return [];
 }
@@ -310,6 +347,21 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
     return key === itemKey;
   }
 
+  if (filterType === "download") {
+    if (subfilterId === "completed") {
+      return item?.state === "complete";
+    }
+    if (subfilterId === "in-progress") {
+      return item?.state === "in_progress";
+    }
+    if (subfilterId === "paused") {
+      return item?.state === "in_progress" && Boolean(item?.paused);
+    }
+    if (subfilterId === "canceled") {
+      return item?.state !== "complete" && item?.state !== "in_progress";
+    }
+  }
+
   return true;
 }
 
@@ -359,7 +411,13 @@ function formatTabCount(count) {
 
 function computeRecencyBoost(item) {
   const now = Date.now();
-  const timestamp = item.lastAccessed || item.lastVisitTime || item.dateAdded || 0;
+  const timestamp =
+    item.lastAccessed ||
+    item.lastVisitTime ||
+    item.dateAdded ||
+    item.completedAt ||
+    item.createdAt ||
+    0;
   if (!timestamp) return 0;
   const hours = Math.max(0, (now - timestamp) / 36e5);
   if (hours < 1) return 2;
@@ -368,23 +426,97 @@ function computeRecencyBoost(item) {
   return 0.1;
 }
 
+function getDownloadSortPriority(download) {
+  if (!download) {
+    return 3;
+  }
+  if (download.state === "in_progress") {
+    if (download.paused) {
+      return 1;
+    }
+    return 0;
+  }
+  if (download.state === "complete") {
+    return 2;
+  }
+  return 3;
+}
+
+function getDownloadSortTimestamp(download) {
+  if (!download) {
+    return 0;
+  }
+  if (typeof download.completedAt === "number") {
+    return download.completedAt;
+  }
+  if (typeof download.endTime === "number") {
+    return download.endTime;
+  }
+  if (typeof download.createdAt === "number") {
+    return download.createdAt;
+  }
+  if (typeof download.startTime === "number") {
+    return download.startTime;
+  }
+  return 0;
+}
+
 function buildResultFromItem(item, scoreValue) {
   if (!item) {
     return null;
+  }
+  let computedScore;
+  if (typeof scoreValue === "number") {
+    computedScore = scoreValue;
+  } else {
+    const base = BASE_TYPE_SCORES[item.type] || 0;
+    if (item.type === "download") {
+      let stateBoost = 0;
+      if (item.state === "complete") {
+        stateBoost = 1.6;
+      } else if (item.state === "in_progress") {
+        stateBoost = 1.2;
+      } else if (item.state) {
+        stateBoost = -0.4;
+      }
+      computedScore = base + stateBoost + computeRecencyBoost(item);
+    } else {
+      computedScore = base + computeRecencyBoost(item);
+    }
   }
   const result = {
     id: item.id,
     title: item.title,
     url: item.url,
     type: item.type,
-    score:
-      typeof scoreValue === "number"
-        ? scoreValue
-        : (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item),
+    score: computedScore,
     faviconUrl: item.faviconUrl || null,
     origin: item.origin || "",
     tabId: item.tabId,
   };
+  if (item.type === "download") {
+    result.downloadId = item.downloadId;
+    result.fileUrl = item.fileUrl || item.url || "";
+    result.sourceUrl = item.url || item.fileUrl || "";
+    result.url = item.filePath || item.fileUrl || item.url || "";
+    result.filename = item.filename;
+    result.filePath = item.filePath;
+    result.folderPath = item.folderPath;
+    result.extension = item.extension;
+    result.state = item.state;
+    result.danger = item.danger;
+    result.bytesReceived = item.bytesReceived;
+    result.totalBytes = item.totalBytes;
+    result.progress = item.progress;
+    result.paused = Boolean(item.paused);
+    result.canResume = Boolean(item.canResume);
+    result.exists = item.exists;
+    result.mime = item.mime;
+    result.completedAt = item.completedAt;
+    result.startTime = item.startTime;
+    result.endTime = item.endTime;
+    result.estimatedEndTime = item.estimatedEndTime;
+  }
   if (typeof item.lastVisitTime === "number") {
     result.lastVisitTime = item.lastVisitTime;
   }
@@ -396,6 +528,9 @@ function buildResultFromItem(item, scoreValue) {
   }
   if (typeof item.createdAt === "number") {
     result.createdAt = item.createdAt;
+  }
+  if (typeof item.completedAt === "number") {
+    result.completedAt = item.completedAt;
   }
   return result;
 }
@@ -481,6 +616,18 @@ function compareResults(a, b) {
   if (a?.type === "history" && b?.type === "history") {
     const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
     const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+  }
+
+  if (a?.type === "download" && b?.type === "download") {
+    const priorityDelta = getDownloadSortPriority(a) - getDownloadSortPriority(b);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    const aTime = getDownloadSortTimestamp(a);
+    const bTime = getDownloadSortTimestamp(b);
     if (bTime !== aTime) {
       return bTime - aTime;
     }
@@ -827,6 +974,10 @@ function collectGhostCandidates(result) {
 
   appendCandidate(candidates, seen, result.title);
   appendCandidate(candidates, seen, result.url);
+  if (result.type === "download") {
+    appendCandidate(candidates, seen, result.filename);
+    appendCandidate(candidates, seen, result.filePath);
+  }
 
   if (result.url) {
     try {
@@ -1003,9 +1154,14 @@ export function runSearch(query, data, options = {}) {
   }
 
   const tabs = items.filter((item) => item.type === "tab");
-  const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
+  const bookmarkItems = items.filter((item) => item.type === "bookmark");
+  const downloadItems = items.filter((item) => item.type === "download");
   const historyBoundaries = computeHistoryBoundaries(Date.now());
-  const availableSubfilters = buildSubfilterOptions(filterType, { tabs, bookmarks: bookmarkItems });
+  const availableSubfilters = buildSubfilterOptions(filterType, {
+    tabs,
+    bookmarks: bookmarkItems,
+    downloads: downloadItems,
+  });
   const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
@@ -1038,6 +1194,21 @@ export function runSearch(query, data, options = {}) {
         const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
         const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
         if (bScore !== aScore) return bScore - aScore;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
+    } else if (filterType === "download") {
+      defaultItems.sort((a, b) => {
+        const priority = getDownloadSortPriority(a) - getDownloadSortPriority(b);
+        if (priority !== 0) {
+          return priority;
+        }
+        const aTime = getDownloadSortTimestamp(a);
+        const bTime = getDownloadSortTimestamp(b);
+        if (bTime !== aTime) {
+          return bTime - aTime;
+        }
         const aTitle = a.title || "";
         const bTitle = b.title || "";
         return aTitle.localeCompare(bTitle);
@@ -1103,6 +1274,15 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    if (item.type === "download") {
+      if (item.state === "complete") {
+        finalScore += 1.6;
+      } else if (item.state === "in_progress") {
+        finalScore += 1.2;
+      } else if (item.state) {
+        finalScore -= 0.4;
+      }
+    }
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }

@@ -65,6 +65,16 @@ const PLACEHOLDER_COLORS = [
   "#FBBF24",
 ];
 
+const DOWNLOAD_PORT_NAME = "downloads-stream";
+const DOWNLOAD_UPDATE_INTERVAL = 180;
+const DOWNLOAD_ICON_URL = chrome.runtime.getURL("icons/download.svg");
+
+const downloadState = new Map();
+const downloadDomRefs = new Map();
+const downloadUpdateQueue = new Map();
+let downloadFlushTimer = null;
+let downloadsPort = null;
+
 const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
   {
@@ -80,6 +90,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Search saved bookmarks",
     value: "bookmark:",
     keywords: ["bookmark", "bookmarks", "bm", "saved"],
+  },
+  {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Monitor recent downloads",
+    value: "download:",
+    keywords: ["download", "downloads", "files", "d"],
   },
   {
     id: "slash-history",
@@ -208,6 +225,120 @@ function resetSlashMenuState() {
     slashMenuEl.classList.remove("visible");
     slashMenuEl.setAttribute("aria-hidden", "true");
     slashMenuEl.removeAttribute("aria-activedescendant");
+  }
+}
+
+function mergeDownloadPayload(download = {}, metrics = {}) {
+  const merged = { ...download };
+  if (typeof metrics.progress === "number" && Number.isFinite(metrics.progress)) {
+    merged.progress = metrics.progress;
+  }
+  if (typeof metrics.speed === "number" && Number.isFinite(metrics.speed)) {
+    merged.speed = metrics.speed;
+  }
+  if (typeof metrics.eta === "number" && Number.isFinite(metrics.eta)) {
+    merged.eta = metrics.eta;
+  } else if (metrics.eta === null) {
+    merged.eta = null;
+  }
+  return merged;
+}
+
+function queueDownloadUpdate(message) {
+  if (!message || !message.download) {
+    return;
+  }
+  const downloadId = message.download.downloadId;
+  if (typeof downloadId !== "number") {
+    return;
+  }
+  downloadUpdateQueue.set(downloadId, message);
+  if (!downloadFlushTimer) {
+    downloadFlushTimer = setTimeout(() => {
+      downloadFlushTimer = null;
+      const pending = Array.from(downloadUpdateQueue.values());
+      downloadUpdateQueue.clear();
+      pending.forEach((update) => {
+        applyDownloadUpdate(update);
+      });
+    }, DOWNLOAD_UPDATE_INTERVAL);
+  }
+}
+
+function handleDownloadRemoved(downloadId) {
+  if (typeof downloadId !== "number") {
+    return;
+  }
+  downloadState.delete(downloadId);
+  resultsState.forEach((result) => {
+    if (result && result.type === "download" && result.downloadId === downloadId) {
+      result.exists = false;
+      if (result.state !== "complete") {
+        result.state = "interrupted";
+      }
+      result.progress = null;
+      result.speed = 0;
+      result.eta = null;
+    }
+  });
+  updateDownloadRow(downloadId);
+}
+
+function handleDownloadPortMessage(message) {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  if (message.type === "download-snapshot" && Array.isArray(message.downloads)) {
+    message.downloads.forEach((entry) => {
+      if (!entry || !entry.download || typeof entry.download.downloadId !== "number") {
+        return;
+      }
+      const merged = mergeDownloadPayload(entry.download, entry.metrics || {});
+      merged.timestamp = entry.timestamp || Date.now();
+      downloadState.set(entry.download.downloadId, merged);
+    });
+    applyDownloadStateToResults();
+    syncDownloadDom();
+    return;
+  }
+  if (message.type === "download-update") {
+    queueDownloadUpdate(message);
+    return;
+  }
+  if (message.type === "download-removed") {
+    handleDownloadRemoved(message.downloadId);
+  }
+}
+
+function connectDownloadStream() {
+  if (downloadsPort) {
+    return;
+  }
+  try {
+    downloadsPort = chrome.runtime.connect({ name: DOWNLOAD_PORT_NAME });
+  } catch (err) {
+    console.warn("Spotlight: unable to connect to downloads stream", err);
+    return;
+  }
+  downloadsPort.onMessage.addListener(handleDownloadPortMessage);
+  downloadsPort.onDisconnect.addListener(() => {
+    downloadsPort = null;
+  });
+}
+
+function disconnectDownloadStream() {
+  if (downloadFlushTimer) {
+    clearTimeout(downloadFlushTimer);
+    downloadFlushTimer = null;
+  }
+  downloadUpdateQueue.clear();
+  if (downloadsPort) {
+    try {
+      downloadsPort.disconnect();
+    } catch (err) {
+      // ignore
+    }
+    downloadsPort = null;
   }
 }
 
@@ -532,6 +663,8 @@ function openOverlay() {
     createOverlay();
   }
 
+  connectDownloadStream();
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -541,6 +674,7 @@ function openOverlay() {
   activeFilter = null;
   resetSubfilterState();
   resultsEl.innerHTML = "";
+  downloadDomRefs.clear();
   inputEl.value = "";
   setGhostText("");
   resetSlashMenuState();
@@ -560,6 +694,7 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
+  disconnectDownloadStream();
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
@@ -575,6 +710,7 @@ function closeOverlay() {
   resetSlashMenuState();
   resultsState = [];
   lazyList.reset();
+  downloadDomRefs.clear();
   if (resultsEl) {
     resultsEl.innerHTML = "";
   }
@@ -703,6 +839,7 @@ function requestResults(query) {
         return;
       }
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+      applyDownloadStateToResults();
       lazyList.setItems(resultsState);
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
@@ -946,9 +1083,13 @@ function renderResults() {
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
-    if (url.textContent) {
-      url.title = url.textContent;
+    const urlLabel = formatResultUrlText(result);
+    if (urlLabel) {
+      url.textContent = urlLabel;
+      url.title = urlLabel;
+    } else {
+      url.textContent = "";
+      url.removeAttribute("title");
     }
 
     const timestampLabel = formatResultTimestamp(result);
@@ -971,6 +1112,23 @@ function renderResults() {
     body.appendChild(meta);
     li.appendChild(body);
 
+    if (result.type === "download" && typeof result.downloadId === "number") {
+      li.classList.add("spotlight-result-download");
+      const extras = createDownloadDetails(result);
+      body.appendChild(extras.container);
+      downloadDomRefs.set(result.downloadId, {
+        index: displayIndex,
+        li,
+        progressBar: extras.progressBar,
+        progressWrapper: extras.progressWrapper,
+        statusLabel: extras.statusLabel,
+        metricsLabel: extras.metricsLabel,
+        actionsContainer: extras.actionsContainer,
+        urlEl: url,
+      });
+      applyDownloadStateToDom(result.downloadId);
+    }
+
     li.addEventListener("pointerover", () => {
       if (activeIndex !== displayIndex) {
         activeIndex = displayIndex;
@@ -984,7 +1142,10 @@ function renderResults() {
       event.preventDefault();
     });
 
-    li.addEventListener("click", () => {
+    li.addEventListener("click", (event) => {
+      if (event.target && event.target.closest && event.target.closest(".spotlight-download-action")) {
+        return;
+      }
       const target = resultsState[displayIndex] || result;
       openResult(target);
     });
@@ -1012,6 +1173,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -1045,6 +1208,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1061,7 +1226,15 @@ function getResultTimestamp(result) {
   if (!result || typeof result !== "object") {
     return null;
   }
-  const candidates = [result.lastVisitTime, result.lastAccessed, result.dateAdded, result.createdAt];
+  const candidates = [
+    result.lastVisitTime,
+    result.lastAccessed,
+    result.dateAdded,
+    result.completedAt,
+    result.createdAt,
+    result.endTime,
+    result.startTime,
+  ];
   for (const value of candidates) {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       return value;
@@ -1084,6 +1257,312 @@ function formatResultTimestamp(result) {
   } catch (err) {
     return date.toLocaleString();
   }
+}
+
+function formatResultUrlText(result) {
+  if (!result || typeof result !== "object") {
+    return "";
+  }
+  if (result.type === "download") {
+    if (result.filePath) {
+      return result.filePath;
+    }
+    if (result.folderPath) {
+      return result.folderPath;
+    }
+    if (result.sourceUrl) {
+      return result.sourceUrl;
+    }
+  }
+  if (typeof result.description === "string" && result.description) {
+    return result.description;
+  }
+  if (typeof result.url === "string" && result.url) {
+    return result.url;
+  }
+  if (typeof result.origin === "string" && result.origin) {
+    return result.origin;
+  }
+  return "";
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return "";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const fixed = unitIndex === 0 || value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+  const display = unitIndex === 0 ? fixed : fixed.toFixed(value >= 10 ? 0 : 1);
+  return `${display} ${units[unitIndex]}`;
+}
+
+function formatDownloadSpeed(speed) {
+  if (!Number.isFinite(speed) || speed <= 0) {
+    return "";
+  }
+  return `${formatBytes(speed)}/s`;
+}
+
+function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  const totalSeconds = Math.ceil(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return mins ? `${hours}h ${mins}m left` : `${hours}h left`;
+  }
+  if (minutes > 0) {
+    return secs ? `${minutes}m ${secs}s left` : `${minutes}m left`;
+  }
+  return `${secs}s left`;
+}
+
+function formatDownloadStatus(result) {
+  if (!result) {
+    return "Download";
+  }
+  if (result.exists === false) {
+    return "Removed";
+  }
+  switch (result.state) {
+    case "complete":
+      return "Completed";
+    case "in_progress":
+      return result.paused ? "Paused" : "Downloading";
+    case "interrupted":
+      return "Canceled";
+    default:
+      return toTitleCase(result.state || "Download");
+  }
+}
+
+function buildDownloadMetricsLabel(result) {
+  if (!result) {
+    return "";
+  }
+  const parts = [];
+  const received = Number.isFinite(result.bytesReceived) ? formatBytes(result.bytesReceived) : "";
+  const total = Number.isFinite(result.totalBytes) && result.totalBytes > 0 ? formatBytes(result.totalBytes) : "";
+  if (result.state === "complete") {
+    if (total) {
+      parts.push(total);
+    } else if (received) {
+      parts.push(received);
+    }
+  } else if (received) {
+    const sizeLabel = total ? `${received} of ${total}` : received;
+    parts.push(sizeLabel);
+  }
+  const speedLabel = formatDownloadSpeed(result.speed);
+  if (speedLabel) {
+    parts.push(speedLabel);
+  }
+  const etaLabel = formatEta(result.eta);
+  if (etaLabel) {
+    parts.push(etaLabel);
+  }
+  return parts.join(" · ");
+}
+
+function createDownloadDetails(result) {
+  const container = document.createElement("div");
+  container.className = "spotlight-download-details";
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "spotlight-download-status-row";
+
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "spotlight-download-status";
+  statusLabel.textContent = formatDownloadStatus(result);
+
+  const metricsLabel = document.createElement("span");
+  metricsLabel.className = "spotlight-download-metrics";
+  metricsLabel.textContent = buildDownloadMetricsLabel(result);
+
+  statusRow.appendChild(statusLabel);
+  statusRow.appendChild(metricsLabel);
+
+  const progressWrapper = document.createElement("div");
+  progressWrapper.className = "spotlight-download-progress";
+  const progressBar = document.createElement("div");
+  progressBar.className = "spotlight-download-progress-bar";
+  progressWrapper.appendChild(progressBar);
+
+  const actionsContainer = document.createElement("div");
+  actionsContainer.className = "spotlight-download-actions";
+
+  container.appendChild(statusRow);
+  container.appendChild(progressWrapper);
+  container.appendChild(actionsContainer);
+
+  return { container, statusLabel, metricsLabel, progressBar, progressWrapper, actionsContainer };
+}
+
+function triggerDownloadAction(downloadId, action) {
+  if (typeof downloadId !== "number" || !action) {
+    return;
+  }
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_DOWNLOAD_ACTION", downloadId, action }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.warn("Spotlight download action error", chrome.runtime.lastError);
+      return;
+    }
+    if (!response || !response.success) {
+      const errorMessage = (response && response.error) || "Unable to update download";
+      console.warn("Spotlight download action failed", errorMessage);
+    }
+  });
+}
+
+function updateDownloadActions(container, state) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  if (!state || typeof state.downloadId !== "number") {
+    container.style.display = "none";
+    return;
+  }
+  const actions = [];
+  if (state.state === "in_progress") {
+    if (state.paused) {
+      actions.push({ label: "Resume", action: "resume" });
+    } else {
+      actions.push({ label: "Pause", action: "pause" });
+    }
+    actions.push({ label: "Cancel", action: "cancel" });
+  } else if (state.state === "complete") {
+    actions.push({ label: "Open", action: "open" });
+    actions.push({ label: "Show in Folder", action: "show" });
+  } else if (state.exists !== false) {
+    actions.push({ label: "Show in Folder", action: "show" });
+  }
+
+  actions.forEach((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-download-action";
+    button.textContent = entry.label;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      triggerDownloadAction(state.downloadId, entry.action);
+    });
+    container.appendChild(button);
+  });
+
+  container.style.display = actions.length ? "" : "none";
+}
+
+function applyDownloadStateToResults() {
+  if (!Array.isArray(resultsState)) {
+    return;
+  }
+  resultsState.forEach((result) => {
+    if (!result || result.type !== "download" || typeof result.downloadId !== "number") {
+      return;
+    }
+    const state = downloadState.get(result.downloadId);
+    if (state) {
+      Object.assign(result, state);
+    }
+  });
+}
+
+function applyDownloadUpdate(message) {
+  if (!message || !message.download || typeof message.download.downloadId !== "number") {
+    return;
+  }
+  const downloadId = message.download.downloadId;
+  const previous = downloadState.get(downloadId) || {};
+  const mergedBase = { ...previous, ...message.download };
+  const merged = mergeDownloadPayload(mergedBase, message.metrics || {});
+  merged.timestamp = message.timestamp || Date.now();
+  downloadState.set(downloadId, merged);
+  resultsState.forEach((result) => {
+    if (result && result.type === "download" && result.downloadId === downloadId) {
+      Object.assign(result, merged);
+    }
+  });
+  updateDownloadRow(downloadId);
+}
+
+function updateDownloadRow(downloadId) {
+  const ref = downloadDomRefs.get(downloadId);
+  if (!ref) {
+    return;
+  }
+  const state = downloadState.get(downloadId) || resultsState[ref.index] || null;
+  if (!state) {
+    if (ref.actionsContainer) {
+      ref.actionsContainer.style.display = "none";
+    }
+    if (ref.progressWrapper) {
+      ref.progressWrapper.style.display = "none";
+    }
+    return;
+  }
+  if (ref.statusLabel) {
+    ref.statusLabel.textContent = formatDownloadStatus(state);
+  }
+  if (ref.metricsLabel) {
+    ref.metricsLabel.textContent = buildDownloadMetricsLabel(state);
+  }
+  if (ref.progressWrapper && ref.progressBar) {
+    const progress = Number.isFinite(state.progress) ? Math.max(0, Math.min(1, state.progress)) : null;
+    if (progress === null) {
+      ref.progressWrapper.style.display = "none";
+      ref.progressBar.style.width = "0%";
+    } else {
+      ref.progressWrapper.style.display = "";
+      const percent = Math.max(0, Math.min(100, progress * 100));
+      ref.progressBar.style.width = percent >= 100 ? "100%" : `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
+    }
+  }
+  updateDownloadActions(ref.actionsContainer, state);
+  if (ref.urlEl) {
+    const label = formatResultUrlText(state);
+    ref.urlEl.textContent = label;
+    if (label) {
+      ref.urlEl.title = label;
+    } else {
+      ref.urlEl.removeAttribute("title");
+    }
+  }
+  if (ref.li) {
+    ref.li.classList.toggle("download-state-complete", state.state === "complete");
+    ref.li.classList.toggle("download-state-active", state.state === "in_progress" && !state.paused);
+    ref.li.classList.toggle("download-state-paused", state.state === "in_progress" && Boolean(state.paused));
+    ref.li.classList.toggle("download-state-error", state.exists === false || state.state === "interrupted");
+  }
+}
+
+function syncDownloadDom() {
+  downloadDomRefs.forEach((_, downloadId) => {
+    updateDownloadRow(downloadId);
+  });
+}
+
+function applyDownloadStateToDom(downloadId) {
+  if (!downloadState.has(downloadId)) {
+    const ref = downloadDomRefs.get(downloadId);
+    if (ref) {
+      const result = resultsState[ref.index];
+      if (result && result.type === "download") {
+        downloadState.set(downloadId, { ...result });
+      }
+    }
+  }
+  updateDownloadRow(downloadId);
 }
 
 function scheduleIdleWork(callback) {
@@ -1299,6 +1778,11 @@ function createIconImage(src) {
 function createIconElement(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
+  if (result && result.type === "download") {
+    wrapper.classList.add("download-icon");
+    wrapper.appendChild(createIconImage(DOWNLOAD_ICON_URL));
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1326,7 +1810,7 @@ function applyCachedFavicons(results) {
 }
 
 function shouldRequestFavicon(result) {
-  if (!result || result.type === "command") {
+  if (!result || result.type === "command" || result.type === "download") {
     return false;
   }
   const origin = getResultOrigin(result);

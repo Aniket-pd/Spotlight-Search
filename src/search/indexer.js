@@ -1,6 +1,9 @@
+import { normalizeDownloadItem, DOWNLOAD_INDEX_LIMIT } from "./downloads.js";
+
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+const DOWNLOAD_WEIGHT = 3;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -170,6 +173,59 @@ async function indexHistory(indexMap, termBuckets, items) {
   }
 }
 
+async function indexDownloads(indexMap, termBuckets, items) {
+  const downloads = await chrome.downloads.search({ limit: DOWNLOAD_INDEX_LIMIT, orderBy: ["-startTime"] });
+  for (const entry of downloads) {
+    const normalized = normalizeDownloadItem(entry);
+    if (!normalized) {
+      continue;
+    }
+
+    const itemId = items.length;
+    const downloadItem = {
+      id: itemId,
+      type: "download",
+      title: normalized.title,
+      url: normalized.fileUrl || normalized.url || "",
+      downloadId: normalized.downloadId,
+      fileUrl: normalized.fileUrl,
+      filename: normalized.filename,
+      filePath: normalized.filePath,
+      folderPath: normalized.folderPath,
+      extension: normalized.extension,
+      state: normalized.state,
+      danger: normalized.danger,
+      createdAt: normalized.createdAt,
+      completedAt: normalized.completedAt,
+      bytesReceived: normalized.bytesReceived,
+      totalBytes: normalized.totalBytes,
+      progress: normalized.progress,
+      paused: normalized.paused,
+      canResume: normalized.canResume,
+      exists: normalized.exists,
+      mime: normalized.mime,
+      origin: normalized.origin,
+      referrer: normalized.referrer,
+      byExtensionName: normalized.byExtensionName,
+      byExtensionId: normalized.byExtensionId,
+      startTime: normalized.startTime,
+      endTime: normalized.endTime,
+      estimatedEndTime: normalized.estimatedEndTime,
+    };
+
+    items.push(downloadItem);
+
+    addToIndex(indexMap, termBuckets, itemId, normalized.title, DOWNLOAD_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, normalized.filename, DOWNLOAD_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, normalized.filePath, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, normalized.url, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, normalized.extension, URL_WEIGHT);
+    if (normalized.origin) {
+      addToIndex(indexMap, termBuckets, itemId, normalized.origin, URL_WEIGHT);
+    }
+  }
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -179,6 +235,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -192,6 +249,7 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
   };
 
   return {
