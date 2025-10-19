@@ -27,12 +27,14 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+let downloadRefreshTimer = null;
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const DOWNLOAD_ICON_URL = chrome.runtime.getURL("icons/download.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
   "#7DD3FC",
@@ -70,6 +72,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Browse recent history",
     value: "history:",
     keywords: ["history", "hist", "recent", "visited"],
+  },
+  {
+    id: "slash-download",
+    label: "Downloads",
+    hint: "Search recent downloads",
+    value: "download:",
+    keywords: ["download", "downloads", "dl", "files"],
   },
   {
     id: "slash-back",
@@ -540,6 +549,7 @@ function openOverlay() {
 function closeOverlay() {
   if (!isOpen) return;
 
+  stopDownloadRefreshTimer();
   isOpen = false;
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
@@ -852,6 +862,7 @@ function renderResults() {
     if (inputEl) {
       inputEl.removeAttribute("aria-activedescendant");
     }
+    stopDownloadRefreshTimer();
     return;
   }
 
@@ -865,6 +876,7 @@ function renderResults() {
     if (inputEl) {
       inputEl.removeAttribute("aria-activedescendant");
     }
+    stopDownloadRefreshTimer();
     return;
   }
 
@@ -874,11 +886,16 @@ function renderResults() {
     li.setAttribute("role", "option");
     li.id = `${RESULT_OPTION_ID_PREFIX}${index}`;
     li.dataset.resultId = String(result.id);
-    const origin = getResultOrigin(result);
-    if (origin) {
-      li.dataset.origin = origin;
-    } else {
+    if (result.type === "download") {
+      li.classList.add("spotlight-result-download");
       delete li.dataset.origin;
+    } else {
+      const origin = getResultOrigin(result);
+      if (origin) {
+        li.dataset.origin = origin;
+      } else {
+        delete li.dataset.origin;
+      }
     }
 
     const iconEl = createIconElement(result);
@@ -898,7 +915,12 @@ function renderResults() {
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
+    if (result.type === "download") {
+      const host = (result.download && result.download.sourceHost) || "";
+      url.textContent = host || result.url || "";
+    } else {
+      url.textContent = result.description || result.url || "";
+    }
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
@@ -909,6 +931,12 @@ function renderResults() {
 
     body.appendChild(title);
     body.appendChild(meta);
+    if (result.type === "download") {
+      const details = createDownloadDetails(result);
+      if (details) {
+        body.appendChild(details);
+      }
+    }
     li.appendChild(body);
 
     li.addEventListener("pointerover", () => {
@@ -939,6 +967,59 @@ function renderResults() {
   }
   enqueueFavicons(resultsState.slice(0, RESULTS_LIMIT));
   updateActiveResult();
+  updateDownloadRefreshTimer();
+}
+
+function createDownloadDetails(result) {
+  if (!result || result.type !== "download") {
+    return null;
+  }
+  const download = result.download || {};
+  const hasStatus = typeof result.description === "string" && result.description.trim().length > 0;
+  const hasProgressValue = typeof download.progress === "number";
+  const state = (download.state || "").toLowerCase();
+  const showProgress = hasProgressValue || state === "complete" || state === "in_progress" || state === "interrupted";
+
+  if (!hasStatus && !showProgress) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.className = "spotlight-download-details";
+
+  if (hasStatus) {
+    const infoRow = document.createElement("div");
+    infoRow.className = "spotlight-download-info";
+    const status = document.createElement("span");
+    status.className = "spotlight-download-status";
+    status.textContent = result.description;
+    infoRow.appendChild(status);
+    container.appendChild(infoRow);
+  }
+
+  if (showProgress) {
+    const progressContainer = document.createElement("div");
+    progressContainer.className = "spotlight-download-progress";
+    const progressBar = document.createElement("div");
+    progressBar.className = "spotlight-download-progress-bar";
+    let width = "0%";
+    if (hasProgressValue) {
+      const value = Math.max(0, Math.min(download.progress, 100));
+      width = `${value}%`;
+    } else if (state === "complete") {
+      width = "100%";
+    }
+    progressBar.style.width = width;
+    if (state === "complete") {
+      progressBar.classList.add("complete");
+    } else if (state === "interrupted") {
+      progressBar.classList.add("interrupted");
+    }
+    progressContainer.appendChild(progressBar);
+    container.appendChild(progressContainer);
+  }
+
+  return container;
 }
 
 function getFilterStatusLabel(type) {
@@ -949,6 +1030,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -982,6 +1065,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1104,6 +1189,10 @@ function createIconImage(src) {
 function createIconElement(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
+  if (result && result.type === "download") {
+    wrapper.appendChild(createIconImage(DOWNLOAD_ICON_URL));
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1131,7 +1220,7 @@ function applyCachedFavicons(results) {
 }
 
 function shouldRequestFavicon(result) {
-  if (!result || result.type === "command") {
+  if (!result || result.type === "command" || result.type === "download") {
     return false;
   }
   const origin = getResultOrigin(result);
@@ -1257,6 +1346,52 @@ function processFaviconQueue() {
   scheduleIdleWork(runNext);
 }
 
+function hasActiveDownload(results = []) {
+  return results.some(
+    (entry) =>
+      entry &&
+      entry.type === "download" &&
+      entry.download &&
+      entry.download.state === "in_progress" &&
+      !entry.download.paused
+  );
+}
+
+function stopDownloadRefreshTimer() {
+  if (downloadRefreshTimer) {
+    clearInterval(downloadRefreshTimer);
+    downloadRefreshTimer = null;
+  }
+}
+
+function updateDownloadRefreshTimer() {
+  if (!isOpen) {
+    stopDownloadRefreshTimer();
+    return;
+  }
+  if (!hasActiveDownload(resultsState)) {
+    stopDownloadRefreshTimer();
+    return;
+  }
+  if (downloadRefreshTimer) {
+    return;
+  }
+  downloadRefreshTimer = setInterval(() => {
+    if (!isOpen) {
+      stopDownloadRefreshTimer();
+      return;
+    }
+    if (!inputEl) {
+      return;
+    }
+    const value = inputEl.value || "";
+    if (value.trim() === "> reindex") {
+      return;
+    }
+    requestResults(value);
+  }, 1000);
+}
+
 function applyIconToResults(origin, faviconUrl) {
   if (!resultsEl) {
     return;
@@ -1264,6 +1399,9 @@ function applyIconToResults(origin, faviconUrl) {
   const normalizedOrigin = origin || "";
   const items = resultsEl.querySelectorAll("li");
   items.forEach((itemEl) => {
+    if (itemEl.classList.contains("spotlight-result-download")) {
+      return;
+    }
     if ((itemEl.dataset.origin || "") !== normalizedOrigin) {
       return;
     }

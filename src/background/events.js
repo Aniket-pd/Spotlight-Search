@@ -28,6 +28,11 @@ export function registerDataInvalidationEvents(context) {
   chrome.history.onVisited.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onTitleChanged?.addListener(() => context.scheduleRebuild(2000));
   chrome.history.onVisitRemoved?.addListener(() => context.scheduleRebuild(2000));
+
+  if (chrome.downloads) {
+    chrome.downloads.onCreated?.addListener(() => context.scheduleRebuild(800));
+    chrome.downloads.onErased?.addListener(() => context.scheduleRebuild(800));
+  }
 }
 
 export function registerActionClick(context) {

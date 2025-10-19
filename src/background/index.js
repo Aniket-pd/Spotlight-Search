@@ -6,6 +6,7 @@ import { createCommandExecutor } from "./commands.js";
 import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
+import { registerDownloadListeners } from "./downloads.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -20,6 +21,7 @@ const { resolveFaviconForTarget } = createFaviconService({ cache: context.favico
 const navigation = createNavigationService();
 
 registerNavigationListeners(navigation);
+registerDownloadListeners(context);
 
 registerMessageHandlers({
   context,
