@@ -1,6 +1,8 @@
 :host,
 :host(.spotlight-overlay-host) {
   all: initial;
+  --spotlight-enter-duration: 240ms;
+  --spotlight-exit-duration: 180ms;
 }
 
 :host([data-surface="standalone"]),
@@ -17,6 +19,124 @@
   min-height: 100%;
   box-sizing: border-box;
   gap: 12px;
+}
+
+@keyframes spotlight-overlay-backdrop-enter {
+  0% {
+    opacity: 0;
+    background: rgba(0, 0, 0, 0);
+    backdrop-filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(2px);
+  }
+}
+
+@keyframes spotlight-overlay-backdrop-exit {
+  0% {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(2px);
+  }
+  100% {
+    opacity: 0;
+    background: rgba(0, 0, 0, 0);
+    backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes spotlight-shell-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.96);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(6px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spotlight-shell-exit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+}
+
+:host([data-animation="initial"]) {
+  pointer-events: none;
+}
+
+:host([data-surface="overlay"][data-animation="initial"]) {
+  opacity: 0;
+  background: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0px);
+}
+
+:host([data-surface="overlay"][data-animation="enter"]) {
+  animation: spotlight-overlay-backdrop-enter var(--spotlight-enter-duration)
+      cubic-bezier(0.32, 0.72, 0, 1)
+      forwards;
+}
+
+:host([data-surface="overlay"][data-animation="exit"]) {
+  animation: spotlight-overlay-backdrop-exit var(--spotlight-exit-duration)
+      cubic-bezier(0.4, 0, 0.2, 1)
+      forwards;
+  pointer-events: none;
+}
+
+:host([data-animation="exit"]) {
+  pointer-events: none;
+}
+
+:host([data-animation="initial"]) .spotlight-shell {
+  opacity: 0;
+  transform: translateY(-18px) scale(0.96);
+}
+
+:host([data-animation="enter"]) .spotlight-shell {
+  animation: spotlight-shell-enter var(--spotlight-enter-duration)
+      cubic-bezier(0.32, 0.72, 0, 1)
+      forwards;
+}
+
+:host([data-animation="exit"]) .spotlight-shell {
+  animation: spotlight-shell-exit var(--spotlight-exit-duration)
+      cubic-bezier(0.4, 0, 0.2, 1)
+      forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :host([data-animation="initial"]) {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  :host([data-animation="enter"]),
+  :host([data-animation="exit"]) {
+    animation: none !important;
+  }
+
+  :host([data-animation="initial"]) .spotlight-shell {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  :host([data-animation="enter"]) .spotlight-shell,
+  :host([data-animation="exit"]) .spotlight-shell {
+    animation: none !important;
+  }
 }
 
 :host *,
@@ -54,6 +174,7 @@
   z-index: 2147483647;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #f5f5f5;
+  will-change: opacity, backdrop-filter;
 }
 
 :host([data-surface="standalone"]) .spotlight-shell {
@@ -74,6 +195,8 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   overflow: visible;
   border: 1px solid rgba(255, 255, 255, 0.06);
+  transform-origin: 50% 16px;
+  will-change: transform, opacity;
 }
 
 :host([data-surface="standalone"]) .spotlight-input-wrapper {

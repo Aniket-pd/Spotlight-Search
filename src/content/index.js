@@ -31,6 +31,35 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 let pointerNavigationSuspended = false;
+const ENTER_ANIMATION_DURATION = 240;
+const EXIT_ANIMATION_DURATION = 180;
+let enterAnimationTimeout = null;
+let exitAnimationTimeout = null;
+
+function prefersReducedMotion() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (error) {
+    return false;
+  }
+}
+
+function clearEnterAnimationTimer() {
+  if (enterAnimationTimeout) {
+    clearTimeout(enterAnimationTimeout);
+    enterAnimationTimeout = null;
+  }
+}
+
+function clearExitAnimationTimer() {
+  if (exitAnimationTimeout) {
+    clearTimeout(exitAnimationTimeout);
+    exitAnimationTimeout = null;
+  }
+}
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -129,6 +158,7 @@ function createOverlay() {
   overlayEl.className = "spotlight-overlay-host";
   overlayEl.setAttribute("role", "presentation");
   overlayEl.dataset.surface = standalone ? "standalone" : "overlay";
+  overlayEl.dataset.animation = "initial";
 
   overlayRoot = overlayEl.attachShadow({ mode: "open" });
 
@@ -575,6 +605,13 @@ function openOverlay() {
     overlayEl.dataset.surface = standalone ? "standalone" : "overlay";
   }
 
+  const reduceMotion = prefersReducedMotion();
+  clearEnterAnimationTimer();
+  clearExitAnimationTimer();
+  if (overlayEl && overlayEl.dataset) {
+    overlayEl.dataset.animation = reduceMotion ? "active" : "initial";
+  }
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -600,7 +637,25 @@ function openOverlay() {
     document.body.style.overflow = "hidden";
   }
 
-  document.body.appendChild(overlayEl);
+  if (overlayEl) {
+    document.body.appendChild(overlayEl);
+    if (!reduceMotion) {
+      requestAnimationFrame(() => {
+        if (!overlayEl || overlayEl.dataset.animation !== "initial") {
+          return;
+        }
+        overlayEl.dataset.animation = "enter";
+      });
+      enterAnimationTimeout = setTimeout(() => {
+        if (!overlayEl || overlayEl.dataset.animation === "exit") {
+          enterAnimationTimeout = null;
+          return;
+        }
+        overlayEl.dataset.animation = "active";
+        enterAnimationTimeout = null;
+      }, ENTER_ANIMATION_DURATION);
+    }
+  }
   requestResults("");
   setTimeout(() => {
     if (!inputEl) {
@@ -615,11 +670,31 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
-  }
-  if (!isStandaloneSurface()) {
-    document.body.style.overflow = bodyOverflowBackup;
+  const standalone = isStandaloneSurface();
+  const reduceMotion = prefersReducedMotion();
+  clearEnterAnimationTimer();
+
+  const finalizeRemoval = () => {
+    exitAnimationTimeout = null;
+    if (overlayEl) {
+      overlayEl.dataset.animation = "initial";
+      if (overlayEl.parentElement) {
+        overlayEl.parentElement.removeChild(overlayEl);
+      }
+    }
+    if (!standalone) {
+      document.body.style.overflow = bodyOverflowBackup;
+    }
+  };
+
+  clearExitAnimationTimer();
+  if (overlayEl && overlayEl.parentElement && !reduceMotion) {
+    overlayEl.dataset.animation = "exit";
+    exitAnimationTimeout = setTimeout(() => {
+      finalizeRemoval();
+    }, EXIT_ANIMATION_DURATION);
+  } else {
+    finalizeRemoval();
   }
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
