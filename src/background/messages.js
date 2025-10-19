@@ -108,6 +108,23 @@ export function registerMessageHandlers({
       return true;
     }
 
+    if (message.type === "SPOTLIGHT_CLOSE_SURFACE") {
+      if (!context?.closeFallbackSurface) {
+        sendResponse({ success: false, error: "No fallback surface handler" });
+        return true;
+      }
+      context
+        .closeFallbackSurface()
+        .then((closed) => {
+          sendResponse({ success: Boolean(closed) });
+        })
+        .catch((err) => {
+          console.warn("Spotlight: failed to close fallback surface", err);
+          sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
     return undefined;
   });
 }

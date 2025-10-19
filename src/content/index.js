@@ -644,11 +644,20 @@ function closeStandaloneSurface() {
   if (!isStandaloneSurface()) {
     return false;
   }
+  try {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_CLOSE_SURFACE" }, () => {
+      if (chrome.runtime.lastError) {
+        // Ignore failures; the surface may already be closed.
+      }
+    });
+  } catch (err) {
+    console.warn("Spotlight: unable to notify background to close surface", err);
+  }
   if (typeof window !== "undefined" && typeof window.close === "function") {
     try {
       window.close();
     } catch (err) {
-      console.warn("Spotlight: unable to close standalone window", err);
+      console.warn("Spotlight: unable to close standalone surface window", err);
     }
   }
   return true;

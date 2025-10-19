@@ -5,16 +5,20 @@ export function createBackgroundContext({ buildIndex }) {
     indexData: null,
     buildingPromise: null,
     rebuildTimer: null,
-    fallbackWindowId: null,
+    fallbackSurface: null,
   };
   const faviconCache = new Map();
 
-  if (chrome.windows?.onRemoved) {
-    chrome.windows.onRemoved.addListener((windowId) => {
-      if (windowId === state.fallbackWindowId) {
-        state.fallbackWindowId = null;
-      }
-    });
+  function clearFallbackSurface() {
+    state.fallbackSurface = null;
+  }
+
+  function setFallbackSurface(surface) {
+    if (surface) {
+      state.fallbackSurface = surface;
+    } else {
+      clearFallbackSurface();
+    }
   }
 
   async function rebuildIndex() {
@@ -53,6 +57,7 @@ export function createBackgroundContext({ buildIndex }) {
 
   async function sendToggleMessage() {
     let activeTab = null;
+    clearFallbackSurface();
     try {
       [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     } catch (err) {
@@ -73,58 +78,67 @@ export function createBackgroundContext({ buildIndex }) {
 
   async function openFallbackSurface(activeTab) {
     const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : undefined;
+    const tabId = typeof activeTab?.id === "number" ? activeTab.id : undefined;
 
     if (chrome.sidePanel?.open) {
-      if (chrome.sidePanel.setOptions && activeTab?.id !== undefined) {
+      if (chrome.sidePanel.setOptions && tabId !== undefined) {
         try {
-          await chrome.sidePanel.setOptions({ tabId: activeTab.id, path: "panel.html", enabled: true });
+          await chrome.sidePanel.setOptions({ tabId, path: "panel.html", enabled: true });
         } catch (err) {
           console.warn("Spotlight: failed to configure side panel", err);
         }
       }
       try {
         await chrome.sidePanel.open(windowId !== undefined ? { windowId } : {});
+        setFallbackSurface({ type: "side-panel", tabId, windowId });
         return;
       } catch (err) {
         console.warn("Spotlight: failed to open side panel", err);
       }
     }
 
-    await openStandaloneWindow();
+    if (chrome.action?.openPopup) {
+      try {
+        await chrome.action.openPopup();
+        setFallbackSurface({ type: "action-popup" });
+        return;
+      } catch (err) {
+        console.warn("Spotlight: failed to open action popup", err);
+      }
+    }
+
+    clearFallbackSurface();
   }
 
-  async function openStandaloneWindow() {
-    const url = chrome.runtime.getURL("panel.html");
+  async function closeFallbackSurface() {
+    const surface = state.fallbackSurface;
+    if (!surface) {
+      return false;
+    }
 
-    if (typeof state.fallbackWindowId === "number") {
-      try {
-        const existing = await chrome.windows.get(state.fallbackWindowId, { populate: true });
-        if (existing) {
-          await chrome.windows.update(state.fallbackWindowId, { focused: true });
-          if (existing.tabs && !existing.tabs.some((tab) => tab.url === url)) {
-            await chrome.tabs.create({ windowId: state.fallbackWindowId, url });
+    if (surface.type === "side-panel") {
+      if (chrome.sidePanel?.setOptions) {
+        const tabId = surface.tabId;
+        const windowId = surface.windowId;
+        try {
+          if (typeof tabId === "number") {
+            await chrome.sidePanel.setOptions({ tabId, enabled: false });
+            clearFallbackSurface();
+            return true;
           }
-          return;
+          if (typeof windowId === "number") {
+            await chrome.sidePanel.setOptions({ windowId, enabled: false });
+            clearFallbackSurface();
+            return true;
+          }
+        } catch (err) {
+          console.warn("Spotlight: failed to close side panel", err);
         }
-      } catch (err) {
-        state.fallbackWindowId = null;
       }
     }
 
-    try {
-      const createdWindow = await chrome.windows.create({
-        url,
-        type: "popup",
-        focused: true,
-        width: 760,
-        height: 640,
-      });
-      if (createdWindow?.id !== undefined) {
-        state.fallbackWindowId = createdWindow.id;
-      }
-    } catch (err) {
-      console.error("Spotlight: failed to open fallback window", err);
-    }
+    clearFallbackSurface();
+    return false;
   }
 
   async function openItem(itemId) {
@@ -192,5 +206,6 @@ export function createBackgroundContext({ buildIndex }) {
     openItem,
     getItemById,
     faviconCache,
+    closeFallbackSurface,
   };
 }
