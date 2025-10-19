@@ -29,6 +29,12 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+let downloadsPort = null;
+const downloadUpdateQueue = new Map();
+const downloadRenderTimers = new Map();
+let pendingDownloadRefresh = null;
+const DOWNLOAD_RENDER_DELAY = 180;
+const downloadSnapshots = new Map();
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -544,6 +550,7 @@ function openOverlay() {
   inputEl.value = "";
   setGhostText("");
   resetSlashMenuState();
+  connectDownloadStream();
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -560,6 +567,7 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
+  disconnectDownloadStream();
   if (overlayEl && overlayEl.parentElement) {
     overlayEl.parentElement.removeChild(overlayEl);
   }
@@ -567,6 +575,10 @@ function closeOverlay() {
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
+  }
+  if (pendingDownloadRefresh) {
+    clearTimeout(pendingDownloadRefresh);
+    pendingDownloadRefresh = null;
   }
   statusSticky = false;
   activeFilter = null;
@@ -703,6 +715,7 @@ function requestResults(query) {
         return;
       }
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+      resultsState = resultsState.map((result) => mergeDownloadSnapshot(result));
       lazyList.setItems(resultsState);
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
@@ -937,9 +950,31 @@ function renderResults() {
     const body = document.createElement("div");
     body.className = "spotlight-result-content";
 
+    const titleRow = document.createElement("div");
+    titleRow.className = "spotlight-result-title-row";
+
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
     title.textContent = result.title || result.url;
+    titleRow.appendChild(title);
+
+    if (result.type === "download") {
+      li.classList.add("spotlight-result-download");
+      if (typeof result.downloadId === "number") {
+        li.dataset.downloadId = String(result.downloadId);
+      }
+      const inlineInfo = document.createElement("span");
+      inlineInfo.className = "download-inline-info";
+      inlineInfo.textContent = formatDownloadInlineInfo(result);
+      titleRow.appendChild(inlineInfo);
+
+      const actionContainer = createDownloadActions(result);
+      if (actionContainer) {
+        titleRow.appendChild(actionContainer);
+      }
+    }
+
+    body.appendChild(titleRow);
 
     const meta = document.createElement("div");
     meta.className = "spotlight-result-meta";
@@ -967,8 +1002,20 @@ function renderResults() {
     }
     meta.appendChild(type);
 
-    body.appendChild(title);
     body.appendChild(meta);
+
+    if (result.type === "download") {
+      const statusLine = document.createElement("div");
+      statusLine.className = "download-status-line";
+      statusLine.textContent = formatDownloadStatusLine(result);
+      body.appendChild(statusLine);
+
+      const progressEl = createDownloadProgressElement(result);
+      if (progressEl) {
+        body.appendChild(progressEl);
+      }
+    }
+
     li.appendChild(body);
 
     li.addEventListener("pointerover", () => {
@@ -994,6 +1041,10 @@ function renderResults() {
     }
 
     resultsEl.appendChild(li);
+
+    if (result.type === "download") {
+      updateDownloadRowElement(result.downloadId);
+    }
   });
 
   enqueueFavicons(itemsToRender);
@@ -1004,6 +1055,523 @@ function renderResults() {
   });
 }
 
+function connectDownloadStream() {
+  if (downloadsPort) {
+    return;
+  }
+  try {
+    downloadsPort = chrome.runtime.connect({ name: "downloads-stream" });
+    if (downloadsPort) {
+      downloadsPort.onMessage.addListener(handleDownloadStreamMessage);
+      downloadsPort.onDisconnect.addListener(() => {
+        downloadsPort = null;
+      });
+    }
+  } catch (err) {
+    console.warn("Spotlight: unable to connect to download stream", err);
+    downloadsPort = null;
+  }
+}
+
+function disconnectDownloadStream() {
+  if (downloadsPort) {
+    try {
+      downloadsPort.disconnect();
+    } catch (err) {
+      console.warn("Spotlight: error disconnecting download stream", err);
+    }
+    downloadsPort = null;
+  }
+  downloadUpdateQueue.clear();
+  downloadRenderTimers.forEach((timer) => clearTimeout(timer));
+  downloadRenderTimers.clear();
+}
+
+function handleDownloadStreamMessage(message) {
+  if (!message) {
+    return;
+  }
+  if (message.type === "download-batch" && Array.isArray(message.downloads)) {
+    message.downloads.forEach((download) => queueDownloadUpdate(download));
+    return;
+  }
+  if (message.type === "download-update" && message.download) {
+    queueDownloadUpdate(message.download);
+  }
+}
+
+function queueDownloadUpdate(download) {
+  if (!download || typeof download.id !== "number") {
+    return;
+  }
+  downloadUpdateQueue.set(download.id, download);
+  if (downloadRenderTimers.has(download.id)) {
+    return;
+  }
+  const timer = setTimeout(() => {
+    downloadRenderTimers.delete(download.id);
+    const payload = downloadUpdateQueue.get(download.id);
+    downloadUpdateQueue.delete(download.id);
+    if (payload) {
+      applyDownloadUpdate(payload);
+    }
+  }, DOWNLOAD_RENDER_DELAY);
+  downloadRenderTimers.set(download.id, timer);
+}
+
+function scheduleDownloadResultRefresh() {
+  if (!isOpen) {
+    return;
+  }
+  if (pendingDownloadRefresh) {
+    return;
+  }
+  pendingDownloadRefresh = setTimeout(() => {
+    pendingDownloadRefresh = null;
+    if (isOpen) {
+      requestResults(inputEl.value);
+    }
+  }, 320);
+}
+
+function sendDownloadAction(downloadId, action) {
+  if (typeof downloadId !== "number") {
+    return;
+  }
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_DOWNLOAD_ACTION", downloadId, action },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn("Spotlight download action error", chrome.runtime.lastError);
+        return;
+      }
+      if (response && response.success === false && response.error) {
+        console.warn("Spotlight download action failed", response.error);
+      }
+    }
+  );
+}
+
+function findDownloadResult(downloadId) {
+  if (typeof downloadId !== "number") {
+    return null;
+  }
+  return (
+    resultsState.find(
+      (item) => item && item.type === "download" && item.downloadId === downloadId
+    ) || null
+  );
+}
+
+function categorizeDownloadResult(result) {
+  const state = typeof result?.state === "string" ? result.state.toLowerCase() : "";
+  if (state === "complete") {
+    return "completed";
+  }
+  if (state === "in_progress") {
+    return result?.paused ? "paused" : "in-progress";
+  }
+  if (
+    state === "interrupted" ||
+    state === "cancelled" ||
+    state === "canceled" ||
+    state === "error" ||
+    state === "erased"
+  ) {
+    return "interrupted";
+  }
+  return state || "other";
+}
+
+function mergeDownloadFields(base, patch = {}) {
+  if (!base || base.type !== "download") {
+    return base;
+  }
+  const state = patch.state || base.state;
+  const paused = typeof patch.paused === "boolean" ? patch.paused : base.paused;
+  const exists = typeof patch.exists === "boolean" ? patch.exists : base.exists;
+  const canResume = typeof patch.canResume === "boolean" ? patch.canResume : base.canResume;
+  const bytesReceived =
+    typeof patch.bytesReceived === "number" ? patch.bytesReceived : base.bytesReceived;
+  const totalBytes = typeof patch.totalBytes === "number" ? patch.totalBytes : base.totalBytes;
+  const progressPercent =
+    typeof patch.progressPercent === "number"
+      ? patch.progressPercent
+      : totalBytes > 0
+      ? bytesReceived / totalBytes
+      : base.progressPercent;
+  let etaSeconds;
+  if (patch.etaSeconds === null) {
+    etaSeconds = null;
+  } else if (typeof patch.etaSeconds === "number") {
+    etaSeconds = patch.etaSeconds;
+  } else {
+    etaSeconds = base.etaSeconds ?? null;
+  }
+  const startTime = typeof patch.startTime === "number" ? patch.startTime : base.startTime;
+  const endTime = typeof patch.endTime === "number" ? patch.endTime : base.endTime;
+  const completedAt =
+    typeof patch.completedAt === "number" ? patch.completedAt : base.completedAt;
+  const createdAt = typeof patch.createdAt === "number" ? patch.createdAt : base.createdAt;
+  const fileUrl = patch.fileUrl || base.fileUrl;
+  const url = patch.url || base.url;
+  const filename = patch.filename || base.filename;
+  const displayPath = typeof patch.displayPath === "string" ? patch.displayPath : base.displayPath;
+  const danger = patch.danger || base.danger;
+  const speedBps = typeof patch.speedBps === "number" ? patch.speedBps : base.speedBps;
+  const description =
+    typeof patch.description === "string"
+      ? patch.description
+      : displayPath || base.description;
+
+  return {
+    ...base,
+    state,
+    paused,
+    exists,
+    canResume,
+    bytesReceived,
+    totalBytes,
+    progressPercent,
+    speedBps,
+    etaSeconds,
+    startTime,
+    endTime,
+    completedAt,
+    createdAt,
+    fileUrl,
+    url,
+    filename,
+    displayPath,
+    danger,
+    description,
+  };
+}
+
+function mergeDownloadSnapshot(result) {
+  if (!result || result.type !== "download" || typeof result.downloadId !== "number") {
+    return result;
+  }
+  const snapshot = downloadSnapshots.get(result.downloadId);
+  if (!snapshot) {
+    return result;
+  }
+  return mergeDownloadFields(result, snapshot);
+}
+
+function applyDownloadUpdate(update) {
+  if (!update || typeof update.id !== "number") {
+    return;
+  }
+  const snapshot = { ...(downloadSnapshots.get(update.id) || {}), ...update };
+  downloadSnapshots.set(update.id, snapshot);
+  update = snapshot;
+  let changed = false;
+  let stateChanged = false;
+  for (let index = 0; index < resultsState.length; index += 1) {
+    const entry = resultsState[index];
+    if (!entry || entry.type !== "download" || entry.downloadId !== update.id) {
+      continue;
+    }
+    const previousState = entry.state;
+    const merged = mergeDownloadFields(entry, update);
+    resultsState[index] = merged;
+    changed = true;
+    if ((previousState || "") !== (merged.state || "")) {
+      stateChanged = true;
+    }
+  }
+
+  if (changed) {
+    updateDownloadRowElement(update.id);
+    if (stateChanged) {
+      scheduleDownloadResultRefresh();
+    }
+  } else if (isOpen && activeFilter === "download") {
+    scheduleDownloadResultRefresh();
+  }
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const precision = size >= 100 || unitIndex === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatProgressPercent(value) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  const clamped = Math.max(0, Math.min(100, Math.round(value * 100)));
+  return `${clamped}%`;
+}
+
+function formatSpeed(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return `${formatBytes(value)}/s`;
+}
+
+function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  if (seconds < 60) {
+    return `${Math.ceil(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  if (minutes < 60) {
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) {
+    return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours ? `${days}d ${restHours}h` : `${days}d`;
+}
+
+function formatDownloadSize(result) {
+  const received = Number.isFinite(result?.bytesReceived) ? result.bytesReceived : 0;
+  const total = Number.isFinite(result?.totalBytes) ? result.totalBytes : 0;
+  const receivedLabel = formatBytes(received);
+  const totalLabel = formatBytes(total);
+  if (receivedLabel && totalLabel) {
+    return `${receivedLabel} of ${totalLabel}`;
+  }
+  return receivedLabel || totalLabel || "";
+}
+
+function formatDownloadInlineInfo(result) {
+  const category = categorizeDownloadResult(result);
+  const parts = [];
+  if (category === "completed") {
+    const sizeLabel = formatBytes(result.totalBytes || result.bytesReceived);
+    return sizeLabel ? `Completed · ${sizeLabel}` : "Completed";
+  }
+  if (category === "interrupted") {
+    return "Interrupted";
+  }
+  if (category === "paused") {
+    const percentLabel = formatProgressPercent(result.progressPercent);
+    if (percentLabel) {
+      parts.push(percentLabel);
+    }
+    parts.push("Paused");
+    return parts.join(" · ");
+  }
+  const percentLabel = formatProgressPercent(result.progressPercent);
+  if (percentLabel) {
+    parts.push(percentLabel);
+  }
+  const speedLabel = formatSpeed(result.speedBps);
+  if (speedLabel) {
+    parts.push(speedLabel);
+  }
+  const etaLabel = formatEta(result.etaSeconds);
+  if (etaLabel) {
+    parts.push(`${etaLabel} left`);
+  }
+  if (!parts.length) {
+    const sizeLabel = formatDownloadSize(result);
+    if (sizeLabel) {
+      parts.push(sizeLabel);
+    }
+  }
+  return parts.join(" · ") || "";
+}
+
+function formatDownloadStatusLine(result) {
+  const category = categorizeDownloadResult(result);
+  if (category === "completed") {
+    const sizeLabel = formatBytes(result.totalBytes || result.bytesReceived);
+    return sizeLabel ? `Completed • ${sizeLabel}` : "Completed";
+  }
+  if (category === "interrupted") {
+    return "Interrupted";
+  }
+  if (category === "paused") {
+    const sizeLabel = formatDownloadSize(result);
+    return sizeLabel ? `Paused • ${sizeLabel}` : "Paused";
+  }
+  const sizeLabel = formatDownloadSize(result);
+  return sizeLabel || "";
+}
+
+function computeDownloadActions(result) {
+  const actions = [];
+  const downloadId = result && typeof result.downloadId === "number" ? result.downloadId : null;
+  if (downloadId === null) {
+    return actions;
+  }
+  const category = categorizeDownloadResult(result);
+  if (category === "completed") {
+    actions.push({ label: "Open", action: "open", variant: "primary" });
+    actions.push({ label: "Show in Folder", action: "show" });
+    return actions;
+  }
+  if (category === "paused") {
+    actions.push({ label: "Resume", action: "resume", variant: "primary" });
+    actions.push({ label: "Cancel", action: "cancel" });
+    return actions;
+  }
+  if (category === "interrupted") {
+    if (result.canResume) {
+      actions.push({ label: "Resume", action: "resume", variant: "primary" });
+    }
+    actions.push({ label: "Show in Folder", action: "show" });
+    return actions;
+  }
+  if (category === "in-progress") {
+    actions.push({ label: "Pause", action: "pause" });
+    actions.push({ label: "Cancel", action: "cancel" });
+    return actions;
+  }
+  actions.push({ label: "Show in Folder", action: "show" });
+  return actions;
+}
+
+function renderDownloadActionButtons(container, result) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  const actions = computeDownloadActions(result);
+  if (!actions.length) {
+    container.classList.add("hidden");
+    return;
+  }
+  container.classList.remove("hidden");
+  actions.forEach((definition) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-download-action";
+    if (definition.variant === "primary") {
+      button.classList.add("primary");
+    }
+    button.textContent = definition.label;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      sendDownloadAction(result.downloadId, definition.action);
+    });
+    container.appendChild(button);
+  });
+}
+
+function createDownloadActions(result) {
+  if (!result || typeof result.downloadId !== "number") {
+    return null;
+  }
+  const container = document.createElement("div");
+  container.className = "spotlight-download-actions";
+  container.dataset.downloadId = String(result.downloadId);
+  renderDownloadActionButtons(container, result);
+  return container;
+}
+
+function createDownloadProgressElement(result) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "spotlight-download-progress";
+  const track = document.createElement("div");
+  track.className = "download-progress-track";
+  const bar = document.createElement("div");
+  bar.className = "download-progress-bar";
+  track.appendChild(bar);
+  wrapper.appendChild(track);
+  const percentLabel = document.createElement("span");
+  percentLabel.className = "download-progress-percent";
+  percentLabel.textContent = formatProgressPercent(result.progressPercent);
+  wrapper.appendChild(percentLabel);
+  const percentValue = formatProgressPercent(result.progressPercent);
+  if (percentValue) {
+    const numeric = parseInt(percentValue, 10);
+    bar.style.width = `${Number.isFinite(numeric) ? numeric : 0}%`;
+  } else if (categorizeDownloadResult(result) === "completed") {
+    bar.style.width = "100%";
+  } else {
+    bar.style.width = "0%";
+  }
+  const category = categorizeDownloadResult(result);
+  if (category === "completed" || category === "interrupted") {
+    wrapper.classList.add("hidden");
+  }
+  return wrapper;
+}
+
+function updateDownloadRowElement(downloadId) {
+  if (!resultsEl || typeof downloadId !== "number") {
+    return;
+  }
+  const row = resultsEl.querySelector(`.spotlight-result[data-download-id="${downloadId}"]`);
+  const result = findDownloadResult(downloadId);
+  if (!row || !result) {
+    return;
+  }
+  const category = categorizeDownloadResult(result);
+  row.dataset.state = result.state || "";
+  if (result.exists === false) {
+    row.dataset.exists = "false";
+  } else {
+    row.removeAttribute("data-exists");
+  }
+  row.classList.toggle("download-complete", category === "completed");
+  row.classList.toggle("download-paused", category === "paused");
+  row.classList.toggle("download-interrupted", category === "interrupted");
+
+  const inlineInfo = row.querySelector(".download-inline-info");
+  if (inlineInfo) {
+    inlineInfo.textContent = formatDownloadInlineInfo(result);
+  }
+  const statusLine = row.querySelector(".download-status-line");
+  if (statusLine) {
+    statusLine.textContent = formatDownloadStatusLine(result);
+  }
+  const progressBar = row.querySelector(".download-progress-bar");
+  const percentLabel = row.querySelector(".download-progress-percent");
+  const percentText = formatProgressPercent(result.progressPercent);
+  if (progressBar) {
+    if (percentText) {
+      const numeric = parseInt(percentText, 10);
+      progressBar.style.width = `${Number.isFinite(numeric) ? numeric : 0}%`;
+    } else if (category === "completed") {
+      progressBar.style.width = "100%";
+    } else {
+      progressBar.style.width = "0%";
+    }
+  }
+  if (percentLabel) {
+    percentLabel.textContent = percentText;
+  }
+  const progressWrapper = row.querySelector(".spotlight-download-progress");
+  if (progressWrapper) {
+    const hideProgress = category === "completed" || category === "interrupted";
+    progressWrapper.classList.toggle("hidden", hideProgress);
+  }
+  const actionContainer = row.querySelector(".spotlight-download-actions");
+  if (actionContainer) {
+    renderDownloadActionButtons(actionContainer, result);
+  }
+  const descriptionEl = row.querySelector(".spotlight-result-url");
+  if (descriptionEl && result.description) {
+    descriptionEl.textContent = result.description;
+    descriptionEl.title = result.description;
+  }
+}
+
 function getFilterStatusLabel(type) {
   switch (type) {
     case "tab":
@@ -1012,6 +1580,8 @@ function getFilterStatusLabel(type) {
       return "bookmarks";
     case "history":
       return "history";
+    case "download":
+      return "downloads";
     case "back":
       return "back history";
     case "forward":
@@ -1045,6 +1615,8 @@ function formatTypeLabel(type, result) {
       return "Bookmark";
     case "history":
       return "History";
+    case "download":
+      return "Download";
     case "command":
       return (result && result.label) || "Command";
     case "navigation":
@@ -1061,7 +1633,13 @@ function getResultTimestamp(result) {
   if (!result || typeof result !== "object") {
     return null;
   }
-  const candidates = [result.lastVisitTime, result.lastAccessed, result.dateAdded, result.createdAt];
+  const candidates = [
+    result.lastVisitTime,
+    result.lastAccessed,
+    result.dateAdded,
+    result.completedAt,
+    result.createdAt,
+  ];
   for (const value of candidates) {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       return value;
@@ -1296,9 +1874,30 @@ function createIconImage(src) {
   return image;
 }
 
+function createDownloadGlyph() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("spotlight-download-icon");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  arrow.setAttribute("d", "M12 3a1 1 0 0 0-1 1v8.59l-2.3-2.3a1 1 0 1 0-1.4 1.42l4 4a1 1 0 0 0 1.4 0l4-4a1 1 0 1 0-1.4-1.42L13 12.59V4a1 1 0 0 0-1-1z");
+  arrow.setAttribute("fill", "currentColor");
+  const base = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  base.setAttribute("d", "M5 18a1 1 0 0 0 0 2h14a1 1 0 1 0 0-2H5z");
+  base.setAttribute("fill", "currentColor");
+  svg.appendChild(arrow);
+  svg.appendChild(base);
+  return svg;
+}
+
 function createIconElement(result) {
   const wrapper = document.createElement("div");
   wrapper.className = "spotlight-result-icon";
+  if (result && result.type === "download") {
+    wrapper.classList.add("spotlight-result-icon-download");
+    wrapper.appendChild(createDownloadGlyph());
+    return wrapper;
+  }
   const origin = getResultOrigin(result);
   const cached = origin ? iconCache.get(origin) : null;
   const src = result && typeof result.faviconUrl === "string" && result.faviconUrl ? result.faviconUrl : cached;
@@ -1316,6 +1915,7 @@ function applyCachedFavicons(results) {
   }
   results.forEach((result) => {
     if (!result) return;
+    if (result.type === "download") return;
     const origin = getResultOrigin(result);
     if (!origin) return;
     if (iconCache.has(origin)) {
@@ -1327,6 +1927,9 @@ function applyCachedFavicons(results) {
 
 function shouldRequestFavicon(result) {
   if (!result || result.type === "command") {
+    return false;
+  }
+  if (result.type === "download") {
     return false;
   }
   const origin = getResultOrigin(result);

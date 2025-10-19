@@ -10,6 +10,7 @@ const COMMAND_SCORE = Number.POSITIVE_INFINITY;
 const BASE_TYPE_SCORES = {
   tab: 6,
   bookmark: 4,
+  download: 3,
   history: 2,
 };
 
@@ -37,6 +38,7 @@ const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
+  download: ["download:", "downloads:", "dl:", "d:"],
   back: ["back:"],
   forward: ["forward:"],
 };
@@ -49,6 +51,14 @@ const NAVIGATION_STEP_PENALTY = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
 const COMMON_SECOND_LEVEL_TLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "go", "ne", "or"]);
+const DOWNLOAD_INTERRUPTED_STATES = new Set(["interrupted", "cancelled", "error"]);
+const DOWNLOAD_STATE_RANK = {
+  completed: 4,
+  "in-progress": 3,
+  paused: 2,
+  interrupted: 1,
+  other: 0,
+};
 
 function toStartOfDay(timestamp) {
   const date = new Date(timestamp);
@@ -234,7 +244,54 @@ function buildBookmarkSubfilters(bookmarks) {
   return options;
 }
 
-function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
+function categorizeDownload(item) {
+  const state = typeof item?.state === "string" ? item.state.toLowerCase() : "";
+  if (state === "complete") {
+    return "completed";
+  }
+  if (DOWNLOAD_INTERRUPTED_STATES.has(state)) {
+    return "interrupted";
+  }
+  if (state === "in_progress") {
+    return item?.paused ? "paused" : "in-progress";
+  }
+  return state || "other";
+}
+
+function getDownloadSortRank(value) {
+  const category = typeof value === "string" ? value : categorizeDownload(value);
+  return DOWNLOAD_STATE_RANK[category] ?? DOWNLOAD_STATE_RANK.other;
+}
+
+function buildDownloadSubfilters(downloads) {
+  const counts = new Map();
+  for (const download of downloads || []) {
+    const category = categorizeDownload(download);
+    if (!category || category === "other") {
+      continue;
+    }
+    counts.set(category, (counts.get(category) || 0) + 1);
+  }
+
+  const options = [{ id: "all", label: "All Downloads" }];
+  const order = [
+    { id: "completed", label: "Completed" },
+    { id: "in-progress", label: "In Progress" },
+    { id: "paused", label: "Paused" },
+    { id: "interrupted", label: "Interrupted" },
+  ];
+
+  for (const entry of order) {
+    const count = counts.get(entry.id) || 0;
+    if (count > 0) {
+      options.push({ ...entry, count });
+    }
+  }
+
+  return options;
+}
+
+function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [], downloads = [] } = {}) {
   if (!filterType) {
     return [];
   }
@@ -246,6 +303,9 @@ function buildSubfilterOptions(filterType, { tabs = [], bookmarks = [] } = {}) {
   }
   if (filterType === "bookmark") {
     return buildBookmarkSubfilters(bookmarks);
+  }
+  if (filterType === "download") {
+    return buildDownloadSubfilters(downloads);
   }
   return [];
 }
@@ -310,6 +370,22 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
     return key === itemKey;
   }
 
+  if (filterType === "download") {
+    const category = categorizeDownload(item);
+    switch (subfilterId) {
+      case "completed":
+        return category === "completed";
+      case "in-progress":
+        return category === "in-progress";
+      case "paused":
+        return category === "paused";
+      case "interrupted":
+        return category === "interrupted";
+      default:
+        return true;
+    }
+  }
+
   return true;
 }
 
@@ -359,7 +435,13 @@ function formatTabCount(count) {
 
 function computeRecencyBoost(item) {
   const now = Date.now();
-  const timestamp = item.lastAccessed || item.lastVisitTime || item.dateAdded || 0;
+  const timestamp =
+    item.lastAccessed ||
+    item.lastVisitTime ||
+    item.dateAdded ||
+    item.completedAt ||
+    item.createdAt ||
+    0;
   if (!timestamp) return 0;
   const hours = Math.max(0, (now - timestamp) / 36e5);
   if (hours < 1) return 2;
@@ -396,6 +478,30 @@ function buildResultFromItem(item, scoreValue) {
   }
   if (typeof item.createdAt === "number") {
     result.createdAt = item.createdAt;
+  }
+  if (typeof item.completedAt === "number") {
+    result.completedAt = item.completedAt;
+  }
+
+  if (item.type === "download") {
+    result.downloadId = item.downloadId;
+    result.fileUrl = item.fileUrl || "";
+    result.filename = item.filename || "";
+    result.displayPath = item.displayPath || "";
+    result.state = item.state || "in_progress";
+    result.exists = item.exists !== false;
+    result.canResume = Boolean(item.canResume);
+    result.paused = Boolean(item.paused);
+    result.totalBytes = typeof item.totalBytes === "number" ? item.totalBytes : 0;
+    result.bytesReceived = typeof item.bytesReceived === "number" ? item.bytesReceived : 0;
+    const progress =
+      typeof item.progressPercent === "number"
+        ? item.progressPercent
+        : result.totalBytes > 0
+        ? result.bytesReceived / result.totalBytes
+        : null;
+    result.progressPercent = progress;
+    result.description = item.displayPath || item.url || item.fileUrl || "";
   }
   return result;
 }
@@ -481,6 +587,22 @@ function compareResults(a, b) {
   if (a?.type === "history" && b?.type === "history") {
     const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
     const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+  }
+
+  if (a?.type === "download" && b?.type === "download") {
+    const rankDiff = getDownloadSortRank(b) - getDownloadSortRank(a);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    const aTime =
+      (typeof a.completedAt === "number" ? a.completedAt : null) ??
+      (typeof a.createdAt === "number" ? a.createdAt : 0);
+    const bTime =
+      (typeof b.completedAt === "number" ? b.completedAt : null) ??
+      (typeof b.createdAt === "number" ? b.createdAt : 0);
     if (bTime !== aTime) {
       return bTime - aTime;
     }
@@ -1004,8 +1126,13 @@ export function runSearch(query, data, options = {}) {
 
   const tabs = items.filter((item) => item.type === "tab");
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
+  const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
   const historyBoundaries = computeHistoryBoundaries(Date.now());
-  const availableSubfilters = buildSubfilterOptions(filterType, { tabs, bookmarks: bookmarkItems });
+  const availableSubfilters = buildSubfilterOptions(filterType, {
+    tabs,
+    bookmarks: bookmarkItems,
+    downloads: downloadItems,
+  });
   const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
@@ -1029,6 +1156,17 @@ export function runSearch(query, data, options = {}) {
         const aTime = a.lastAccessed || 0;
         const bTime = b.lastAccessed || 0;
         return bTime - aTime;
+      });
+    } else if (filterType === "download") {
+      defaultItems.sort((a, b) => {
+        const rankDiff = getDownloadSortRank(b) - getDownloadSortRank(a);
+        if (rankDiff !== 0) return rankDiff;
+        const aTime = a.completedAt || a.createdAt || 0;
+        const bTime = b.completedAt || b.createdAt || 0;
+        if (bTime !== aTime) return bTime - aTime;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
       });
     } else if (filterType === "history") {
       defaultItems.sort((a, b) => {
@@ -1105,6 +1243,18 @@ export function runSearch(query, data, options = {}) {
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
     if (shortQuery && item.type === "tab") {
       finalScore += TAB_BOOST_SHORT_QUERY;
+    }
+    if (item.type === "download") {
+      const category = categorizeDownload(item);
+      if (category === "completed") {
+        finalScore += 0.8;
+      } else if (category === "in-progress") {
+        finalScore += 0.4;
+      } else if (category === "paused") {
+        finalScore -= 0.2;
+      } else if (category === "interrupted") {
+        finalScore -= 0.6;
+      }
     }
     const mapped = buildResultFromItem(item, finalScore);
     if (mapped) {

@@ -1,6 +1,7 @@
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
+const DOWNLOAD_LIMIT = 200;
 export const BOOKMARK_ROOT_FOLDER_KEY = "__SPOTLIGHT_ROOT_FOLDER__";
 
 function normalize(text = "") {
@@ -49,6 +50,30 @@ function extractOrigin(url) {
   } catch (err) {
     return "";
   }
+}
+
+function parseChromeTime(value) {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function extractFilename(path) {
+  if (!path) return "";
+  const parts = path.split(/\\|\//).filter(Boolean);
+  if (!parts.length) {
+    return path.trim();
+  }
+  return parts[parts.length - 1] || "";
+}
+
+function extractDirectoryLabel(path) {
+  if (!path) return "";
+  const parts = path.split(/\\|\//).filter(Boolean);
+  if (parts.length <= 1) {
+    return "";
+  }
+  return parts[parts.length - 2] || "";
 }
 
 async function indexTabs(indexMap, termBuckets, items) {
@@ -170,6 +195,78 @@ async function indexHistory(indexMap, termBuckets, items) {
   }
 }
 
+async function indexDownloads(indexMap, termBuckets, items) {
+  if (!chrome.downloads || typeof chrome.downloads.search !== "function") {
+    return;
+  }
+
+  let downloads = [];
+  try {
+    downloads = await chrome.downloads.search({
+      orderBy: ["-startTime"],
+      limit: DOWNLOAD_LIMIT,
+    });
+  } catch (err) {
+    console.warn("Spotlight: unable to index downloads", err);
+    return;
+  }
+
+  for (const entry of downloads) {
+    if (!entry || typeof entry.id !== "number") {
+      continue;
+    }
+
+    const filename = extractFilename(entry.filename || "");
+    const directoryLabel = extractDirectoryLabel(entry.filename || "");
+    const title = filename || entry.suggestedFilename || entry.finalUrl || entry.url || "Download";
+    const bytesReceived = typeof entry.bytesReceived === "number" ? entry.bytesReceived : Number(entry.bytesReceived) || 0;
+    const totalBytes = typeof entry.totalBytes === "number" ? entry.totalBytes : Number(entry.totalBytes) || 0;
+    const startTime = parseChromeTime(entry.startTime);
+    const endTime = parseChromeTime(entry.endTime);
+    const completedAt = endTime || (entry.state === "complete" ? startTime : 0);
+    const createdAt = completedAt || startTime || Date.now();
+    const origin = extractOrigin(entry.finalUrl || entry.url || "");
+
+    const itemId = items.length;
+    const normalized = {
+      id: itemId,
+      type: "download",
+      title,
+      url: entry.finalUrl || entry.url || "",
+      fileUrl: entry.url || "",
+      filename,
+      displayPath: directoryLabel,
+      downloadId: entry.id,
+      state: entry.state || "in_progress",
+      danger: entry.danger || "safe",
+      exists: entry.exists !== false,
+      canResume: Boolean(entry.canResume),
+      paused: Boolean(entry.paused),
+      totalBytes,
+      bytesReceived,
+      progressPercent: totalBytes > 0 ? Math.min(bytesReceived / totalBytes, 1) : null,
+      startTime,
+      endTime,
+      createdAt,
+      completedAt,
+      byExtensionName: entry.byExtensionName || "",
+      referrer: entry.referrer || "",
+      mime: entry.mime || "",
+      origin,
+    };
+
+    items.push(normalized);
+
+    addToIndex(indexMap, termBuckets, itemId, title, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, filename, TAB_TITLE_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, directoryLabel, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, entry.url, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, entry.finalUrl, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, entry.byExtensionName, URL_WEIGHT);
+    addToIndex(indexMap, termBuckets, itemId, entry.referrer, URL_WEIGHT);
+  }
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -179,6 +276,7 @@ export async function buildIndex() {
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
+    indexDownloads(indexMap, termBuckets, items),
   ]);
 
   const buckets = {};
@@ -192,6 +290,7 @@ export async function buildIndex() {
 
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
+    downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
   };
 
   return {

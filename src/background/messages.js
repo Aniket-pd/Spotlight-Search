@@ -4,6 +4,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  downloads,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -103,6 +104,31 @@ export function registerMessageHandlers({
         .then(() => sendResponse({ success: true }))
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
+          sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_DOWNLOAD_ACTION") {
+      if (!downloads || typeof downloads.performAction !== "function") {
+        sendResponse({ success: false, error: "Download service unavailable" });
+        return true;
+      }
+      const downloadId =
+        typeof message.downloadId === "number"
+          ? message.downloadId
+          : typeof message.id === "number"
+          ? message.id
+          : null;
+      if (downloadId === null) {
+        sendResponse({ success: false, error: "Invalid download id" });
+        return true;
+      }
+      downloads
+        .performAction(downloadId, message.action)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error("Spotlight: download action failed", err);
           sendResponse({ success: false, error: err?.message });
         });
       return true;

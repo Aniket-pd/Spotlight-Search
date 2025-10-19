@@ -73,6 +73,32 @@ export function createBackgroundContext({ buildIndex }) {
       return;
     }
 
+    if (item.type === "download" && typeof item.downloadId === "number") {
+      let latest = null;
+      try {
+        const [downloadItem] = await chrome.downloads.search({ id: item.downloadId });
+        if (downloadItem) {
+          latest = downloadItem;
+        }
+      } catch (err) {
+        console.warn("Spotlight: unable to refresh download metadata", err);
+      }
+      const state = (latest?.state || item.state || "").toLowerCase();
+      const exists = latest?.exists ?? item.exists;
+      try {
+        if (state === "complete" && exists !== false) {
+          await chrome.downloads.open(item.downloadId);
+          await chrome.downloads.show(item.downloadId);
+        } else {
+          await chrome.downloads.show(item.downloadId);
+        }
+      } catch (err) {
+        console.warn("Spotlight: failed to open download", err);
+        throw err;
+      }
+      return;
+    }
+
     await chrome.tabs.create({ url: item.url });
   }
 

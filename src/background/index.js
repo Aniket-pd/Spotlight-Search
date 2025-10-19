@@ -12,12 +12,14 @@ import {
   registerDataInvalidationEvents,
   registerActionClick,
 } from "./events.js";
+import { createDownloadService } from "./downloads.js";
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
 const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
+const downloads = createDownloadService({ context });
 
 registerNavigationListeners(navigation);
 
@@ -27,6 +29,7 @@ registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  downloads,
 });
 
 registerLifecycleEvents(context);

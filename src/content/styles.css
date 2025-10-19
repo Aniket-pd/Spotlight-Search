@@ -305,6 +305,134 @@
   white-space: nowrap;
 }
 
+.spotlight-result-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.spotlight-result-title-row .spotlight-result-title {
+  flex: 1 1 auto;
+  min-width: 160px;
+}
+
+.download-inline-info {
+  flex: 0 1 240px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spotlight-download-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.spotlight-download-actions.hidden {
+  display: none;
+}
+
+.spotlight-download-action {
+  border: none;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.spotlight-download-action:hover {
+  background: rgba(118, 141, 255, 0.45);
+  color: #fff;
+}
+
+.spotlight-download-action.primary {
+  background: linear-gradient(135deg, rgba(118, 141, 255, 0.85), rgba(96, 204, 255, 0.7));
+  color: #fff;
+}
+
+.spotlight-download-action.primary:hover {
+  background: linear-gradient(135deg, rgba(118, 141, 255, 1), rgba(56, 189, 248, 0.85));
+}
+
+.download-status-line {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.spotlight-download-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.spotlight-download-progress.hidden {
+  display: none;
+}
+
+.download-progress-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.download-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  transition: width 0.22s ease;
+}
+
+.download-progress-percent {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  min-width: 36px;
+  text-align: right;
+}
+
+.spotlight-result-icon-download {
+  background: rgba(56, 189, 248, 0.2);
+  color: #7dd3fc;
+}
+
+.spotlight-result-download:hover .spotlight-result-icon-download,
+.spotlight-result-download.active .spotlight-result-icon-download {
+  background: rgba(56, 189, 248, 0.32);
+  color: #fff;
+}
+
+.spotlight-download-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.spotlight-result-download.download-complete .download-inline-info,
+.spotlight-result-download.download-complete .download-status-line {
+  color: rgba(134, 239, 172, 0.9);
+}
+
+.spotlight-result-download.download-interrupted .download-inline-info,
+.spotlight-result-download.download-interrupted .download-status-line {
+  color: rgba(252, 165, 165, 0.9);
+}
+
+.spotlight-result-download.download-paused .download-inline-info {
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .spotlight-result-meta {
   display: flex;
   align-items: center;
