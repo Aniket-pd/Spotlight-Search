@@ -1384,7 +1384,17 @@ function handleDownloadsPortMessage(message) {
     return;
   }
   if (message.type === "download-update" && message.download) {
+    const downloadId = message.download.downloadId;
     applyDownloadLiveData(message.download);
+    if (typeof downloadId === "number") {
+      if (downloadRowRefs.has(downloadId)) {
+        scheduleDownloadRowRefresh(downloadId);
+      } else if (isOpen) {
+        refreshVisibleDownloads();
+      }
+    } else if (isOpen) {
+      refreshVisibleDownloads();
+    }
   }
 }
 
