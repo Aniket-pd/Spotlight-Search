@@ -9,6 +9,8 @@ let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
 let shadowStyleLinkEl = null;
+let shadowHostObserver = null;
+let observedBody = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -38,6 +40,7 @@ let pointerNavigationSuspended = false;
 let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
+let overlayGuardsInstalled = false;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -147,8 +150,10 @@ function ensureShadowRoot() {
   shadowHostEl.style.inset = "0";
   shadowHostEl.style.zIndex = "2147483647";
   shadowHostEl.style.display = "none";
+  shadowHostEl.style.contain = "layout style paint";
+  shadowHostEl.style.pointerEvents = "none";
 
-  shadowRootEl = shadowHostEl.attachShadow({ mode: "open" });
+  shadowRootEl = shadowHostEl.attachShadow({ mode: "open", delegatesFocus: true });
 
   shadowStyleLinkEl = document.createElement("link");
   shadowStyleLinkEl.rel = "stylesheet";
@@ -173,7 +178,36 @@ function ensureShadowRoot() {
 
   document.body.appendChild(shadowHostEl);
 
+  ensureShadowHostObserver();
+
   return shadowRootEl;
+}
+
+function ensureShadowHostObserver() {
+  if (!document.body || shadowHostObserver) {
+    return;
+  }
+
+  shadowHostObserver = new MutationObserver(() => {
+    if (!shadowHostEl || !document.body) {
+      return;
+    }
+
+    if (shadowHostEl.parentElement !== document.body) {
+      document.body.appendChild(shadowHostEl);
+    }
+
+    if (observedBody !== document.body) {
+      if (document.body) {
+        shadowHostObserver.observe(document.body, { childList: true });
+        observedBody = document.body;
+      }
+    }
+  });
+
+  shadowHostObserver.observe(document.documentElement, { childList: true });
+  shadowHostObserver.observe(document.body, { childList: true });
+  observedBody = document.body;
 }
 
 async function prepareOverlay() {
@@ -303,13 +337,25 @@ function createOverlay() {
   renderSubfilters();
 
   overlayEl.addEventListener("click", (event) => {
-    if (event.target === overlayEl) {
-      closeOverlay();
+    if (event.target !== overlayEl) {
+      return;
     }
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    closeOverlay();
   });
 
-  inputEl.addEventListener("input", handleInputChange);
-  inputEl.addEventListener("keydown", handleInputKeydown);
+  inputEl.addEventListener("input", (event) => {
+    event.stopPropagation();
+    handleInputChange();
+  });
+  inputEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    handleInputKeydown(event);
+  });
+  inputEl.addEventListener("keyup", (event) => {
+    event.stopPropagation();
+  });
   inputEl.addEventListener("focus", () => {
     if (inputContainerEl) {
       inputContainerEl.classList.add("focused");
@@ -321,6 +367,64 @@ function createOverlay() {
     }
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
+
+  installOverlayGuards();
+}
+
+function installOverlayGuards() {
+  if (!overlayEl || overlayGuardsInstalled) {
+    return;
+  }
+
+  overlayGuardsInstalled = true;
+
+  const bubbleBlockers = [
+    "mousedown",
+    "mouseup",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "click",
+    "dblclick",
+    "contextmenu",
+    "wheel",
+    "touchstart",
+    "touchmove",
+    "touchend",
+    "focusin",
+    "compositionstart",
+    "compositionupdate",
+    "compositionend",
+    "paste",
+    "copy",
+    "cut",
+  ];
+
+  const blockIfOpen = (event) => {
+    if (!isOpen) {
+      return;
+    }
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  };
+
+  bubbleBlockers.forEach((type) => {
+    overlayEl.addEventListener(type, blockIfOpen);
+  });
+
+  if (shadowRootEl) {
+    const stopKeys = (event) => {
+      if (!isOpen) {
+        return;
+      }
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    ["keydown", "keypress", "keyup"].forEach((type) => {
+      shadowRootEl.addEventListener(type, stopKeys);
+    });
+  }
 }
 
 function resetSlashMenuState() {
@@ -676,6 +780,7 @@ async function openOverlay() {
     document.body.appendChild(shadowHostEl);
   }
   shadowHostEl.style.display = "block";
+  shadowHostEl.style.pointerEvents = "auto";
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -693,6 +798,7 @@ function closeOverlay() {
   isOpen = false;
   if (shadowHostEl) {
     shadowHostEl.style.display = "none";
+    shadowHostEl.style.pointerEvents = "none";
   }
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
