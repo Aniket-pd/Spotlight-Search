@@ -15,7 +15,11 @@ import {
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
+const executeCommand = createCommandExecutor({
+  tabActions,
+  scheduleRebuild: context.scheduleRebuild,
+  setTheme: context.setTheme,
+});
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 

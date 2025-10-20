@@ -18,11 +18,14 @@ export function registerMessageHandlers({
       context
         .ensureIndex()
         .then((data) => {
-          const payload =
-            runSearch(message.query || "", data, {
-              subfilter: message.subfilter,
-              navigation: navigationState,
-            }) || {};
+          const searchOptions = {
+            subfilter: message.subfilter,
+            navigation: navigationState,
+          };
+          if (typeof context.getTheme === "function") {
+            searchOptions.commandContext = { theme: context.getTheme() };
+          }
+          const payload = runSearch(message.query || "", data, searchOptions) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
           }

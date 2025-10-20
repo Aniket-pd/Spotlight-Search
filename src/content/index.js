@@ -5,6 +5,7 @@ const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+const THEME_STORAGE_KEY = "spotlightTheme";
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
@@ -41,6 +42,7 @@ let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
+let currentTheme = "dark";
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -56,6 +58,63 @@ const lazyList = createLazyList(
     });
   }
 );
+
+function normalizeTheme(theme) {
+  return theme === "light" ? "light" : "dark";
+}
+
+function applyTheme(theme) {
+  const normalized = normalizeTheme(theme);
+  currentTheme = normalized;
+  if (shadowHostEl) {
+    shadowHostEl.dataset.theme = normalized;
+  }
+  if (shadowContentEl) {
+    shadowContentEl.dataset.theme = normalized;
+  }
+}
+
+function initializeTheme() {
+  if (!chrome?.storage?.local) {
+    applyTheme(currentTheme);
+    return;
+  }
+
+  const handleResult = (result) => {
+    const stored = result && typeof result[THEME_STORAGE_KEY] === "string" ? result[THEME_STORAGE_KEY] : null;
+    if (stored) {
+      applyTheme(stored);
+      return;
+    }
+    applyTheme(currentTheme);
+  };
+
+  try {
+    const maybePromise = chrome.storage.local.get([THEME_STORAGE_KEY]);
+    if (maybePromise && typeof maybePromise.then === "function") {
+      maybePromise
+        .then((result) => {
+          handleResult(result || {});
+        })
+        .catch((err) => {
+          console.warn("Spotlight: failed to read theme preference", err);
+          applyTheme(currentTheme);
+        });
+      return;
+    }
+    chrome.storage.local.get([THEME_STORAGE_KEY], (result) => {
+      if (chrome.runtime.lastError) {
+        console.warn("Spotlight: failed to read theme preference", chrome.runtime.lastError);
+        applyTheme(currentTheme);
+        return;
+      }
+      handleResult(result || {});
+    });
+  } catch (err) {
+    console.warn("Spotlight: failed to read theme preference", err);
+    applyTheme(currentTheme);
+  }
+}
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -132,6 +191,8 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .filter(Boolean),
 }));
 
+initializeTheme();
+
 function ensureShadowRoot() {
   if (!document.body) {
     return null;
@@ -177,6 +238,8 @@ function ensureShadowRoot() {
   shadowRootEl.appendChild(shadowContentEl);
 
   document.body.appendChild(shadowHostEl);
+
+  applyTheme(currentTheme);
 
   ensureShadowHostObserver();
 
@@ -1861,13 +1924,19 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
-    void openOverlay();
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      void openOverlay();
+    }
+    return;
+  }
+  if (message.type === "SPOTLIGHT_THEME") {
+    applyTheme(message.theme);
   }
 });
 

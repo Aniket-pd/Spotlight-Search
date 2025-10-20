@@ -445,6 +445,36 @@ const STATIC_COMMANDS = [
       return context.tabCount > 1;
     },
   },
+  {
+    id: "command:dark-mode-on",
+    title: "Dark mode on",
+    aliases: ["enable dark mode", "switch to dark mode", "night mode"],
+    action: "dark-mode-on",
+    answer() {
+      return "Switches Spotlight to the dark theme.";
+    },
+    description() {
+      return "Appearance · Dark theme";
+    },
+    isAvailable(context) {
+      return (context?.theme || "dark") !== "dark";
+    },
+  },
+  {
+    id: "command:dark-mode-off",
+    title: "Dark mode off",
+    aliases: ["disable dark mode", "light mode", "switch to light mode"],
+    action: "dark-mode-off",
+    answer() {
+      return "Switches Spotlight to the light theme.";
+    },
+    description() {
+      return "Appearance · Light theme";
+    },
+    isAvailable(context) {
+      return (context?.theme || "dark") !== "light";
+    },
+  },
 ];
 
 function formatTabCount(count) {
@@ -1287,7 +1317,11 @@ export function runSearch(query, data, options = {}) {
       ? { type: filterType, options: availableSubfilters, activeId: activeSubfilterId }
       : null;
   const subfilterContext = { historyBoundaries };
-  const commandContext = { tabCount, tabs };
+  const commandContext = {
+    ...(options?.commandContext && typeof options.commandContext === "object" ? options.commandContext : {}),
+    tabCount,
+    tabs,
+  };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {

@@ -1,12 +1,16 @@
 const DEFAULT_REBUILD_DELAY = 600;
+const THEME_STORAGE_KEY = "spotlightTheme";
 
 export function createBackgroundContext({ buildIndex }) {
   const state = {
     indexData: null,
     buildingPromise: null,
     rebuildTimer: null,
+    theme: "dark",
   };
   const faviconCache = new Map();
+
+  void loadThemePreference();
 
   async function rebuildIndex() {
     if (!state.buildingPromise) {
@@ -40,6 +44,71 @@ export function createBackgroundContext({ buildIndex }) {
       state.rebuildTimer = null;
       rebuildIndex().catch((err) => console.error("Spotlight: rebuild failed", err));
     }, delay);
+  }
+
+  async function loadThemePreference() {
+    if (!chrome?.storage?.local) {
+      return;
+    }
+    try {
+      const result = await chrome.storage.local.get({ [THEME_STORAGE_KEY]: state.theme });
+      const storedTheme = typeof result?.[THEME_STORAGE_KEY] === "string" ? result[THEME_STORAGE_KEY] : null;
+      if (storedTheme) {
+        state.theme = storedTheme === "light" ? "light" : "dark";
+      }
+    } catch (err) {
+      console.warn("Spotlight: failed to load theme preference", err);
+    }
+  }
+
+  function getTheme() {
+    return state.theme === "light" ? "light" : "dark";
+  }
+
+  async function setTheme(theme) {
+    const normalized = theme === "light" ? "light" : "dark";
+    if (state.theme === normalized) {
+      return normalized;
+    }
+    state.theme = normalized;
+
+    if (chrome?.storage?.local) {
+      try {
+        await chrome.storage.local.set({ [THEME_STORAGE_KEY]: normalized });
+      } catch (err) {
+        console.warn("Spotlight: failed to persist theme preference", err);
+      }
+    }
+
+    await broadcastTheme(normalized);
+    return normalized;
+  }
+
+  async function broadcastTheme(theme) {
+    if (!chrome?.tabs?.query) {
+      return;
+    }
+    try {
+      const tabs = await chrome.tabs.query({});
+      await Promise.all(
+        tabs
+          .filter((tab) => typeof tab?.id === "number")
+          .map(
+            (tab) =>
+              new Promise((resolve) => {
+                try {
+                  chrome.tabs.sendMessage(tab.id, { type: "SPOTLIGHT_THEME", theme }, () => {
+                    resolve();
+                  });
+                } catch (err) {
+                  resolve();
+                }
+              })
+          )
+      );
+    } catch (err) {
+      console.warn("Spotlight: failed to broadcast theme update", err);
+    }
   }
 
   async function sendToggleMessage() {
@@ -118,5 +187,7 @@ export function createBackgroundContext({ buildIndex }) {
     openItem,
     getItemById,
     faviconCache,
+    getTheme,
+    setTheme,
   };
 }
