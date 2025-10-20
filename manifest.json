@@ -13,7 +13,7 @@
     "downloads",
     "topSites"
   ],
-  "host_permissions": ["file:///*"],
+  "host_permissions": ["<all_urls>", "file:///*"],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"

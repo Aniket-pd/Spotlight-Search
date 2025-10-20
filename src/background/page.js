@@ -71,6 +71,7 @@ async function togglePageDarkMode() {
     await chrome.scripting.executeScript({
       target: { tabId: activeTab.id },
       func: injectToggleScript,
+      world: "MAIN",
     });
   } catch (err) {
     console.warn("Spotlight: failed to toggle page dark mode", err);
