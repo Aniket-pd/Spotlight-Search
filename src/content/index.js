@@ -19,6 +19,7 @@ let requestCounter = 0;
 let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
+let scrollPositionBackup = { x: 0, y: 0 };
 let statusEl = null;
 let ghostEl = null;
 let inputContainerEl = null;
@@ -144,6 +145,28 @@ function ensureShadowRoot() {
   shadowRootEl.appendChild(shadowContentEl);
 
   return shadowRootEl;
+}
+
+function captureScrollPosition() {
+  const x =
+    window.scrollX !== undefined
+      ? window.scrollX
+      : window.pageXOffset !== undefined
+      ? window.pageXOffset
+      : document.documentElement?.scrollLeft || document.body?.scrollLeft || 0;
+  const y =
+    window.scrollY !== undefined
+      ? window.scrollY
+      : window.pageYOffset !== undefined
+      ? window.pageYOffset
+      : document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+  scrollPositionBackup = { x, y };
+}
+
+function restoreScrollPosition() {
+  if (typeof window.scrollTo === "function") {
+    window.scrollTo(scrollPositionBackup.x, scrollPositionBackup.y);
+  }
 }
 
 function createOverlay() {
@@ -574,6 +597,7 @@ function openOverlay() {
     createOverlay();
   }
 
+  captureScrollPosition();
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -590,10 +614,12 @@ function openOverlay() {
 
   if (shadowHostEl && !shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
+    restoreScrollPosition();
   }
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
+  restoreScrollPosition();
 
   requestResults("");
   setTimeout(() => {
@@ -610,6 +636,7 @@ function closeOverlay() {
     shadowHostEl.parentElement.removeChild(shadowHostEl);
   }
   document.body.style.overflow = bodyOverflowBackup;
+  restoreScrollPosition();
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
