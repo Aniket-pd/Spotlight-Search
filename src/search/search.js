@@ -412,6 +412,16 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
   return true;
 }
 
+function describeDarkModeStatus(context) {
+  if (context?.darkModeEnabled === true) {
+    return "Currently on";
+  }
+  if (context?.darkModeEnabled === false) {
+    return "Currently off";
+  }
+  return "Chrome appearance";
+}
+
 const STATIC_COMMANDS = [
   {
     id: "command:tab-sort",
@@ -445,6 +455,60 @@ const STATIC_COMMANDS = [
     },
     isAvailable(context) {
       return context.tabCount > 1;
+    },
+  },
+  {
+    id: "command:dark-mode-on",
+    title: "Turn on dark mode",
+    aliases: [
+      "dark mode",
+      "dark mode on",
+      "enable dark mode",
+      "turn on dark mode",
+      "enable dark theme",
+      "dark theme on",
+    ],
+    action: "appearance-dark-mode",
+    args: { enabled: true },
+    answer(context) {
+      if (context?.darkModeEnabled === true) {
+        return "Dark mode is already enabled.";
+      }
+      return "Enables Chrome's auto dark theme for web content.";
+    },
+    description(context) {
+      const status = describeDarkModeStatus(context);
+      return `${status} · Dark mode`;
+    },
+    isAvailable(context) {
+      return context?.darkModeSupported !== false;
+    },
+  },
+  {
+    id: "command:dark-mode-off",
+    title: "Turn off dark mode",
+    aliases: [
+      "dark mode off",
+      "disable dark mode",
+      "turn off dark mode",
+      "disable dark theme",
+      "light mode",
+      "light theme",
+    ],
+    action: "appearance-dark-mode",
+    args: { enabled: false },
+    answer(context) {
+      if (context?.darkModeEnabled === false) {
+        return "Dark mode is already disabled.";
+      }
+      return "Disables Chrome's auto dark theme for web content.";
+    },
+    description(context) {
+      const status = describeDarkModeStatus(context);
+      return `${status} · Dark mode`;
+    },
+    isAvailable(context) {
+      return context?.darkModeSupported !== false;
     },
   },
   {
@@ -856,20 +920,25 @@ function findBestStaticCommand(query, context) {
     }
     const answer = command.answer ? command.answer(context) : "";
     const description = command.description ? command.description(context) : answer;
+    const args = typeof command.args === "function" ? command.args(context) : command.args;
+    const result = {
+      id: command.id,
+      title: command.title,
+      url: description,
+      description,
+      type: "command",
+      command: command.action,
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    };
+    if (args !== undefined) {
+      result.args = args;
+    }
     return {
       ghostText: command.title,
       answer,
-      result: {
-        id: command.id,
-        title: command.title,
-        url: description,
-        description,
-        type: "command",
-        command: command.action,
-        label: "Command",
-        score: COMMAND_SCORE,
-        faviconUrl: COMMAND_ICON_DATA_URL,
-      },
+      result,
     };
   }
 
@@ -1407,7 +1476,10 @@ export function runSearch(query, data, options = {}) {
       : null;
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
-  const commandContext = { tabCount, tabs, audibleTabCount };
+  const darkModeEnabled =
+    typeof metadata.darkModeEnabled === "boolean" ? metadata.darkModeEnabled : null;
+  const darkModeSupported = metadata.darkModeSupported === true;
+  const commandContext = { tabCount, tabs, audibleTabCount, darkModeEnabled, darkModeSupported };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {

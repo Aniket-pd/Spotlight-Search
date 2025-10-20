@@ -6,6 +6,7 @@ import { createCommandExecutor } from "./commands.js";
 import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
+import { createAppearanceActions } from "./appearance.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -15,7 +16,12 @@ import {
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
+const appearanceActions = createAppearanceActions();
+const executeCommand = createCommandExecutor({
+  tabActions,
+  appearanceActions,
+  scheduleRebuild: context.scheduleRebuild,
+});
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 

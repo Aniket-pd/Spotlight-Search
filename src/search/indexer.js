@@ -1,3 +1,5 @@
+import { readAutomaticDarkModeState } from "../background/appearance.js";
+
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 500;
@@ -367,6 +369,12 @@ export async function buildIndex() {
     downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
     topSiteCount: items.reduce((count, item) => (item.type === "topSite" ? count + 1 : count), 0),
   };
+
+  const darkModeState = await readAutomaticDarkModeState();
+  metadata.darkModeSupported = Boolean(darkModeState.supported);
+  if (typeof darkModeState.enabled === "boolean") {
+    metadata.darkModeEnabled = darkModeState.enabled;
+  }
 
   return {
     items,
