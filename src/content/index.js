@@ -1188,18 +1188,80 @@ function updateTypingTestScroll() {
   if (!typingTestElements.wordsWrap || !typingTestElements.viewport || !typingTestState) {
     return;
   }
+
   const { wordsWrap, viewport } = typingTestElements;
+  const state = typingTestState;
   const activeEl = wordsWrap.querySelector(".typing-word.active");
+
   if (!activeEl) {
+    state.scrollOffset = 0;
     wordsWrap.style.setProperty("--typing-offset", "0px");
     return;
   }
-  const offset = activeEl.offsetTop;
-  const desired = Math.max(0, offset - viewport.clientHeight * 0.35);
-  const maxOffset = Math.max(0, wordsWrap.scrollHeight - viewport.clientHeight);
-  const nextOffset = Math.min(desired, maxOffset);
-  typingTestState.scrollOffset = nextOffset;
-  wordsWrap.style.setProperty("--typing-offset", `${-nextOffset}px`);
+
+  const viewportRect = viewport.getBoundingClientRect();
+  if (viewportRect.height <= 0 || viewportRect.width <= 0) {
+    state.scrollOffset = 0;
+    wordsWrap.style.setProperty("--typing-offset", "0px");
+    return;
+  }
+
+  const activeRect = activeEl.getBoundingClientRect();
+  const styles = getComputedStyle(wordsWrap);
+
+  let rowGap = parseFloat(styles.rowGap || styles.getPropertyValue("row-gap"));
+  if (!Number.isFinite(rowGap)) {
+    const gapValue = styles.gap || styles.getPropertyValue("gap");
+    rowGap = parseFloat(gapValue);
+  }
+  if (!Number.isFinite(rowGap)) {
+    rowGap = 0;
+  }
+
+  let lineHeight = activeRect.height;
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+    lineHeight = parseFloat(styles.lineHeight);
+  }
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+    const fontSize = parseFloat(styles.fontSize);
+    if (Number.isFinite(fontSize)) {
+      lineHeight = fontSize * 1.4;
+    } else {
+      lineHeight = viewportRect.height / 3;
+    }
+  }
+
+  const rowHeight = Math.max(1, lineHeight + rowGap);
+  const currentOffset = Number.isFinite(state.scrollOffset) ? state.scrollOffset : 0;
+  const maxOffset = Math.max(0, wordsWrap.scrollHeight - viewportRect.height);
+  const clampOffset = (value) => Math.min(Math.max(value, 0), maxOffset);
+
+  const relativeTop = activeRect.top - viewportRect.top;
+  const relativeBottom = activeRect.bottom - viewportRect.top;
+
+  const secondLineTarget = rowHeight;
+  const thirdLineThreshold = Math.max(rowHeight * 2 - Math.max(2, rowGap * 0.75), secondLineTarget + 1);
+  const topThreshold = -Math.max(2, rowHeight * 0.35);
+
+  let nextOffset = currentOffset;
+
+  if (relativeTop < topThreshold) {
+    const desired = currentOffset + relativeTop;
+    nextOffset = clampOffset(desired);
+  } else if (relativeTop >= thirdLineThreshold || relativeBottom > viewportRect.height) {
+    const desired = currentOffset + (relativeTop - secondLineTarget);
+    nextOffset = clampOffset(desired);
+  }
+
+  if (!Number.isFinite(nextOffset)) {
+    nextOffset = 0;
+  }
+
+  state.scrollOffset = nextOffset;
+  const nextValue = `${-nextOffset}px`;
+  if (wordsWrap.style.getPropertyValue("--typing-offset") !== nextValue) {
+    wordsWrap.style.setProperty("--typing-offset", nextValue);
+  }
 }
 
 function updateTypingTestCaret() {
