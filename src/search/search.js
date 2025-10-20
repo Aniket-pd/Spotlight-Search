@@ -488,13 +488,13 @@ const STATIC_COMMANDS = [
     ],
     action: "theme-dark-mode",
     answer() {
-      return "Switches Chrome's appearance setting to the dark theme.";
+      return "Applies Spotlight's dark Chrome theme instantly.";
     },
     description() {
-      return "Chrome appearance · Dark theme";
+      return "Browser UI · Spotlight dark theme";
     },
     isAvailable() {
-      return true;
+      return !!(chrome?.theme && typeof chrome.theme.update === "function");
     },
   },
   {
@@ -509,13 +509,13 @@ const STATIC_COMMANDS = [
     ],
     action: "theme-light-mode",
     answer() {
-      return "Switches Chrome's appearance setting back to the light theme.";
+      return "Restores your previous Chrome theme or the default look.";
     },
     description() {
-      return "Chrome appearance · Light theme";
+      return "Browser UI · Restore saved theme";
     },
     isAvailable() {
-      return true;
+      return !!(chrome?.theme && typeof chrome.theme.update === "function");
     },
   },
 ];
