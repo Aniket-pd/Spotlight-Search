@@ -228,17 +228,15 @@
 .typing-test {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   width: 100%;
-  max-width: 640px;
-  margin: 0 auto;
   gap: 28px;
   color: rgba(255, 255, 255, 0.85);
-  padding: 0 28px;
-  --typing-font-size: clamp(22px, 4.4vw, 30px);
-  --typing-line-height: 1.55;
+  --typing-horizontal-padding: clamp(18px, 4vw, 28px);
+  --typing-font-size: clamp(18px, 3.4vw, 24px);
+  --typing-line-height: 1.5;
   --typing-visible-lines: 3;
-  --typing-row-gap: 18px;
+  --typing-row-gap: 16px;
 }
 
 .typing-test-header {
@@ -251,6 +249,7 @@
   text-transform: uppercase;
   letter-spacing: 0.18em;
   color: rgba(255, 255, 255, 0.5);
+  padding: 0 var(--typing-horizontal-padding);
 }
 
 .typing-test-meta {
@@ -334,7 +333,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 0 24px;
+  padding: 0 var(--typing-horizontal-padding);
   position: relative;
   overflow: hidden;
 }
@@ -417,6 +416,7 @@
   gap: 20px;
   width: 100%;
   align-items: center;
+  padding: 0 var(--typing-horizontal-padding);
 }
 
 .typing-test-results[hidden] {
@@ -490,11 +490,12 @@
 }
 
 .typing-test-footer {
-  font-size: 12px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.45);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   text-align: center;
+  padding: 0 var(--typing-horizontal-padding);
 }
 
 .spotlight-subfilter-count {
