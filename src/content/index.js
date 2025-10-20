@@ -8,6 +8,7 @@ const LAZY_LOAD_THRESHOLD = 160;
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
+let shadowStyleLinkEl = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -34,6 +35,9 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 let pointerNavigationSuspended = false;
+let shadowStylesLoaded = false;
+let shadowStylesPromise = null;
+let overlayPreparationPromise = null;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -126,6 +130,10 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 }));
 
 function ensureShadowRoot() {
+  if (!document.body) {
+    return null;
+  }
+
   if (shadowRootEl && shadowContentEl) {
     if (shadowHostEl && !shadowHostEl.parentElement) {
       document.body.appendChild(shadowHostEl);
@@ -142,10 +150,22 @@ function ensureShadowRoot() {
 
   shadowRootEl = shadowHostEl.attachShadow({ mode: "open" });
 
-  const styleLink = document.createElement("link");
-  styleLink.rel = "stylesheet";
-  styleLink.href = chrome.runtime.getURL("src/content/styles.css");
-  shadowRootEl.appendChild(styleLink);
+  shadowStyleLinkEl = document.createElement("link");
+  shadowStyleLinkEl.rel = "stylesheet";
+  shadowStyleLinkEl.href = chrome.runtime.getURL("src/content/styles.css");
+
+  shadowStylesPromise = new Promise((resolve) => {
+    const markReady = () => {
+      shadowStylesLoaded = true;
+      resolve();
+    };
+    shadowStyleLinkEl.addEventListener("load", markReady, { once: true });
+    shadowStyleLinkEl.addEventListener("error", markReady, { once: true });
+    shadowRootEl.appendChild(shadowStyleLinkEl);
+    if (shadowStyleLinkEl.sheet) {
+      markReady();
+    }
+  });
 
   shadowContentEl = document.createElement("div");
   shadowContentEl.className = "spotlight-root";
@@ -154,6 +174,58 @@ function ensureShadowRoot() {
   document.body.appendChild(shadowHostEl);
 
   return shadowRootEl;
+}
+
+async function prepareOverlay() {
+  if (overlayPreparationPromise) {
+    return overlayPreparationPromise;
+  }
+
+  overlayPreparationPromise = (async () => {
+    if (!document.body) {
+      await new Promise((resolve) => {
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", resolve, { once: true });
+        } else {
+          const observer = new MutationObserver(() => {
+            if (document.body) {
+              observer.disconnect();
+              resolve();
+            }
+          });
+          observer.observe(document.documentElement, { childList: true });
+          if (document.body) {
+            observer.disconnect();
+            resolve();
+          }
+        }
+      });
+    }
+
+    ensureShadowRoot();
+
+    if (!overlayEl) {
+      createOverlay();
+    }
+
+    if (overlayEl && shadowContentEl && !shadowContentEl.contains(overlayEl)) {
+      shadowContentEl.appendChild(overlayEl);
+    }
+
+    if (!shadowStylesLoaded && shadowStylesPromise) {
+      try {
+        await shadowStylesPromise;
+      } catch (error) {
+        // Ignore stylesheet loading failures so the overlay can still open unstyled.
+      }
+    }
+  })();
+
+  try {
+    await overlayPreparationPromise;
+  } finally {
+    overlayPreparationPromise = null;
+  }
 }
 
 function createOverlay() {
@@ -573,15 +645,17 @@ function handleSubfilterClick(option) {
   requestResults(inputEl.value);
 }
 
-function openOverlay() {
+async function openOverlay() {
   if (isOpen) {
     inputEl.focus();
     inputEl.select();
     return;
   }
 
-  if (!overlayEl) {
-    createOverlay();
+  await prepareOverlay();
+
+  if (!overlayEl || !shadowHostEl) {
+    return;
   }
 
   isOpen = true;
@@ -598,12 +672,10 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
-  if (shadowHostEl) {
-    if (!shadowHostEl.parentElement) {
-      document.body.appendChild(shadowHostEl);
-    }
-    shadowHostEl.style.display = "block";
+  if (!shadowHostEl.parentElement) {
+    document.body.appendChild(shadowHostEl);
   }
+  shadowHostEl.style.display = "block";
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -1689,6 +1761,18 @@ chrome.runtime.onMessage.addListener((message) => {
   if (isOpen) {
     closeOverlay();
   } else {
-    openOverlay();
+    void openOverlay();
   }
 });
+
+if (document.readyState === "loading") {
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      ensureShadowRoot();
+    },
+    { once: true }
+  );
+} else {
+  ensureShadowRoot();
+}
