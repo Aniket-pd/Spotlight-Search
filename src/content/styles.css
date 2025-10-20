@@ -357,7 +357,8 @@
 
 .typing-word {
   display: inline-flex;
-  gap: 0.08em;
+  --typing-char-gap: 0.08em;
+  gap: var(--typing-char-gap);
   color: rgba(255, 255, 255, 0.32);
   position: relative;
   transition: color 0.16s ease;
@@ -400,7 +401,7 @@
   position: absolute;
   left: 0;
   bottom: -0.35em;
-  width: 100%;
+  width: var(--typing-caret-width, 100%);
   height: 2px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.75);
@@ -408,6 +409,15 @@
 
 .typing-char.caret.placeholder {
   color: transparent;
+  min-width: 0;
+  width: 0;
+  padding: 0;
+  --typing-caret-width: 1ch;
+  margin-inline-start: calc(-1 * var(--typing-char-gap, 0.08em));
+}
+
+.typing-char.caret.placeholder::after {
+  left: 0;
 }
 
 .typing-test-results {

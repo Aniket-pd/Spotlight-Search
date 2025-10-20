@@ -1164,7 +1164,8 @@ function renderTypingTestWords() {
       } else {
         const caretSpan = document.createElement("span");
         caretSpan.className = "typing-char caret placeholder";
-        caretSpan.textContent = "\u00A0";
+        caretSpan.setAttribute("aria-hidden", "true");
+        caretSpan.textContent = "";
         wordEl.appendChild(caretSpan);
       }
     }
