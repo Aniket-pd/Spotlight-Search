@@ -13,6 +13,7 @@ let shadowHostObserver = null;
 let observedBody = null;
 let overlayEl = null;
 let containerEl = null;
+let inputWrapperEl = null;
 let inputEl = null;
 let resultsEl = null;
 let resultsState = [];
@@ -41,6 +42,30 @@ let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
+let activityContainerEl = null;
+let activeActivity = null;
+
+const typingTestElements = {
+  root: null,
+  viewport: null,
+  wordsWrap: null,
+  timer: null,
+  durations: null,
+  durationButtons: [],
+  results: null,
+  wpmValue: null,
+  rawValue: null,
+  accuracyValue: null,
+  correctValue: null,
+  incorrectValue: null,
+  extraValue: null,
+  missedValue: null,
+  instructions: null,
+};
+
+let typingTestState = null;
+let typingTestDurationIndex = 0;
+let typingTestWordIdCounter = 0;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -131,6 +156,1377 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .map((token) => (token || "").toLowerCase())
     .filter(Boolean),
 }));
+
+const TYPING_TEST_DURATIONS = [15, 30, 60];
+const TYPING_TEST_INITIAL_WORDS = 120;
+const TYPING_TEST_MIN_BUFFER = 40;
+const TYPING_TEST_WORDS = [
+  "able",
+  "about",
+  "above",
+  "accept",
+  "across",
+  "act",
+  "action",
+  "add",
+  "after",
+  "again",
+  "age",
+  "agency",
+  "agent",
+  "agree",
+  "ahead",
+  "air",
+  "alike",
+  "allow",
+  "almost",
+  "alone",
+  "along",
+  "already",
+  "also",
+  "always",
+  "among",
+  "amount",
+  "animal",
+  "answer",
+  "anyone",
+  "apart",
+  "apple",
+  "area",
+  "arrive",
+  "around",
+  "ask",
+  "assume",
+  "attack",
+  "aunt",
+  "author",
+  "awake",
+  "baby",
+  "back",
+  "balance",
+  "ball",
+  "band",
+  "bank",
+  "base",
+  "basic",
+  "basket",
+  "beach",
+  "bear",
+  "beat",
+  "beauty",
+  "became",
+  "become",
+  "before",
+  "begin",
+  "behind",
+  "believe",
+  "below",
+  "benefit",
+  "best",
+  "better",
+  "between",
+  "beyond",
+  "bike",
+  "bird",
+  "birth",
+  "black",
+  "blade",
+  "blank",
+  "block",
+  "blood",
+  "board",
+  "body",
+  "book",
+  "border",
+  "born",
+  "borrow",
+  "both",
+  "bottom",
+  "brain",
+  "branch",
+  "brave",
+  "bread",
+  "break",
+  "bridge",
+  "bright",
+  "bring",
+  "broad",
+  "brother",
+  "brown",
+  "build",
+  "busy",
+  "buyer",
+  "cabin",
+  "cable",
+  "calm",
+  "camera",
+  "camp",
+  "capital",
+  "captain",
+  "car",
+  "card",
+  "care",
+  "carry",
+  "case",
+  "cash",
+  "catch",
+  "cause",
+  "center",
+  "chain",
+  "chair",
+  "chance",
+  "change",
+  "chart",
+  "cheap",
+  "check",
+  "child",
+  "choice",
+  "choose",
+  "circle",
+  "city",
+  "civil",
+  "claim",
+  "class",
+  "clean",
+  "clear",
+  "climb",
+  "clock",
+  "close",
+  "cloud",
+  "coast",
+  "coffee",
+  "cold",
+  "color",
+  "come",
+  "common",
+  "cook",
+  "cool",
+  "copy",
+  "corner",
+  "cotton",
+  "count",
+  "couple",
+  "course",
+  "cover",
+  "craft",
+  "create",
+  "credit",
+  "crew",
+  "crowd",
+  "culture",
+  "cup",
+  "cycle",
+  "daily",
+  "damage",
+  "dance",
+  "danger",
+  "dark",
+  "date",
+  "dawn",
+  "deal",
+  "debate",
+  "debt",
+  "decide",
+  "deep",
+  "degree",
+  "delay",
+  "deliver",
+  "demand",
+  "deny",
+  "depend",
+  "design",
+  "detail",
+  "develop",
+  "device",
+  "differ",
+  "dinner",
+  "direct",
+  "doctor",
+  "dollar",
+  "double",
+  "doubt",
+  "draft",
+  "drama",
+  "draw",
+  "dream",
+  "dress",
+  "drink",
+  "drive",
+  "drop",
+  "early",
+  "earth",
+  "east",
+  "easy",
+  "echo",
+  "edge",
+  "edit",
+  "effort",
+  "eight",
+  "either",
+  "elder",
+  "elect",
+  "email",
+  "empty",
+  "energy",
+  "enjoy",
+  "enter",
+  "equal",
+  "error",
+  "event",
+  "every",
+  "exact",
+  "expert",
+  "extra",
+  "fabric",
+  "face",
+  "fact",
+  "fair",
+  "faith",
+  "fall",
+  "family",
+  "farm",
+  "fast",
+  "fate",
+  "fault",
+  "favor",
+  "fear",
+  "feed",
+  "feel",
+  "field",
+  "fight",
+  "final",
+  "find",
+  "fine",
+  "fire",
+  "firm",
+  "first",
+  "fish",
+  "fit",
+  "five",
+  "fixed",
+  "flat",
+  "flight",
+  "floor",
+  "flow",
+  "focus",
+  "force",
+  "forest",
+  "forget",
+  "form",
+  "frame",
+  "fresh",
+  "friend",
+  "front",
+  "fruit",
+  "gain",
+  "game",
+  "garden",
+  "gather",
+  "gentle",
+  "giant",
+  "gift",
+  "girl",
+  "give",
+  "glass",
+  "global",
+  "goal",
+  "golden",
+  "good",
+  "grand",
+  "grant",
+  "grass",
+  "great",
+  "green",
+  "ground",
+  "group",
+  "grow",
+  "guard",
+  "guess",
+  "guide",
+  "habit",
+  "happy",
+  "harsh",
+  "hate",
+  "health",
+  "heart",
+  "heavy",
+  "help",
+  "hero",
+  "hide",
+  "high",
+  "hill",
+  "home",
+  "honor",
+  "hope",
+  "horse",
+  "hotel",
+  "hour",
+  "house",
+  "human",
+  "humor",
+  "ideal",
+  "image",
+  "impact",
+  "include",
+  "index",
+  "inside",
+  "invest",
+  "invite",
+  "island",
+  "issue",
+  "item",
+  "job",
+  "join",
+  "judge",
+  "jump",
+  "keep",
+  "key",
+  "kid",
+  "kind",
+  "king",
+  "kiss",
+  "knee",
+  "knife",
+  "label",
+  "lake",
+  "land",
+  "large",
+  "last",
+  "laugh",
+  "lead",
+  "learn",
+  "leave",
+  "legal",
+  "level",
+  "light",
+  "limit",
+  "listen",
+  "little",
+  "local",
+  "logic",
+  "long",
+  "loose",
+  "lose",
+  "loud",
+  "love",
+  "lucky",
+  "lunch",
+  "magic",
+  "major",
+  "make",
+  "manage",
+  "market",
+  "marry",
+  "match",
+  "maybe",
+  "mayor",
+  "meal",
+  "media",
+  "meet",
+  "member",
+  "memory",
+  "mental",
+  "menu",
+  "merit",
+  "metal",
+  "middle",
+  "might",
+  "minor",
+  "minute",
+  "mirror",
+  "model",
+  "modern",
+  "money",
+  "month",
+  "moral",
+  "motor",
+  "mount",
+  "move",
+  "movie",
+  "music",
+  "narrow",
+  "nation",
+  "nature",
+  "near",
+  "neat",
+  "need",
+  "never",
+  "night",
+  "noble",
+  "noise",
+  "north",
+  "note",
+  "novel",
+  "nurse",
+  "object",
+  "ocean",
+  "offer",
+  "office",
+  "often",
+  "open",
+  "option",
+  "order",
+  "other",
+  "ought",
+  "owner",
+  "pack",
+  "page",
+  "paint",
+  "pair",
+  "paper",
+  "park",
+  "part",
+  "party",
+  "peace",
+  "people",
+  "period",
+  "phone",
+  "phrase",
+  "piano",
+  "piece",
+  "pilot",
+  "pitch",
+  "place",
+  "plain",
+  "plan",
+  "plant",
+  "plate",
+  "play",
+  "point",
+  "police",
+  "policy",
+  "pool",
+  "poor",
+  "popular",
+  "power",
+  "press",
+  "price",
+  "pride",
+  "prime",
+  "print",
+  "prize",
+  "proof",
+  "proud",
+  "public",
+  "pure",
+  "push",
+  "quick",
+  "quiet",
+  "radio",
+  "raise",
+  "range",
+  "rapid",
+  "reach",
+  "ready",
+  "real",
+  "reason",
+  "recall",
+  "record",
+  "reduce",
+  "refer",
+  "region",
+  "relax",
+  "rely",
+  "remain",
+  "remind",
+  "remove",
+  "renew",
+  "rent",
+  "reply",
+  "report",
+  "rest",
+  "result",
+  "return",
+  "review",
+  "reward",
+  "rhythm",
+  "rice",
+  "rich",
+  "ride",
+  "right",
+  "ring",
+  "rise",
+  "river",
+  "road",
+  "rock",
+  "role",
+  "room",
+  "rough",
+  "round",
+  "route",
+  "royal",
+  "rule",
+  "rural",
+  "safe",
+  "sail",
+  "salad",
+  "sale",
+  "salt",
+  "same",
+  "save",
+  "scale",
+  "scene",
+  "school",
+  "score",
+  "scout",
+  "screen",
+  "search",
+  "seat",
+  "second",
+  "secret",
+  "section",
+  "secure",
+  "seed",
+  "seek",
+  "seem",
+  "select",
+  "self",
+  "sell",
+  "send",
+  "sense",
+  "series",
+  "serve",
+  "set",
+  "settle",
+  "seven",
+  "shadow",
+  "share",
+  "shift",
+  "shine",
+  "short",
+  "show",
+  "side",
+  "sight",
+  "signal",
+  "silent",
+  "silver",
+  "simple",
+  "since",
+  "skill",
+  "sleep",
+  "small",
+  "smart",
+  "smile",
+  "smooth",
+  "social",
+  "soft",
+  "solid",
+  "solve",
+  "sorry",
+  "sound",
+  "source",
+  "south",
+  "space",
+  "spare",
+  "speak",
+  "speed",
+  "spend",
+  "spirit",
+  "split",
+  "sport",
+  "spread",
+  "spring",
+  "square",
+  "staff",
+  "stage",
+  "stand",
+  "start",
+  "state",
+  "stay",
+  "steel",
+  "step",
+  "stick",
+  "still",
+  "stock",
+  "stone",
+  "stop",
+  "store",
+  "storm",
+  "story",
+  "street",
+  "strong",
+  "study",
+  "style",
+  "submit",
+  "sugar",
+  "summer",
+  "supply",
+  "sure",
+  "surface",
+  "sweet",
+  "table",
+  "tail",
+  "take",
+  "talent",
+  "talk",
+  "taste",
+  "teach",
+  "team",
+  "tell",
+  "tend",
+  "term",
+  "test",
+  "text",
+  "thank",
+  "theme",
+  "there",
+  "thick",
+  "thing",
+  "think",
+  "third",
+  "though",
+  "three",
+  "throw",
+  "tight",
+  "time",
+  "tiny",
+  "tired",
+  "title",
+  "today",
+  "topic",
+  "total",
+  "touch",
+  "tough",
+  "track",
+  "trade",
+  "train",
+  "travel",
+  "treat",
+  "tree",
+  "trend",
+  "trial",
+  "trust",
+  "truth",
+  "twice",
+  "type",
+  "under",
+  "union",
+  "unique",
+  "unit",
+  "upper",
+  "urban",
+  "usage",
+  "use",
+  "usual",
+  "value",
+  "vast",
+  "video",
+  "visit",
+  "voice",
+  "vote",
+  "wait",
+  "wake",
+  "walk",
+  "wall",
+  "want",
+  "warm",
+  "waste",
+  "watch",
+  "water",
+  "wave",
+  "wear",
+  "week",
+  "weight",
+  "welcome",
+  "west",
+  "wheel",
+  "while",
+  "white",
+  "whole",
+  "wide",
+  "wife",
+  "wild",
+  "will",
+  "wind",
+  "window",
+  "wine",
+  "wing",
+  "winner",
+  "winter",
+  "wise",
+  "wish",
+  "woman",
+  "wonder",
+  "world",
+  "worry",
+  "worth",
+  "would",
+  "write",
+  "yard",
+  "year",
+  "young",
+  "youth",
+  "zone",
+];
+
+const TYPING_TEST_FALLBACK_WORDS = [
+  "time",
+  "type",
+  "code",
+  "fast",
+  "word",
+  "focus",
+  "swift",
+  "skill",
+  "speed",
+  "light",
+];
+
+function getTypingTestWordSource() {
+  if (Array.isArray(TYPING_TEST_WORDS) && TYPING_TEST_WORDS.length >= 50) {
+    return TYPING_TEST_WORDS;
+  }
+  return TYPING_TEST_FALLBACK_WORDS;
+}
+
+function createTypingTestWord() {
+  const source = getTypingTestWordSource();
+  const index = Math.floor(Math.random() * source.length);
+  const text = source[index] || "word";
+  return { id: typingTestWordIdCounter++, text, typed: "", locked: false };
+}
+
+function createTypingTestState(duration) {
+  return {
+    duration,
+    phase: "idle",
+    words: [],
+    currentIndex: 0,
+    startTimestamp: null,
+    deadline: null,
+    remainingMs: duration * 1000,
+    elapsedMs: 0,
+    timerRafId: null,
+    scrollOffset: 0,
+    results: null,
+  };
+}
+
+function ensureTypingTestElements() {
+  if (!activityContainerEl) {
+    return;
+  }
+
+  if (typingTestElements.root && typingTestElements.root.parentElement !== activityContainerEl) {
+    activityContainerEl.appendChild(typingTestElements.root);
+  }
+
+  if (typingTestElements.root) {
+    return;
+  }
+
+  const root = document.createElement("div");
+  root.className = "typing-test";
+  root.setAttribute("role", "application");
+
+  const header = document.createElement("div");
+  header.className = "typing-test-header";
+  root.appendChild(header);
+
+  const durationsEl = document.createElement("div");
+  durationsEl.className = "typing-test-durations";
+  durationsEl.setAttribute("role", "group");
+  header.appendChild(durationsEl);
+
+  typingTestElements.durationButtons = [];
+  typingTestElements.durations = durationsEl;
+
+  TYPING_TEST_DURATIONS.forEach((duration, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "typing-test-duration";
+    button.textContent = `${duration}s`;
+    button.dataset.index = String(index);
+    button.addEventListener("click", () => {
+      setTypingTestDurationIndex(index);
+    });
+    durationsEl.appendChild(button);
+    typingTestElements.durationButtons.push(button);
+  });
+
+  const timerEl = document.createElement("div");
+  timerEl.className = "typing-test-timer";
+  timerEl.textContent = "15";
+  header.appendChild(timerEl);
+
+  const viewport = document.createElement("div");
+  viewport.className = "typing-test-viewport";
+  root.appendChild(viewport);
+
+  const wordsWrap = document.createElement("div");
+  wordsWrap.className = "typing-test-words";
+  viewport.appendChild(wordsWrap);
+
+  const results = document.createElement("div");
+  results.className = "typing-test-results";
+  results.setAttribute("hidden", "true");
+  results.setAttribute("aria-live", "polite");
+  root.appendChild(results);
+
+  const primary = document.createElement("div");
+  primary.className = "typing-test-results-primary";
+  results.appendChild(primary);
+
+  const wpmStat = createTypingTestStat("WPM", { emphasize: true });
+  primary.appendChild(wpmStat.container);
+
+  const accuracyStat = createTypingTestStat("Accuracy");
+  primary.appendChild(accuracyStat.container);
+
+  const rawStat = createTypingTestStat("Raw WPM");
+  primary.appendChild(rawStat.container);
+
+  const breakdown = document.createElement("div");
+  breakdown.className = "typing-test-breakdown";
+  results.appendChild(breakdown);
+
+  typingTestElements.correctValue = createTypingTestBreakdownItem(breakdown, "Correct");
+  typingTestElements.incorrectValue = createTypingTestBreakdownItem(breakdown, "Incorrect");
+  typingTestElements.extraValue = createTypingTestBreakdownItem(breakdown, "Extra");
+  typingTestElements.missedValue = createTypingTestBreakdownItem(breakdown, "Missed");
+
+  const footer = document.createElement("div");
+  footer.className = "typing-test-footer";
+  footer.textContent = "Enter to restart · Tab to change time · Esc to exit";
+  root.appendChild(footer);
+
+  typingTestElements.root = root;
+  typingTestElements.timer = timerEl;
+  typingTestElements.viewport = viewport;
+  typingTestElements.wordsWrap = wordsWrap;
+  typingTestElements.results = results;
+  typingTestElements.wpmValue = wpmStat.value;
+  typingTestElements.accuracyValue = accuracyStat.value;
+  typingTestElements.rawValue = rawStat.value;
+  typingTestElements.instructions = footer;
+
+  activityContainerEl.appendChild(root);
+}
+
+function createTypingTestStat(label, options = {}) {
+  const container = document.createElement("div");
+  container.className = "typing-test-stat";
+  if (options.emphasize) {
+    container.classList.add("typing-test-stat-primary");
+  }
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "typing-test-stat-label";
+  labelEl.textContent = label;
+  container.appendChild(labelEl);
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "typing-test-stat-value";
+  valueEl.textContent = label === "Accuracy" ? "--%" : "--";
+  container.appendChild(valueEl);
+
+  return { container, value: valueEl };
+}
+
+function createTypingTestBreakdownItem(container, label) {
+  const item = document.createElement("div");
+  item.className = "typing-test-breakdown-item";
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "typing-test-breakdown-label";
+  nameEl.textContent = label;
+  item.appendChild(nameEl);
+
+  const valueEl = document.createElement("span");
+  valueEl.className = "typing-test-breakdown-value";
+  valueEl.textContent = "0";
+  item.appendChild(valueEl);
+
+  container.appendChild(item);
+  return valueEl;
+}
+
+function renderTypingTestDurations() {
+  if (!typingTestElements.durationButtons) {
+    return;
+  }
+  typingTestElements.durationButtons.forEach((button, index) => {
+    if (!button) return;
+    if (index === typingTestDurationIndex) {
+      button.classList.add("active");
+      button.setAttribute("aria-pressed", "true");
+    } else {
+      button.classList.remove("active");
+      button.setAttribute("aria-pressed", "false");
+    }
+  });
+}
+
+function renderTypingTestTimer() {
+  const timerEl = typingTestElements.timer;
+  if (!timerEl) {
+    return;
+  }
+  const state = typingTestState;
+  let displayMs = TYPING_TEST_DURATIONS[typingTestDurationIndex] * 1000;
+  if (state) {
+    if (state.phase === "running" || state.phase === "finished") {
+      displayMs = state.remainingMs;
+    } else {
+      displayMs = state.duration * 1000;
+    }
+    if (state.phase === "finished") {
+      displayMs = 0;
+    }
+  }
+  const seconds = Math.max(0, displayMs) / 1000;
+  const decimals = seconds < 10 ? 1 : 0;
+  timerEl.textContent = seconds.toFixed(decimals);
+}
+
+function renderTypingTestWords() {
+  if (!typingTestElements.wordsWrap || !typingTestState) {
+    return;
+  }
+
+  const state = typingTestState;
+  const wordsWrap = typingTestElements.wordsWrap;
+  const fragment = document.createDocumentFragment();
+  const startIndex = Math.max(0, state.currentIndex - 12);
+  const endIndex = Math.min(state.words.length, state.currentIndex + 80);
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const word = state.words[index];
+    if (!word) continue;
+    const wordEl = document.createElement("span");
+    wordEl.className = "typing-word";
+    if (index === state.currentIndex) {
+      wordEl.classList.add("active");
+    } else if (index < state.currentIndex) {
+      wordEl.classList.add("completed");
+    }
+
+    const expected = word.text || "";
+    const typed = word.typed || "";
+    const locked = Boolean(word.locked);
+    const limit = Math.max(expected.length, typed.length);
+
+    for (let charIndex = 0; charIndex < limit; charIndex += 1) {
+      const charSpan = document.createElement("span");
+      charSpan.className = "typing-char";
+      const expectedChar = expected[charIndex] || "";
+      const typedChar = typed[charIndex] || "";
+
+      if (charIndex < expected.length) {
+        if (typedChar) {
+          charSpan.textContent = typedChar;
+          if (typedChar === expectedChar) {
+            charSpan.classList.add("correct");
+          } else {
+            charSpan.classList.add("incorrect");
+          }
+        } else {
+          charSpan.textContent = expectedChar;
+          if (locked) {
+            charSpan.classList.add("missed");
+          }
+        }
+      } else {
+        charSpan.textContent = typedChar;
+        charSpan.classList.add("extra");
+      }
+
+      wordEl.appendChild(charSpan);
+    }
+
+    if (index === state.currentIndex) {
+      const caretIndex = typed.length;
+      const charCount = wordEl.children.length;
+      if (caretIndex < charCount) {
+        wordEl.children[caretIndex].classList.add("caret");
+      } else {
+        const caretSpan = document.createElement("span");
+        caretSpan.className = "typing-char caret placeholder";
+        caretSpan.textContent = "\u00A0";
+        wordEl.appendChild(caretSpan);
+      }
+    }
+
+    fragment.appendChild(wordEl);
+  }
+
+  wordsWrap.replaceChildren(fragment);
+  updateTypingTestScroll();
+}
+
+function updateTypingTestScroll() {
+  if (!typingTestElements.wordsWrap || !typingTestElements.viewport || !typingTestState) {
+    return;
+  }
+  const { wordsWrap, viewport } = typingTestElements;
+  const activeEl = wordsWrap.querySelector(".typing-word.active");
+  if (!activeEl) {
+    wordsWrap.style.setProperty("--typing-offset", "0px");
+    return;
+  }
+  const offset = activeEl.offsetTop;
+  const desired = Math.max(0, offset - viewport.clientHeight * 0.35);
+  const maxOffset = Math.max(0, wordsWrap.scrollHeight - viewport.clientHeight);
+  const nextOffset = Math.min(desired, maxOffset);
+  typingTestState.scrollOffset = nextOffset;
+  wordsWrap.style.setProperty("--typing-offset", `${-nextOffset}px`);
+}
+
+function renderTypingTestResults() {
+  const resultsContainer = typingTestElements.results;
+  if (!resultsContainer) {
+    return;
+  }
+  const {
+    wpmValue,
+    rawValue,
+    accuracyValue,
+    correctValue,
+    incorrectValue,
+    extraValue,
+    missedValue,
+  } = typingTestElements;
+  if (!wpmValue || !rawValue || !accuracyValue || !correctValue || !incorrectValue || !extraValue || !missedValue) {
+    return;
+  }
+  const state = typingTestState;
+  if (!state || !state.results) {
+    resultsContainer.setAttribute("hidden", "true");
+    if (typingTestElements.root) {
+      typingTestElements.root.classList.remove("typing-test-finished");
+    }
+    wpmValue.textContent = "--";
+    rawValue.textContent = "--";
+    accuracyValue.textContent = "--%";
+    correctValue.textContent = "0";
+    incorrectValue.textContent = "0";
+    extraValue.textContent = "0";
+    missedValue.textContent = "0";
+    return;
+  }
+
+  resultsContainer.removeAttribute("hidden");
+  if (typingTestElements.root) {
+    typingTestElements.root.classList.add("typing-test-finished");
+  }
+
+  const { wpm, rawWpm, accuracy, correct, incorrect, extra, missed } = state.results;
+  wpmValue.textContent = formatTypingValue(wpm);
+  rawValue.textContent = formatTypingValue(rawWpm);
+  accuracyValue.textContent = `${formatTypingAccuracy(accuracy)}%`;
+  correctValue.textContent = String(correct);
+  incorrectValue.textContent = String(incorrect);
+  extraValue.textContent = String(extra);
+  missedValue.textContent = String(missed);
+}
+
+function ensureTypingTestWordBuffer(state, targetCount) {
+  const target = Math.max(targetCount || 0, state.words.length);
+  while (state.words.length < target) {
+    state.words.push(createTypingTestWord());
+  }
+}
+
+function maybeExtendTypingTestWords(state) {
+  const remaining = state.words.length - state.currentIndex - 1;
+  if (remaining >= TYPING_TEST_MIN_BUFFER) {
+    return;
+  }
+  const target = state.words.length + (TYPING_TEST_MIN_BUFFER - remaining) + 20;
+  ensureTypingTestWordBuffer(state, target);
+}
+
+function restartTypingTest() {
+  ensureTypingTestElements();
+  const duration = TYPING_TEST_DURATIONS[typingTestDurationIndex] || TYPING_TEST_DURATIONS[0];
+  if (typingTestState && typingTestState.timerRafId) {
+    cancelAnimationFrame(typingTestState.timerRafId);
+  }
+  typingTestState = createTypingTestState(duration);
+  typingTestWordIdCounter = 0;
+  ensureTypingTestWordBuffer(typingTestState, TYPING_TEST_INITIAL_WORDS);
+  typingTestState.remainingMs = duration * 1000;
+  typingTestState.scrollOffset = 0;
+  renderTypingTestDurations();
+  renderTypingTestTimer();
+  renderTypingTestWords();
+  renderTypingTestResults();
+  if (typingTestElements.wordsWrap) {
+    typingTestElements.wordsWrap.style.setProperty("--typing-offset", "0px");
+  }
+}
+
+function setTypingTestDurationIndex(index) {
+  const total = TYPING_TEST_DURATIONS.length;
+  if (!total) {
+    return;
+  }
+  let nextIndex = index % total;
+  if (nextIndex < 0) {
+    nextIndex += total;
+  }
+  typingTestDurationIndex = nextIndex;
+  restartTypingTest();
+}
+
+function cycleTypingTestDuration(step) {
+  setTypingTestDurationIndex(typingTestDurationIndex + step);
+}
+
+function ensureTypingTestStarted() {
+  if (!typingTestState || typingTestState.phase !== "idle") {
+    return;
+  }
+  typingTestState.phase = "running";
+  typingTestState.startTimestamp = performance.now();
+  typingTestState.deadline = typingTestState.startTimestamp + typingTestState.duration * 1000;
+  typingTestState.remainingMs = typingTestState.duration * 1000;
+  typingTestState.timerRafId = requestAnimationFrame(updateTypingTestTimerFrame);
+}
+
+function getTypingTestWordAt(index) {
+  if (!typingTestState) {
+    return null;
+  }
+  if (!typingTestState.words[index]) {
+    typingTestState.words[index] = createTypingTestWord();
+  }
+  return typingTestState.words[index];
+}
+
+function typingTestInsertChar(char) {
+  if (!typingTestState) {
+    return;
+  }
+  const current = getTypingTestWordAt(typingTestState.currentIndex);
+  ensureTypingTestStarted();
+  current.typed = `${current.typed || ""}${char}`;
+  renderTypingTestWords();
+}
+
+function typingTestBackspace() {
+  if (!typingTestState) {
+    return;
+  }
+  const current = getTypingTestWordAt(typingTestState.currentIndex);
+  if (!current || !current.typed) {
+    return;
+  }
+  current.typed = current.typed.slice(0, -1);
+  renderTypingTestWords();
+}
+
+function typingTestCommitWord() {
+  if (!typingTestState) {
+    return;
+  }
+  const state = typingTestState;
+  const current = getTypingTestWordAt(state.currentIndex);
+  ensureTypingTestStarted();
+  current.locked = true;
+  state.currentIndex += 1;
+  getTypingTestWordAt(state.currentIndex);
+  maybeExtendTypingTestWords(state);
+  renderTypingTestWords();
+}
+
+function updateTypingTestTimerFrame(now) {
+  if (!typingTestState || typingTestState.phase !== "running") {
+    return;
+  }
+  const state = typingTestState;
+  const remaining = state.deadline - now;
+  state.remainingMs = Math.max(0, remaining);
+  state.elapsedMs = Math.min(state.duration * 1000, Math.max(0, now - state.startTimestamp));
+  renderTypingTestTimer();
+  if (remaining <= 0) {
+    finishTypingTest();
+    return;
+  }
+  state.timerRafId = requestAnimationFrame(updateTypingTestTimerFrame);
+}
+
+function finishTypingTest() {
+  if (!typingTestState || typingTestState.phase === "finished") {
+    return;
+  }
+  const state = typingTestState;
+  if (state.timerRafId) {
+    cancelAnimationFrame(state.timerRafId);
+    state.timerRafId = null;
+  }
+  state.phase = "finished";
+  if (state.startTimestamp) {
+    const now = performance.now();
+    state.elapsedMs = Math.min(state.duration * 1000, Math.max(0, now - state.startTimestamp));
+  }
+  state.remainingMs = 0;
+  const current = getTypingTestWordAt(state.currentIndex);
+  if (current) {
+    current.locked = true;
+  }
+  const includeCount = state.currentIndex + (current && (current.typed || "").length > 0 ? 1 : 0);
+  state.results = computeTypingTestResults(state, includeCount);
+  renderTypingTestTimer();
+  renderTypingTestWords();
+  renderTypingTestResults();
+}
+
+function computeTypingTestResults(state, includeCount) {
+  const limit = Math.min(includeCount, state.words.length);
+  let correct = 0;
+  let incorrect = 0;
+  let extra = 0;
+  let missed = 0;
+
+  for (let index = 0; index < limit; index += 1) {
+    const word = state.words[index];
+    if (!word) continue;
+    const expected = word.text || "";
+    const typed = word.typed || "";
+    const length = Math.min(expected.length, typed.length);
+    for (let i = 0; i < length; i += 1) {
+      if (typed[i] === expected[i]) {
+        correct += 1;
+      } else {
+        incorrect += 1;
+      }
+    }
+    if (typed.length > expected.length) {
+      extra += typed.length - expected.length;
+    } else if (expected.length > typed.length) {
+      missed += expected.length - typed.length;
+    }
+  }
+
+  const totalTyped = correct + incorrect + extra;
+  const elapsedMs = state.elapsedMs > 0 ? state.elapsedMs : state.duration * 1000;
+  const minutes = Math.max(elapsedMs / 60000, state.duration / 60);
+  const wpm = totalTyped > 0 ? (correct / 5) / minutes : 0;
+  const rawWpm = totalTyped > 0 ? (totalTyped / 5) / minutes : 0;
+  const accuracy = totalTyped > 0 ? (correct / totalTyped) * 100 : 0;
+
+  return {
+    wpm,
+    rawWpm,
+    accuracy,
+    correct,
+    incorrect,
+    extra,
+    missed,
+    elapsedMs,
+  };
+}
+
+function startTypingTestActivity() {
+  ensureTypingTestElements();
+  restartTypingTest();
+  if (activityContainerEl) {
+    activityContainerEl.focus({ preventScroll: true });
+  }
+}
+
+function exitTypingTestActivity() {
+  if (typingTestState && typingTestState.timerRafId) {
+    cancelAnimationFrame(typingTestState.timerRafId);
+    typingTestState.timerRafId = null;
+  }
+  typingTestState = null;
+  if (typingTestElements.root) {
+    typingTestElements.root.classList.remove("typing-test-finished");
+  }
+  if (typingTestElements.results) {
+    typingTestElements.results.setAttribute("hidden", "true");
+  }
+  renderTypingTestResults();
+}
+
+function handleTypingTestKeydown(event) {
+  if (!isOpen || activeActivity !== "typing-test") {
+    return;
+  }
+
+  const state = typingTestState;
+  const key = event.key;
+
+  if (key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeActivityView({ restoreFocus: true });
+    return;
+  }
+
+  if (key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    restartTypingTest();
+    return;
+  }
+
+  if (key === "Tab") {
+    event.preventDefault();
+    event.stopPropagation();
+    cycleTypingTestDuration(event.shiftKey ? -1 : 1);
+    return;
+  }
+
+  if (!state || state.phase === "finished") {
+    return;
+  }
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+
+  if (key === "Backspace") {
+    event.preventDefault();
+    event.stopPropagation();
+    typingTestBackspace();
+    return;
+  }
+
+  if (key === " ") {
+    event.preventDefault();
+    event.stopPropagation();
+    typingTestCommitWord();
+    return;
+  }
+
+  if (key.length === 1) {
+    const lower = key.toLowerCase();
+    if (/^[a-z]$/.test(lower)) {
+      event.preventDefault();
+      event.stopPropagation();
+      typingTestInsertChar(lower);
+    }
+  }
+}
+
+function formatTypingValue(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+  if (value >= 100) {
+    return value.toFixed(0);
+  }
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
+
+function formatTypingAccuracy(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+  if (value >= 99.5) {
+    return value.toFixed(0);
+  }
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
 
 function ensureShadowRoot() {
   if (!document.body) {
@@ -277,6 +1673,7 @@ function createOverlay() {
 
   const inputWrapper = document.createElement("div");
   inputWrapper.className = "spotlight-input-wrapper";
+  inputWrapperEl = inputWrapper;
   inputContainerEl = document.createElement("div");
   inputContainerEl.className = "spotlight-input-container";
 
@@ -328,6 +1725,13 @@ function createOverlay() {
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
+
+  activityContainerEl = document.createElement("div");
+  activityContainerEl.className = "spotlight-activity";
+  activityContainerEl.setAttribute("tabindex", "-1");
+  activityContainerEl.setAttribute("role", "document");
+  activityContainerEl.setAttribute("hidden", "true");
+  containerEl.appendChild(activityContainerEl);
   overlayEl.appendChild(containerEl);
 
   if (shadowContentEl && !shadowContentEl.contains(overlayEl)) {
@@ -369,6 +1773,90 @@ function createOverlay() {
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
+}
+
+function openActivityView(viewId) {
+  if (!containerEl || !activityContainerEl) {
+    return;
+  }
+
+  if (activeActivity === viewId) {
+    if (viewId === "typing-test") {
+      startTypingTestActivity();
+    }
+    activityContainerEl.focus({ preventScroll: true });
+    return;
+  }
+
+  closeActivityView({ restoreFocus: false });
+
+  activeActivity = viewId;
+  containerEl.classList.add("activity-mode");
+  activityContainerEl.dataset.activity = viewId;
+  activityContainerEl.removeAttribute("hidden");
+
+  if (inputEl) {
+    inputEl.blur();
+    inputEl.setAttribute("disabled", "true");
+  }
+  if (inputWrapperEl) {
+    inputWrapperEl.setAttribute("aria-hidden", "true");
+  }
+  if (resultsEl) {
+    resultsEl.setAttribute("aria-hidden", "true");
+  }
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+
+  switch (viewId) {
+    case "typing-test":
+      startTypingTestActivity();
+      break;
+    default:
+      break;
+  }
+
+  activityContainerEl.focus({ preventScroll: true });
+}
+
+function closeActivityView(options = {}) {
+  if (!activeActivity) {
+    return;
+  }
+
+  switch (activeActivity) {
+    case "typing-test":
+      exitTypingTestActivity();
+      break;
+    default:
+      break;
+  }
+
+  activeActivity = null;
+  if (containerEl) {
+    containerEl.classList.remove("activity-mode");
+  }
+  if (activityContainerEl) {
+    activityContainerEl.setAttribute("hidden", "true");
+    delete activityContainerEl.dataset.activity;
+  }
+  if (resultsEl) {
+    resultsEl.removeAttribute("aria-hidden");
+  }
+  if (inputWrapperEl) {
+    inputWrapperEl.removeAttribute("aria-hidden");
+  }
+  if (inputEl) {
+    inputEl.removeAttribute("disabled");
+    if (options.restoreFocus) {
+      setTimeout(() => {
+        inputEl.focus({ preventScroll: true });
+        inputEl.select();
+      }, 0);
+    }
+  }
 }
 
 function installOverlayGuards() {
@@ -751,8 +2239,12 @@ function handleSubfilterClick(option) {
 
 async function openOverlay() {
   if (isOpen) {
-    inputEl.focus();
-    inputEl.select();
+    if (activeActivity === "typing-test" && activityContainerEl) {
+      activityContainerEl.focus({ preventScroll: true });
+    } else if (inputEl) {
+      inputEl.focus();
+      inputEl.select();
+    }
     return;
   }
 
@@ -763,6 +2255,7 @@ async function openOverlay() {
   }
 
   isOpen = true;
+  closeActivityView({ restoreFocus: false });
   activeIndex = -1;
   resultsState = [];
   lazyList.reset();
@@ -796,6 +2289,7 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
+  closeActivityView({ restoreFocus: false });
   if (shadowHostEl) {
     shadowHostEl.style.display = "none";
     shadowHostEl.style.pointerEvents = "none";
@@ -822,6 +2316,10 @@ function closeOverlay() {
 
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
+  if (activeActivity === "typing-test") {
+    handleTypingTestKeydown(event);
+    return;
+  }
   if (slashMenuVisible && slashMenuOptions.length) {
     return;
   }
@@ -837,6 +2335,10 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  if (activeActivity) {
+    event.preventDefault();
+    return;
+  }
   if (slashMenuVisible && slashMenuOptions.length) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -897,6 +2399,9 @@ function handleInputKeydown(event) {
 }
 
 function handleInputChange() {
+  if (activeActivity) {
+    return;
+  }
   const query = inputEl.value;
   updateSlashMenu();
   const trimmed = query.trim();
@@ -1127,6 +2632,13 @@ function updateActiveResult() {
 function openResult(result) {
   if (!result) return;
   if (result.type === "command") {
+    if (result.view) {
+      openActivityView(result.view);
+      return;
+    }
+    if (!result.command) {
+      return;
+    }
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
       payload.args = result.args;

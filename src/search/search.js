@@ -476,6 +476,27 @@ const STATIC_COMMANDS = [
       return (context?.audibleTabCount || 0) > 0;
     },
   },
+  {
+    id: "command:typing-test",
+    title: "Typing test",
+    aliases: [
+      "typing test",
+      "typing speed",
+      "speed test",
+      "wpm test",
+      "typing practice",
+    ],
+    view: "typing-test",
+    answer() {
+      return "Opens an inline typing test to measure your speed.";
+    },
+    description() {
+      return "Practice typing · Inline test";
+    },
+    isAvailable() {
+      return true;
+    },
+  },
 ];
 
 function formatTabCount(count) {
@@ -856,7 +877,7 @@ function findBestStaticCommand(query, context) {
     }
     const answer = command.answer ? command.answer(context) : "";
     const description = command.description ? command.description(context) : answer;
-    return {
+    const result = {
       ghostText: command.title,
       answer,
       result: {
@@ -865,12 +886,21 @@ function findBestStaticCommand(query, context) {
         url: description,
         description,
         type: "command",
-        command: command.action,
         label: "Command",
         score: COMMAND_SCORE,
         faviconUrl: COMMAND_ICON_DATA_URL,
       },
     };
+    if (command.action) {
+      result.result.command = command.action;
+    }
+    if (command.args) {
+      result.result.args = command.args;
+    }
+    if (command.view) {
+      result.result.view = command.view;
+    }
+    return result;
   }
 
   return null;
