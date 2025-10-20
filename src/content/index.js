@@ -61,6 +61,7 @@ const typingTestElements = {
   extraValue: null,
   missedValue: null,
   instructions: null,
+  languageLabel: null,
 };
 
 let typingTestState = null;
@@ -923,6 +924,30 @@ function ensureTypingTestElements() {
   header.className = "typing-test-header";
   root.appendChild(header);
 
+  const meta = document.createElement("div");
+  meta.className = "typing-test-meta";
+  header.appendChild(meta);
+
+  const language = document.createElement("div");
+  language.className = "typing-test-language";
+
+  const languageDot = document.createElement("span");
+  languageDot.className = "typing-test-language-dot";
+  languageDot.setAttribute("aria-hidden", "true");
+  language.appendChild(languageDot);
+
+  const languageLabel = document.createElement("span");
+  languageLabel.className = "typing-test-language-label";
+  languageLabel.textContent = "english";
+  language.appendChild(languageLabel);
+
+  meta.appendChild(language);
+
+  const timerEl = document.createElement("div");
+  timerEl.className = "typing-test-timer";
+  timerEl.textContent = "15";
+  header.appendChild(timerEl);
+
   const durationsEl = document.createElement("div");
   durationsEl.className = "typing-test-durations";
   durationsEl.setAttribute("role", "group");
@@ -936,6 +961,7 @@ function ensureTypingTestElements() {
     button.type = "button";
     button.className = "typing-test-duration";
     button.textContent = `${duration}s`;
+    button.setAttribute("aria-label", `${duration}-second test`);
     button.dataset.index = String(index);
     button.addEventListener("click", () => {
       setTypingTestDurationIndex(index);
@@ -943,11 +969,6 @@ function ensureTypingTestElements() {
     durationsEl.appendChild(button);
     typingTestElements.durationButtons.push(button);
   });
-
-  const timerEl = document.createElement("div");
-  timerEl.className = "typing-test-timer";
-  timerEl.textContent = "15";
-  header.appendChild(timerEl);
 
   const viewport = document.createElement("div");
   viewport.className = "typing-test-viewport";
@@ -987,7 +1008,7 @@ function ensureTypingTestElements() {
 
   const footer = document.createElement("div");
   footer.className = "typing-test-footer";
-  footer.textContent = "Enter to restart · Tab to change time · Esc to exit";
+  footer.textContent = "enter restart · tab change time · esc exit";
   root.appendChild(footer);
 
   typingTestElements.root = root;
@@ -999,6 +1020,7 @@ function ensureTypingTestElements() {
   typingTestElements.accuracyValue = accuracyStat.value;
   typingTestElements.rawValue = rawStat.value;
   typingTestElements.instructions = footer;
+  typingTestElements.languageLabel = languageLabel;
 
   activityContainerEl.appendChild(root);
 }
