@@ -19,7 +19,6 @@ let requestCounter = 0;
 let pendingQueryTimeout = null;
 let lastRequestId = 0;
 let bodyOverflowBackup = "";
-let scrollPositionBackup = { x: 0, y: 0 };
 let statusEl = null;
 let ghostEl = null;
 let inputContainerEl = null;
@@ -128,11 +127,19 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
 
 function ensureShadowRoot() {
   if (shadowRootEl && shadowContentEl) {
+    if (shadowHostEl && !shadowHostEl.parentElement) {
+      document.body.appendChild(shadowHostEl);
+    }
     return shadowRootEl;
   }
 
   shadowHostEl = document.createElement("div");
   shadowHostEl.id = SHADOW_HOST_ID;
+  shadowHostEl.style.position = "fixed";
+  shadowHostEl.style.inset = "0";
+  shadowHostEl.style.zIndex = "2147483647";
+  shadowHostEl.style.display = "none";
+
   shadowRootEl = shadowHostEl.attachShadow({ mode: "open" });
 
   const styleLink = document.createElement("link");
@@ -144,29 +151,9 @@ function ensureShadowRoot() {
   shadowContentEl.className = "spotlight-root";
   shadowRootEl.appendChild(shadowContentEl);
 
+  document.body.appendChild(shadowHostEl);
+
   return shadowRootEl;
-}
-
-function captureScrollPosition() {
-  const x =
-    window.scrollX !== undefined
-      ? window.scrollX
-      : window.pageXOffset !== undefined
-      ? window.pageXOffset
-      : document.documentElement?.scrollLeft || document.body?.scrollLeft || 0;
-  const y =
-    window.scrollY !== undefined
-      ? window.scrollY
-      : window.pageYOffset !== undefined
-      ? window.pageYOffset
-      : document.documentElement?.scrollTop || document.body?.scrollTop || 0;
-  scrollPositionBackup = { x, y };
-}
-
-function restoreScrollPosition() {
-  if (typeof window.scrollTo === "function") {
-    window.scrollTo(scrollPositionBackup.x, scrollPositionBackup.y);
-  }
 }
 
 function createOverlay() {
@@ -597,7 +584,6 @@ function openOverlay() {
     createOverlay();
   }
 
-  captureScrollPosition();
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -612,14 +598,15 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
-  if (shadowHostEl && !shadowHostEl.parentElement) {
-    document.body.appendChild(shadowHostEl);
-    restoreScrollPosition();
+  if (shadowHostEl) {
+    if (!shadowHostEl.parentElement) {
+      document.body.appendChild(shadowHostEl);
+    }
+    shadowHostEl.style.display = "block";
   }
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
-  restoreScrollPosition();
 
   requestResults("");
   setTimeout(() => {
@@ -632,11 +619,10 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (shadowHostEl && shadowHostEl.parentElement) {
-    shadowHostEl.parentElement.removeChild(shadowHostEl);
+  if (shadowHostEl) {
+    shadowHostEl.style.display = "none";
   }
   document.body.style.overflow = bodyOverflowBackup;
-  restoreScrollPosition();
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
