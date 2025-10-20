@@ -173,6 +173,7 @@ async function indexTabs(indexMap, termBuckets, items) {
       tabId: tab.id,
       windowId: tab.windowId,
       active: Boolean(tab.active),
+      audible: Boolean(tab.audible),
       lastAccessed: tab.lastAccessed || Date.now(),
       origin: extractOrigin(tab.url),
     });

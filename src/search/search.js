@@ -39,6 +39,8 @@ function sliceResultsForLimit(items, limit) {
 const COMMAND_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
 
+const AUDIO_KEYWORDS = ["audio", "sound", "music", "noisy", "noise"];
+
 const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
@@ -445,6 +447,35 @@ const STATIC_COMMANDS = [
       return context.tabCount > 1;
     },
   },
+  {
+    id: "command:tab-close-audio",
+    title: "Close tabs playing audio",
+    aliases: [
+      "close audio tabs",
+      "close tabs playing audio",
+      "close noisy tabs",
+      "close active audio tabs",
+      "close tabs with audio",
+    ],
+    action: "tab-close-audio",
+    answer(context) {
+      const count = context?.audibleTabCount || 0;
+      if (count <= 0) {
+        return "No tabs are currently playing audio.";
+      }
+      return count === 1
+        ? "Closes the tab that is playing audio."
+        : `Closes ${count} tabs that are playing audio.`;
+    },
+    description(context) {
+      const count = context?.audibleTabCount || 0;
+      const countLabel = formatTabCount(count);
+      return `${countLabel} · Playing audio`;
+    },
+    isAvailable(context) {
+      return (context?.audibleTabCount || 0) > 0;
+    },
+  },
 ];
 
 function formatTabCount(count) {
@@ -452,6 +483,26 @@ function formatTabCount(count) {
     return "1 tab";
   }
   return `${count} tabs`;
+}
+
+function buildCloseAudioTabsCommandResult(audibleCount) {
+  const countLabel = formatTabCount(audibleCount);
+  const title = audibleCount === 1
+    ? "Close tab playing audio"
+    : `Close ${countLabel} playing audio`;
+  const description = `${countLabel} · Playing audio`;
+  return {
+    id: "command:close-tabs-audio",
+    title,
+    url: description,
+    description,
+    type: "command",
+    command: "tab-close-audio",
+    args: {},
+    label: "Command",
+    score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
+  };
 }
 
 function computeRecencyBoost(item) {
@@ -768,6 +819,26 @@ function normalizeCommandToken(text = "") {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+function hasAudioCommandIntent(text = "", words = []) {
+  const normalizedText = normalizeCommandToken(text);
+  if (
+    normalizedText &&
+    AUDIO_KEYWORDS.some((keyword) => normalizedText.includes(keyword))
+  ) {
+    return true;
+  }
+  for (const word of words || []) {
+    const normalizedWord = normalizeCommandToken(word);
+    if (
+      normalizedWord &&
+      AUDIO_KEYWORDS.some((keyword) => normalizedWord.includes(keyword))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function findBestStaticCommand(query, context) {
   const compactQuery = normalizeCommandToken(query);
   if (!compactQuery) {
@@ -920,6 +991,29 @@ function collectTabCloseSuggestions(query, context) {
 
   const remainder = query.slice((query.match(/^\s*\S+/)?.[0] || "").length).trim();
   const remainderWords = remainder.split(/\s+/).filter(Boolean);
+  const audibleCount = typeof context?.audibleTabCount === "number"
+    ? context.audibleTabCount
+    : tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
+
+  if (hasAudioCommandIntent(remainder, remainderWords)) {
+    if (!audibleCount) {
+      return {
+        results: [],
+        ghost: null,
+        answer: "No tabs are currently playing audio.",
+      };
+    }
+    const result = buildCloseAudioTabsCommandResult(audibleCount);
+    return {
+      results: [result],
+      ghost: result.title,
+      answer:
+        audibleCount === 1
+          ? "Closes the tab that is playing audio."
+          : `Closes ${audibleCount} tabs that are playing audio.`,
+    };
+  }
+
   const firstRemainder = normalizeWord(remainderWords[0]);
 
   const looksLikeAll =
@@ -955,12 +1049,37 @@ function collectCloseAllSuggestions(words, context) {
   const tabs = context.tabs || [];
   const rest = words || [];
   let remainingWords = rest.slice();
+  const audibleCount = typeof context?.audibleTabCount === "number"
+    ? context.audibleTabCount
+    : tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
 
   if (remainingWords.length) {
     const first = normalizeWord(remainingWords[0]);
     if (matchToken(first, "tabs")) {
       remainingWords = remainingWords.slice(1);
     }
+  }
+
+  const audioIntent =
+    hasAudioCommandIntent(remainingWords.join(" "), remainingWords) ||
+    hasAudioCommandIntent(rest.join(" "), rest);
+  if (audioIntent) {
+    if (!audibleCount) {
+      return {
+        results: [],
+        ghost: null,
+        answer: "No tabs are currently playing audio.",
+      };
+    }
+    const result = buildCloseAudioTabsCommandResult(audibleCount);
+    return {
+      results: [result],
+      ghost: result.title,
+      answer:
+        audibleCount === 1
+          ? "Closes the tab that is playing audio."
+          : `Closes ${audibleCount} tabs that are playing audio.`,
+    };
   }
 
   const domainQuery = remainingWords.join(" ").trim();
@@ -1287,7 +1406,8 @@ export function runSearch(query, data, options = {}) {
       ? { type: filterType, options: availableSubfilters, activeId: activeSubfilterId }
       : null;
   const subfilterContext = { historyBoundaries };
-  const commandContext = { tabCount, tabs };
+  const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
+  const commandContext = { tabCount, tabs, audibleTabCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {

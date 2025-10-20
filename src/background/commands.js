@@ -4,6 +4,7 @@ const REBUILD_DELAYS = {
   "tab-close": 200,
   "tab-close-all": 400,
   "tab-close-domain": 400,
+  "tab-close-audio": 400,
 };
 
 export function createCommandExecutor({ tabActions, scheduleRebuild }) {
@@ -13,6 +14,7 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
     closeTabById,
     closeAllTabsExceptActive,
     closeTabsByDomain,
+    closeAudibleTabs,
   } = tabActions;
 
   return async function executeCommand(commandId, args = {}) {
@@ -35,6 +37,10 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
         return;
       case "tab-close-domain":
         await closeTabsByDomain(args.domain);
+        scheduleRebuild(REBUILD_DELAYS[commandId]);
+        return;
+      case "tab-close-audio":
+        await closeAudibleTabs();
         scheduleRebuild(REBUILD_DELAYS[commandId]);
         return;
       default:
