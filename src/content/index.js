@@ -5,6 +5,8 @@ const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+const THEME_STORAGE_KEY = "spotlight.theme";
+const DEFAULT_THEME = "dark";
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
@@ -41,6 +43,7 @@ let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
+let currentTheme = DEFAULT_THEME;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -61,6 +64,34 @@ const iconCache = new Map();
 const pendingIconOrigins = new Set();
 let faviconQueue = [];
 let faviconProcessing = false;
+
+function normalizeTheme(value) {
+  return value === "light" ? "light" : DEFAULT_THEME;
+}
+
+function syncThemeAttributes() {
+  if (shadowHostEl) {
+    shadowHostEl.dataset.theme = currentTheme;
+  }
+  if (shadowContentEl) {
+    shadowContentEl.dataset.theme = currentTheme;
+  }
+}
+
+function applyTheme(nextTheme) {
+  currentTheme = normalizeTheme(nextTheme);
+  syncThemeAttributes();
+}
+
+async function loadStoredTheme() {
+  try {
+    const data = await chrome.storage.local.get([THEME_STORAGE_KEY]);
+    const stored = data?.[THEME_STORAGE_KEY];
+    applyTheme(stored);
+  } catch (err) {
+    applyTheme(DEFAULT_THEME);
+  }
+}
 const DOWNLOAD_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNiIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI2IiByeD0iMi41IiBmaWxsPSIjMEVBNUU5Ii8+PHBhdGggZD0iTTE2IDV2MTMuMTdsNC41OS00LjU4TDIyIDE1bC02IDYtNi02IDEuNDEtMS40MUwxNCAxOC4xN1Y1aDJ6IiBmaWxsPSIjRTBGMkZFIi8+PC9zdmc+";
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
@@ -141,6 +172,7 @@ function ensureShadowRoot() {
     if (shadowHostEl && !shadowHostEl.parentElement) {
       document.body.appendChild(shadowHostEl);
     }
+    syncThemeAttributes();
     return shadowRootEl;
   }
 
@@ -177,6 +209,8 @@ function ensureShadowRoot() {
   shadowRootEl.appendChild(shadowContentEl);
 
   document.body.appendChild(shadowHostEl);
+
+  syncThemeAttributes();
 
   ensureShadowHostObserver();
 
@@ -1861,13 +1895,19 @@ function applyIconToResults(origin, faviconUrl) {
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
+  if (!message || !message.type) {
     return;
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
-    void openOverlay();
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      void openOverlay();
+    }
+    return;
+  }
+  if (message.type === "SPOTLIGHT_THEME_UPDATED") {
+    applyTheme(message.theme);
   }
 });
 
@@ -1882,3 +1922,5 @@ if (document.readyState === "loading") {
 } else {
   ensureShadowRoot();
 }
+
+void loadStoredTheme();

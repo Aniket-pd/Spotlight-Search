@@ -12,10 +12,16 @@ import {
   registerDataInvalidationEvents,
   registerActionClick,
 } from "./events.js";
+import { createThemeController } from "./theme.js";
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
+const theme = createThemeController();
+const executeCommand = createCommandExecutor({
+  tabActions,
+  theme,
+  scheduleRebuild: context.scheduleRebuild,
+});
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 
@@ -27,6 +33,7 @@ registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  theme,
 });
 
 registerLifecycleEvents(context);

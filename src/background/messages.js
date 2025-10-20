@@ -4,6 +4,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  theme,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -15,13 +16,14 @@ export function registerMessageHandlers({
       const navigationState = navigation
         ? navigation.getStateForTab(senderTabId)
         : { tabId: senderTabId, back: [], forward: [] };
-      context
-        .ensureIndex()
-        .then((data) => {
+      const themePromise = theme?.getTheme ? theme.getTheme().catch(() => "dark") : Promise.resolve("dark");
+      Promise.all([context.ensureIndex(), themePromise])
+        .then(([data, currentTheme]) => {
           const payload =
             runSearch(message.query || "", data, {
               subfilter: message.subfilter,
               navigation: navigationState,
+              theme: currentTheme,
             }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];

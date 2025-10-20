@@ -6,7 +6,7 @@ const REBUILD_DELAYS = {
   "tab-close-domain": 400,
 };
 
-export function createCommandExecutor({ tabActions, scheduleRebuild }) {
+export function createCommandExecutor({ tabActions, theme, scheduleRebuild }) {
   const {
     sortAllTabsByDomainAndTitle,
     shuffleTabs,
@@ -37,6 +37,22 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
         await closeTabsByDomain(args.domain);
         scheduleRebuild(REBUILD_DELAYS[commandId]);
         return;
+      case "theme-dark":
+      case "theme-light": {
+        if (!theme || typeof theme.setTheme !== "function") {
+          throw new Error("Theme service unavailable");
+        }
+        const nextTheme = commandId === "theme-dark" ? "dark" : "light";
+        await theme.setTheme(nextTheme);
+        return;
+      }
+      case "theme-set": {
+        if (!theme || typeof theme.setTheme !== "function") {
+          throw new Error("Theme service unavailable");
+        }
+        await theme.setTheme(args?.theme || args?.mode);
+        return;
+      }
       default:
         throw new Error(`Unknown command: ${commandId}`);
     }
