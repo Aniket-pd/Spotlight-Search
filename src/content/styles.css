@@ -234,6 +234,11 @@
   margin: 0 auto;
   gap: 28px;
   color: rgba(255, 255, 255, 0.85);
+  padding: 0 28px;
+  --typing-font-size: clamp(22px, 4.4vw, 30px);
+  --typing-line-height: 1.55;
+  --typing-visible-lines: 3;
+  --typing-row-gap: 18px;
 }
 
 .typing-test-header {
@@ -318,22 +323,33 @@
 
 .typing-test-viewport {
   width: 100%;
-  min-height: 160px;
+  height: calc(
+    var(--typing-font-size) * var(--typing-line-height) * var(--typing-visible-lines) +
+      (var(--typing-visible-lines) - 1) * var(--typing-row-gap)
+  );
+  min-height: calc(
+    var(--typing-font-size) * var(--typing-line-height) * var(--typing-visible-lines) +
+      (var(--typing-visible-lines) - 1) * var(--typing-row-gap)
+  );
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 0 32px;
+  padding: 0 24px;
   position: relative;
+  overflow: hidden;
 }
 
 .typing-test-words {
   display: flex;
   flex-wrap: wrap;
-  gap: 18px;
+  gap: var(--typing-row-gap);
   justify-content: center;
+  align-content: flex-start;
+  width: 100%;
+  max-width: 100%;
   font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, monospace;
-  font-size: 30px;
-  line-height: 1.6;
+  font-size: var(--typing-font-size);
+  line-height: var(--typing-line-height);
   letter-spacing: 0.02em;
   text-align: center;
   transform: translateY(var(--typing-offset, 0px));
