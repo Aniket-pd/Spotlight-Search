@@ -170,6 +170,20 @@ async function closeTabsByDomain(domain) {
   }
 }
 
+async function closeAudibleTabs() {
+  try {
+    const audibleTabs = await chrome.tabs.query({ audible: true });
+    const toClose = audibleTabs
+      .filter((tab) => tab.id !== undefined)
+      .map((tab) => tab.id);
+    if (toClose.length) {
+      await chrome.tabs.remove(toClose);
+    }
+  } catch (err) {
+    console.warn("Spotlight: failed to close audio tabs", err);
+  }
+}
+
 export function createTabActions() {
   return {
     sortAllTabsByDomainAndTitle,
@@ -177,5 +191,6 @@ export function createTabActions() {
     closeTabById,
     closeAllTabsExceptActive,
     closeTabsByDomain,
+    closeAudibleTabs,
   };
 }

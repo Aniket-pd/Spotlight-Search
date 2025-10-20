@@ -13,6 +13,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - All processing performed locally—no network calls.
 - Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
+- Close-all-audio command to instantly silence every tab that's currently playing sound.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
 
 
