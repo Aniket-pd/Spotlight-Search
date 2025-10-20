@@ -355,6 +355,25 @@
   transition: transform 0.2s ease;
 }
 
+.typing-test-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.16s ease, width 0.16s ease, opacity 0.12s ease;
+  pointer-events: none;
+  will-change: transform, width;
+  opacity: 1;
+}
+
+.typing-test-caret-hidden {
+  opacity: 0;
+}
+
 .typing-word {
   display: inline-flex;
   --typing-char-gap: 0.08em;
@@ -405,6 +424,7 @@
   height: 2px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.75);
+  opacity: 0;
 }
 
 .typing-char.caret.placeholder {
@@ -418,6 +438,16 @@
 
 .typing-char.caret.placeholder::after {
   left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-test-words {
+    transition: none;
+  }
+
+  .typing-test-caret {
+    transition: none;
+  }
 }
 
 .typing-test-results {

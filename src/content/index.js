@@ -49,6 +49,7 @@ const typingTestElements = {
   root: null,
   viewport: null,
   wordsWrap: null,
+  caret: null,
   timer: null,
   durations: null,
   durationButtons: [],
@@ -978,6 +979,10 @@ function ensureTypingTestElements() {
   wordsWrap.className = "typing-test-words";
   viewport.appendChild(wordsWrap);
 
+  const caret = document.createElement("span");
+  caret.className = "typing-test-caret typing-test-caret-hidden";
+  viewport.appendChild(caret);
+
   const results = document.createElement("div");
   results.className = "typing-test-results";
   results.setAttribute("hidden", "true");
@@ -1015,6 +1020,7 @@ function ensureTypingTestElements() {
   typingTestElements.timer = timerEl;
   typingTestElements.viewport = viewport;
   typingTestElements.wordsWrap = wordsWrap;
+  typingTestElements.caret = caret;
   typingTestElements.results = results;
   typingTestElements.wpmValue = wpmStat.value;
   typingTestElements.accuracyValue = accuracyStat.value;
@@ -1175,6 +1181,7 @@ function renderTypingTestWords() {
 
   wordsWrap.replaceChildren(fragment);
   updateTypingTestScroll();
+  updateTypingTestCaret();
 }
 
 function updateTypingTestScroll() {
@@ -1193,6 +1200,48 @@ function updateTypingTestScroll() {
   const nextOffset = Math.min(desired, maxOffset);
   typingTestState.scrollOffset = nextOffset;
   wordsWrap.style.setProperty("--typing-offset", `${-nextOffset}px`);
+}
+
+function updateTypingTestCaret() {
+  if (
+    !typingTestElements.caret ||
+    !typingTestElements.viewport ||
+    !typingTestElements.wordsWrap
+  ) {
+    return;
+  }
+
+  const { caret, viewport, wordsWrap } = typingTestElements;
+  const state = typingTestState;
+
+  if (!isOpen || activeActivity !== "typing-test" || !state || state.phase === "finished") {
+    caret.classList.add("typing-test-caret-hidden");
+    return;
+  }
+
+  const anchor = wordsWrap.querySelector(".typing-word.active .typing-char.caret");
+  if (!anchor) {
+    caret.classList.add("typing-test-caret-hidden");
+    return;
+  }
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  if (viewportRect.width === 0 || viewportRect.height === 0) {
+    caret.classList.add("typing-test-caret-hidden");
+    return;
+  }
+
+  const fontSize = parseFloat(getComputedStyle(wordsWrap).fontSize || "16");
+  const fallbackWidth = Number.isFinite(fontSize) ? Math.max(fontSize * 0.55, 6) : 12;
+  const caretWidth = Math.max(anchorRect.width, fallbackWidth);
+  const caretHeight = caret.offsetHeight || 2;
+  const x = anchorRect.left - viewportRect.left;
+  const y = anchorRect.bottom - viewportRect.top - caretHeight;
+
+  caret.style.width = `${caretWidth}px`;
+  caret.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  caret.classList.remove("typing-test-caret-hidden");
 }
 
 function renderTypingTestResults() {
@@ -1331,11 +1380,26 @@ function typingTestBackspace() {
   if (!typingTestState) {
     return;
   }
-  const current = getTypingTestWordAt(typingTestState.currentIndex);
-  if (!current || !current.typed) {
+  const state = typingTestState;
+  const current = getTypingTestWordAt(state.currentIndex);
+  if (!current) {
     return;
   }
-  current.typed = current.typed.slice(0, -1);
+
+  if (current.typed) {
+    current.typed = current.typed.slice(0, -1);
+  } else if (state.currentIndex > 0) {
+    const previousIndex = state.currentIndex - 1;
+    const previous = getTypingTestWordAt(previousIndex);
+    if (previous) {
+      state.currentIndex = previousIndex;
+      previous.locked = false;
+      if (previous.typed) {
+        previous.typed = previous.typed.slice(0, -1);
+      }
+    }
+  }
+
   renderTypingTestWords();
 }
 
@@ -1460,6 +1524,9 @@ function exitTypingTestActivity() {
   }
   if (typingTestElements.results) {
     typingTestElements.results.setAttribute("hidden", "true");
+  }
+  if (typingTestElements.caret) {
+    typingTestElements.caret.classList.add("typing-test-caret-hidden");
   }
   renderTypingTestResults();
 }
