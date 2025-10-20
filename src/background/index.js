@@ -12,10 +12,16 @@ import {
   registerDataInvalidationEvents,
   registerActionClick,
 } from "./events.js";
+import { createPageActions } from "./page.js";
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
+const pageActions = createPageActions();
+const executeCommand = createCommandExecutor({
+  tabActions,
+  pageActions,
+  scheduleRebuild: context.scheduleRebuild,
+});
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 

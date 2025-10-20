@@ -448,6 +448,32 @@ const STATIC_COMMANDS = [
     },
   },
   {
+    id: "command:toggle-dark-mode",
+    title: "Toggle dark mode",
+    aliases: [
+      "dark mode",
+      "enable dark mode",
+      "disable dark mode",
+      "light mode",
+      "toggle theme",
+      "night mode",
+    ],
+    action: "page-toggle-dark-mode",
+    answer() {
+      return "Toggles a dark color scheme on the current page.";
+    },
+    description(context) {
+      const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+      const activeTab = tabs.find((tab) => tab?.active);
+      const label = activeTab?.title || activeTab?.url || "Current tab";
+      return `${label} · Dark theme toggle`;
+    },
+    isAvailable(context) {
+      const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+      return tabs.some((tab) => tab && tab.active);
+    },
+  },
+  {
     id: "command:tab-close-audio",
     title: "Close tabs playing audio",
     aliases: [
