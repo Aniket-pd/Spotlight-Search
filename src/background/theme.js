@@ -1,8 +1,8 @@
 const THEME_STORAGE_KEY = "spotlight.theme";
-const DEFAULT_THEME = "dark";
+const DEFAULT_THEME = "light";
 
 function normalizeTheme(value) {
-  return value === "light" ? "light" : DEFAULT_THEME;
+  return value === "dark" || value === "light" ? value : DEFAULT_THEME;
 }
 
 export function createThemeController() {

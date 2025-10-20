@@ -16,7 +16,7 @@ export function registerMessageHandlers({
       const navigationState = navigation
         ? navigation.getStateForTab(senderTabId)
         : { tabId: senderTabId, back: [], forward: [] };
-      const themePromise = theme?.getTheme ? theme.getTheme().catch(() => "dark") : Promise.resolve("dark");
+      const themePromise = theme?.getTheme ? theme.getTheme().catch(() => "light") : Promise.resolve("light");
       Promise.all([context.ensureIndex(), themePromise])
         .then(([data, currentTheme]) => {
           const payload =

@@ -6,7 +6,30 @@ const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
 const THEME_STORAGE_KEY = "spotlight.theme";
-const DEFAULT_THEME = "dark";
+const DEFAULT_THEME = "light";
+const PAGE_THEME_ATTRIBUTE = "data-spotlight-browser-theme";
+const PAGE_THEME_STYLE_ID = "spotlight-browser-theme-style";
+const PAGE_THEME_META_ID = "spotlight-browser-theme-meta";
+const PAGE_THEME_STYLE_CONTENT = `
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] {
+  color-scheme: dark;
+  background-color: #121212 !important;
+  filter: invert(1) hue-rotate(180deg);
+}
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] body {
+  background-color: #121212 !important;
+}
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] img,
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] video,
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] picture,
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] canvas,
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] svg image {
+  filter: invert(1) hue-rotate(180deg);
+}
+:root[${PAGE_THEME_ATTRIBUTE}="dark"] #${SHADOW_HOST_ID} {
+  filter: invert(1) hue-rotate(180deg);
+}
+`;
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
@@ -44,6 +67,8 @@ let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
 let currentTheme = DEFAULT_THEME;
+let pageThemeStyleEl = null;
+let pageThemeMetaEl = null;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -66,7 +91,7 @@ let faviconQueue = [];
 let faviconProcessing = false;
 
 function normalizeTheme(value) {
-  return value === "light" ? "light" : DEFAULT_THEME;
+  return value === "dark" || value === "light" ? value : DEFAULT_THEME;
 }
 
 function syncThemeAttributes() {
@@ -78,9 +103,95 @@ function syncThemeAttributes() {
   }
 }
 
+function ensurePageThemeStyle() {
+  if (pageThemeStyleEl) {
+    return pageThemeStyleEl;
+  }
+  try {
+    const targetParent = document.head || document.documentElement;
+    if (!targetParent) {
+      return null;
+    }
+    const existing = document.getElementById(PAGE_THEME_STYLE_ID);
+    if (existing) {
+      pageThemeStyleEl = existing;
+      if (!pageThemeStyleEl.textContent) {
+        pageThemeStyleEl.textContent = PAGE_THEME_STYLE_CONTENT;
+      }
+      return pageThemeStyleEl;
+    }
+    const styleEl = document.createElement("style");
+    styleEl.id = PAGE_THEME_STYLE_ID;
+    styleEl.type = "text/css";
+    styleEl.textContent = PAGE_THEME_STYLE_CONTENT;
+    targetParent.appendChild(styleEl);
+    pageThemeStyleEl = styleEl;
+    return pageThemeStyleEl;
+  } catch (err) {
+    console.warn("Spotlight: failed to ensure page theme styles", err);
+    return null;
+  }
+}
+
+function ensurePageThemeMeta() {
+  if (pageThemeMetaEl) {
+    return pageThemeMetaEl;
+  }
+  try {
+    const targetParent = document.head || document.documentElement;
+    if (!targetParent) {
+      return null;
+    }
+    const existing = document.getElementById(PAGE_THEME_META_ID);
+    if (existing) {
+      pageThemeMetaEl = existing;
+      return pageThemeMetaEl;
+    }
+    const metaEl = document.createElement("meta");
+    metaEl.id = PAGE_THEME_META_ID;
+    metaEl.name = "color-scheme";
+    targetParent.appendChild(metaEl);
+    pageThemeMetaEl = metaEl;
+    return pageThemeMetaEl;
+  } catch (err) {
+    console.warn("Spotlight: failed to ensure page theme metadata", err);
+    return null;
+  }
+}
+
+function applyPageTheme(theme) {
+  const normalized = normalizeTheme(theme);
+  const root = document.documentElement;
+  if (!root) {
+    return;
+  }
+  if (normalized === "dark") {
+    ensurePageThemeStyle();
+    const metaEl = ensurePageThemeMeta();
+    root.setAttribute(PAGE_THEME_ATTRIBUTE, "dark");
+    if (metaEl) {
+      metaEl.content = "dark light";
+    }
+    return;
+  }
+
+  root.removeAttribute(PAGE_THEME_ATTRIBUTE);
+  if (pageThemeMetaEl) {
+    try {
+      if (pageThemeMetaEl.parentNode) {
+        pageThemeMetaEl.parentNode.removeChild(pageThemeMetaEl);
+      }
+    } catch (err) {
+      console.warn("Spotlight: failed to remove page theme metadata", err);
+    }
+    pageThemeMetaEl = null;
+  }
+}
+
 function applyTheme(nextTheme) {
   currentTheme = normalizeTheme(nextTheme);
   syncThemeAttributes();
+  applyPageTheme(currentTheme);
 }
 
 async function loadStoredTheme() {

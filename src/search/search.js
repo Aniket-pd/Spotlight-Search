@@ -457,10 +457,10 @@ const STATIC_COMMANDS = [
     ],
     action: "theme-dark",
     answer() {
-      return "Switches Spotlight to the dark theme.";
+      return "Switches Spotlight and every tab to the dark theme.";
     },
     description() {
-      return "Dark theme · Dimmed surfaces";
+      return "Dark theme · Dimmed surfaces across the browser";
     },
     isAvailable(context) {
       const theme = context?.theme === "light" ? "light" : "dark";
@@ -479,10 +479,10 @@ const STATIC_COMMANDS = [
     ],
     action: "theme-light",
     answer() {
-      return "Switches Spotlight to the light theme.";
+      return "Switches Spotlight and every tab to the light theme.";
     },
     description() {
-      return "Light theme · Bright surfaces";
+      return "Light theme · Bright surfaces across the browser";
     },
     isAvailable(context) {
       const theme = context?.theme === "light" ? "light" : "dark";
@@ -1331,7 +1331,7 @@ export function runSearch(query, data, options = {}) {
       ? { type: filterType, options: availableSubfilters, activeId: activeSubfilterId }
       : null;
   const subfilterContext = { historyBoundaries };
-  const theme = options?.theme === "light" ? "light" : "dark";
+  const theme = options?.theme === "dark" ? "dark" : "light";
   const commandContext = { tabCount, tabs, theme };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
