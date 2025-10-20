@@ -55,7 +55,7 @@ function normalizeTabEntry(tab) {
     tabId: typeof tab.id === "number" ? tab.id : null,
     windowId: typeof tab.windowId === "number" ? tab.windowId : null,
     title: tab.title || tab.url || "Untitled tab",
-    url: tab.url || "",
+    url: tab.url || tab.pendingUrl || "",
     active: Boolean(tab.active),
     audible: Boolean(tab.audible),
     discarded: Boolean(tab.discarded),
@@ -82,7 +82,22 @@ export function createPerformanceTracker() {
       };
     }
 
-    const filteredTabs = tabs.filter((tab) => tab && tab.url && !tab.url.startsWith("chrome://"));
+    const filteredTabs = tabs.filter((tab) => {
+      if (!tab) {
+        return false;
+      }
+      const url = typeof tab.url === "string" ? tab.url : null;
+      const pendingUrl = typeof tab.pendingUrl === "string" ? tab.pendingUrl : null;
+      // When the extension does not have host permissions for a page Chrome hides the URL,
+      // so we only exclude internal Chrome pages rather than every tab without a URL.
+      if (url && url.startsWith("chrome://")) {
+        return false;
+      }
+      if (pendingUrl && pendingUrl.startsWith("chrome://")) {
+        return false;
+      }
+      return true;
+    });
 
     const tabEntries = await Promise.all(
       filteredTabs.map(async (tab) => {
