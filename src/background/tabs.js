@@ -170,6 +170,29 @@ async function closeTabsByDomain(domain) {
   }
 }
 
+async function activateTab(tabId) {
+  if (typeof tabId !== "number") {
+    return false;
+  }
+  try {
+    const updated = await chrome.tabs.update(tabId, { active: true });
+    const windowId = typeof updated?.windowId === "number" ? updated.windowId : null;
+    if (windowId !== null) {
+      try {
+        await chrome.windows.update(windowId, { focused: true });
+      } catch (err) {
+        if (err && err.message) {
+          console.warn("Spotlight: failed to focus window", err);
+        }
+      }
+    }
+    return true;
+  } catch (err) {
+    console.warn("Spotlight: failed to activate tab", err);
+    return false;
+  }
+}
+
 export function createTabActions() {
   return {
     sortAllTabsByDomainAndTitle,
@@ -177,5 +200,6 @@ export function createTabActions() {
     closeTabById,
     closeAllTabsExceptActive,
     closeTabsByDomain,
+    activateTab,
   };
 }

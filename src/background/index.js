@@ -27,6 +27,7 @@ registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  tabActions,
 });
 
 registerLifecycleEvents(context);
