@@ -476,6 +476,48 @@ const STATIC_COMMANDS = [
       return (context?.audibleTabCount || 0) > 0;
     },
   },
+  {
+    id: "command:dark-mode-on",
+    title: "Enable Chrome dark mode",
+    aliases: [
+      "dark mode on",
+      "enable dark mode",
+      "switch to dark mode",
+      "dark theme",
+      "night mode",
+    ],
+    action: "theme-dark-mode",
+    answer() {
+      return "Switches Chrome's appearance setting to the dark theme.";
+    },
+    description() {
+      return "Chrome appearance · Dark theme";
+    },
+    isAvailable() {
+      return true;
+    },
+  },
+  {
+    id: "command:dark-mode-off",
+    title: "Disable Chrome dark mode",
+    aliases: [
+      "dark mode off",
+      "disable dark mode",
+      "switch to light mode",
+      "light mode",
+      "light theme",
+    ],
+    action: "theme-light-mode",
+    answer() {
+      return "Switches Chrome's appearance setting back to the light theme.";
+    },
+    description() {
+      return "Chrome appearance · Light theme";
+    },
+    isAvailable() {
+      return true;
+    },
+  },
 ];
 
 function formatTabCount(count) {

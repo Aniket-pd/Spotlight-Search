@@ -7,7 +7,7 @@ const REBUILD_DELAYS = {
   "tab-close-audio": 400,
 };
 
-export function createCommandExecutor({ tabActions, scheduleRebuild }) {
+export function createCommandExecutor({ tabActions, themeActions, scheduleRebuild }) {
   const {
     sortAllTabsByDomainAndTitle,
     shuffleTabs,
@@ -16,6 +16,7 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
     closeTabsByDomain,
     closeAudibleTabs,
   } = tabActions;
+  const { enableDarkMode, disableDarkMode } = themeActions || {};
 
   return async function executeCommand(commandId, args = {}) {
     switch (commandId) {
@@ -43,6 +44,18 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
         await closeAudibleTabs();
         scheduleRebuild(REBUILD_DELAYS[commandId]);
         return;
+      case "theme-dark-mode":
+        if (typeof enableDarkMode === "function") {
+          await enableDarkMode();
+          return;
+        }
+        throw new Error("Dark mode action unavailable");
+      case "theme-light-mode":
+        if (typeof disableDarkMode === "function") {
+          await disableDarkMode();
+          return;
+        }
+        throw new Error("Light mode action unavailable");
       default:
         throw new Error(`Unknown command: ${commandId}`);
     }
