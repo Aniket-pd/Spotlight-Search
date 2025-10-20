@@ -15,6 +15,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 - Close-all-audio command to instantly silence every tab that's currently playing sound.
 - Live tab performance command that surfaces real-time CPU and memory usage for every open tab directly inside Spotlight.
+- Built-in DevTools bridge that lets the background service worker attach to tabs via Chrome's debugger protocol for advanced diagnostics.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
 
 
@@ -36,7 +37,7 @@ Type `tab performance` (or jump straight to `> performance`) to summon a dedicat
 - **Memory** consumption in megabytes or gigabytes, plus optional JS heap totals when Chrome exposes them.
 - Status chips that call out active, audible, discarded, or locked tabs at a glance.
 
-Select any tab in the performance view to focus it instantly. Behind the scenes Spotlight relies on Chrome's `processes` API, so all monitoring stays on-device with no external requests.
+Select any tab in the performance view to focus it instantly. Behind the scenes Spotlight relies on Chrome's `processes` API and can elevate to the DevTools protocol through the background debugger bridge for deeper telemetry—all with no external requests.
 
 ## Loading the Extension
 1. Clone or download this repository.

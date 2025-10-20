@@ -5,6 +5,7 @@ export function registerMessageHandlers({
   resolveFaviconForTarget,
   navigation,
   performanceTracker,
+  devtools,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -120,6 +121,53 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: performance snapshot failed", err);
           sendResponse({ success: false, error: err?.message || "Unable to capture snapshot" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_DEBUG_ATTACH") {
+      if (!devtools) {
+        sendResponse({ success: false, error: "DevTools bridge unavailable" });
+        return true;
+      }
+      devtools
+        .attachToTab(message.tabId)
+        .then((result) => sendResponse({ success: true, ...result }))
+        .catch((err) => {
+          console.error("Spotlight: failed to attach debugger", err);
+          sendResponse({ success: false, error: err?.message || "Unable to attach" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_DEBUG_DETACH") {
+      if (!devtools) {
+        sendResponse({ success: false, error: "DevTools bridge unavailable" });
+        return true;
+      }
+      devtools
+        .detachFromTab(message.tabId)
+        .then((result) => sendResponse({ success: true, ...result }))
+        .catch((err) => {
+          console.warn("Spotlight: failed to detach debugger", err);
+          sendResponse({ success: false, error: err?.message || "Unable to detach" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_DEBUG_COMMAND") {
+      if (!devtools) {
+        sendResponse({ success: false, error: "DevTools bridge unavailable" });
+        return true;
+      }
+      const method = typeof message.method === "string" ? message.method : "";
+      const params = message.params && typeof message.params === "object" ? message.params : undefined;
+      devtools
+        .sendCommand(message.tabId, method, params)
+        .then((result) => sendResponse({ success: true, result: result ?? null }))
+        .catch((err) => {
+          console.error("Spotlight: DevTools command failed", err);
+          sendResponse({ success: false, error: err?.message || "Command failed" });
         });
       return true;
     }

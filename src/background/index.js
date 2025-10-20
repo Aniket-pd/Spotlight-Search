@@ -7,6 +7,7 @@ import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
 import { createPerformanceTracker } from "./performance.js";
+import { createDevtoolsBridge } from "./devtools.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -20,6 +21,7 @@ const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: cont
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const performanceTracker = createPerformanceTracker();
+const devtools = createDevtoolsBridge();
 
 registerNavigationListeners(navigation);
 
@@ -30,6 +32,7 @@ registerMessageHandlers({
   resolveFaviconForTarget,
   navigation,
   performanceTracker,
+  devtools,
 });
 
 registerLifecycleEvents(context);
