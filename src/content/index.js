@@ -1,9 +1,16 @@
 const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
+const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+let shadowHostEl = null;
+let shadowRootEl = null;
+let shadowContentEl = null;
+let shadowStyleLinkEl = null;
+let shadowHostObserver = null;
+let observedBody = null;
 let overlayEl = null;
 let containerEl = null;
 let inputEl = null;
@@ -30,6 +37,10 @@ let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
 let pointerNavigationSuspended = false;
+let shadowStylesLoaded = false;
+let shadowStylesPromise = null;
+let overlayPreparationPromise = null;
+let overlayGuardsInstalled = false;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -121,7 +132,139 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .filter(Boolean),
 }));
 
+function ensureShadowRoot() {
+  if (!document.body) {
+    return null;
+  }
+
+  if (shadowRootEl && shadowContentEl) {
+    if (shadowHostEl && !shadowHostEl.parentElement) {
+      document.body.appendChild(shadowHostEl);
+    }
+    return shadowRootEl;
+  }
+
+  shadowHostEl = document.createElement("div");
+  shadowHostEl.id = SHADOW_HOST_ID;
+  shadowHostEl.style.position = "fixed";
+  shadowHostEl.style.inset = "0";
+  shadowHostEl.style.zIndex = "2147483647";
+  shadowHostEl.style.display = "none";
+  shadowHostEl.style.contain = "layout style paint";
+  shadowHostEl.style.pointerEvents = "none";
+
+  shadowRootEl = shadowHostEl.attachShadow({ mode: "open", delegatesFocus: true });
+
+  shadowStyleLinkEl = document.createElement("link");
+  shadowStyleLinkEl.rel = "stylesheet";
+  shadowStyleLinkEl.href = chrome.runtime.getURL("src/content/styles.css");
+
+  shadowStylesPromise = new Promise((resolve) => {
+    const markReady = () => {
+      shadowStylesLoaded = true;
+      resolve();
+    };
+    shadowStyleLinkEl.addEventListener("load", markReady, { once: true });
+    shadowStyleLinkEl.addEventListener("error", markReady, { once: true });
+    shadowRootEl.appendChild(shadowStyleLinkEl);
+    if (shadowStyleLinkEl.sheet) {
+      markReady();
+    }
+  });
+
+  shadowContentEl = document.createElement("div");
+  shadowContentEl.className = "spotlight-root";
+  shadowRootEl.appendChild(shadowContentEl);
+
+  document.body.appendChild(shadowHostEl);
+
+  ensureShadowHostObserver();
+
+  return shadowRootEl;
+}
+
+function ensureShadowHostObserver() {
+  if (!document.body || shadowHostObserver) {
+    return;
+  }
+
+  shadowHostObserver = new MutationObserver(() => {
+    if (!shadowHostEl || !document.body) {
+      return;
+    }
+
+    if (shadowHostEl.parentElement !== document.body) {
+      document.body.appendChild(shadowHostEl);
+    }
+
+    if (observedBody !== document.body) {
+      if (document.body) {
+        shadowHostObserver.observe(document.body, { childList: true });
+        observedBody = document.body;
+      }
+    }
+  });
+
+  shadowHostObserver.observe(document.documentElement, { childList: true });
+  shadowHostObserver.observe(document.body, { childList: true });
+  observedBody = document.body;
+}
+
+async function prepareOverlay() {
+  if (overlayPreparationPromise) {
+    return overlayPreparationPromise;
+  }
+
+  overlayPreparationPromise = (async () => {
+    if (!document.body) {
+      await new Promise((resolve) => {
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", resolve, { once: true });
+        } else {
+          const observer = new MutationObserver(() => {
+            if (document.body) {
+              observer.disconnect();
+              resolve();
+            }
+          });
+          observer.observe(document.documentElement, { childList: true });
+          if (document.body) {
+            observer.disconnect();
+            resolve();
+          }
+        }
+      });
+    }
+
+    ensureShadowRoot();
+
+    if (!overlayEl) {
+      createOverlay();
+    }
+
+    if (overlayEl && shadowContentEl && !shadowContentEl.contains(overlayEl)) {
+      shadowContentEl.appendChild(overlayEl);
+    }
+
+    if (!shadowStylesLoaded && shadowStylesPromise) {
+      try {
+        await shadowStylesPromise;
+      } catch (error) {
+        // Ignore stylesheet loading failures so the overlay can still open unstyled.
+      }
+    }
+  })();
+
+  try {
+    await overlayPreparationPromise;
+  } finally {
+    overlayPreparationPromise = null;
+  }
+}
+
 function createOverlay() {
+  ensureShadowRoot();
+
   overlayEl = document.createElement("div");
   overlayEl.id = OVERLAY_ID;
   overlayEl.className = "spotlight-overlay";
@@ -187,16 +330,32 @@ function createOverlay() {
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
 
+  if (shadowContentEl && !shadowContentEl.contains(overlayEl)) {
+    shadowContentEl.appendChild(overlayEl);
+  }
+
   renderSubfilters();
 
   overlayEl.addEventListener("click", (event) => {
-    if (event.target === overlayEl) {
-      closeOverlay();
+    if (event.target !== overlayEl) {
+      return;
     }
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    closeOverlay();
   });
 
-  inputEl.addEventListener("input", handleInputChange);
-  inputEl.addEventListener("keydown", handleInputKeydown);
+  inputEl.addEventListener("input", (event) => {
+    event.stopPropagation();
+    handleInputChange();
+  });
+  inputEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    handleInputKeydown(event);
+  });
+  inputEl.addEventListener("keyup", (event) => {
+    event.stopPropagation();
+  });
   inputEl.addEventListener("focus", () => {
     if (inputContainerEl) {
       inputContainerEl.classList.add("focused");
@@ -208,6 +367,64 @@ function createOverlay() {
     }
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
+
+  installOverlayGuards();
+}
+
+function installOverlayGuards() {
+  if (!overlayEl || overlayGuardsInstalled) {
+    return;
+  }
+
+  overlayGuardsInstalled = true;
+
+  const bubbleBlockers = [
+    "mousedown",
+    "mouseup",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "click",
+    "dblclick",
+    "contextmenu",
+    "wheel",
+    "touchstart",
+    "touchmove",
+    "touchend",
+    "focusin",
+    "compositionstart",
+    "compositionupdate",
+    "compositionend",
+    "paste",
+    "copy",
+    "cut",
+  ];
+
+  const blockIfOpen = (event) => {
+    if (!isOpen) {
+      return;
+    }
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  };
+
+  bubbleBlockers.forEach((type) => {
+    overlayEl.addEventListener(type, blockIfOpen);
+  });
+
+  if (shadowRootEl) {
+    const stopKeys = (event) => {
+      if (!isOpen) {
+        return;
+      }
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    ["keydown", "keypress", "keyup"].forEach((type) => {
+      shadowRootEl.addEventListener(type, stopKeys);
+    });
+  }
 }
 
 function resetSlashMenuState() {
@@ -532,15 +749,17 @@ function handleSubfilterClick(option) {
   requestResults(inputEl.value);
 }
 
-function openOverlay() {
+async function openOverlay() {
   if (isOpen) {
     inputEl.focus();
     inputEl.select();
     return;
   }
 
-  if (!overlayEl) {
-    createOverlay();
+  await prepareOverlay();
+
+  if (!overlayEl || !shadowHostEl) {
+    return;
   }
 
   isOpen = true;
@@ -557,10 +776,15 @@ function openOverlay() {
   resetSlashMenuState();
   pointerNavigationSuspended = true;
 
+  if (!shadowHostEl.parentElement) {
+    document.body.appendChild(shadowHostEl);
+  }
+  shadowHostEl.style.display = "block";
+  shadowHostEl.style.pointerEvents = "auto";
+
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
 
-  document.body.appendChild(overlayEl);
   requestResults("");
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
@@ -572,8 +796,9 @@ function closeOverlay() {
   if (!isOpen) return;
 
   isOpen = false;
-  if (overlayEl && overlayEl.parentElement) {
-    overlayEl.parentElement.removeChild(overlayEl);
+  if (shadowHostEl) {
+    shadowHostEl.style.display = "none";
+    shadowHostEl.style.pointerEvents = "none";
   }
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
@@ -1642,6 +1867,18 @@ chrome.runtime.onMessage.addListener((message) => {
   if (isOpen) {
     closeOverlay();
   } else {
-    openOverlay();
+    void openOverlay();
   }
 });
+
+if (document.readyState === "loading") {
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      ensureShadowRoot();
+    },
+    { once: true }
+  );
+} else {
+  ensureShadowRoot();
+}
