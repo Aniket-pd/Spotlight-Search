@@ -1,8 +1,13 @@
 const ALL_URLS_PATTERN = "<all_urls>";
 const PROBE_URL = "https://example.com/";
 
-function hasAutomaticDarkModeApi() {
-  return Boolean(chrome?.contentSettings?.automaticDarkMode);
+function getAutoDarkModeContentSetting() {
+  const { contentSettings } = chrome || {};
+  return (
+    contentSettings?.autoDarkMode ||
+    contentSettings?.automaticDarkMode ||
+    null
+  );
 }
 
 function mapSettingToBoolean(setting) {
@@ -17,13 +22,14 @@ function mapSettingToBoolean(setting) {
 }
 
 export async function readAutomaticDarkModeState() {
-  if (!hasAutomaticDarkModeApi() || typeof chrome.contentSettings.automaticDarkMode.get !== "function") {
+  const autoDarkMode = getAutoDarkModeContentSetting();
+  if (!autoDarkMode || typeof autoDarkMode.get !== "function") {
     return { supported: false, enabled: null };
   }
 
   return new Promise((resolve) => {
     try {
-      chrome.contentSettings.automaticDarkMode.get(
+      autoDarkMode.get(
         { primaryUrl: PROBE_URL, incognito: false },
         (details) => {
           if (chrome.runtime.lastError) {
@@ -43,9 +49,14 @@ export async function readAutomaticDarkModeState() {
 }
 
 function setAutomaticDarkModeSetting(setting) {
+  const autoDarkMode = getAutoDarkModeContentSetting();
+  if (!autoDarkMode || typeof autoDarkMode.set !== "function") {
+    return Promise.reject(new Error("Chrome dark mode controls are not available on this browser"));
+  }
+
   return new Promise((resolve, reject) => {
     try {
-      chrome.contentSettings.automaticDarkMode.set(
+      autoDarkMode.set(
         { primaryPattern: ALL_URLS_PATTERN, scope: "regular", setting },
         () => {
           if (chrome.runtime.lastError) {
@@ -63,10 +74,6 @@ function setAutomaticDarkModeSetting(setting) {
 
 export function createAppearanceActions() {
   async function setDarkModeEnabled(enabled) {
-    if (!hasAutomaticDarkModeApi() || typeof chrome.contentSettings.automaticDarkMode.set !== "function") {
-      throw new Error("Chrome dark mode controls are not available on this browser");
-    }
-
     const target = enabled ? "allow" : "block";
     await setAutomaticDarkModeSetting(target);
   }
