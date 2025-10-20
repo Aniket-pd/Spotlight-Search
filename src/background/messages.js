@@ -4,6 +4,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  performanceTracker,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -104,6 +105,44 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_PERFORMANCE_SNAPSHOT") {
+      if (!performanceTracker) {
+        sendResponse({ success: false, error: "Performance tracker unavailable" });
+        return true;
+      }
+      performanceTracker
+        .captureSnapshot()
+        .then((snapshot) => sendResponse({ success: true, snapshot }))
+        .catch((err) => {
+          console.error("Spotlight: performance snapshot failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to capture snapshot" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_FOCUS_TAB") {
+      const tabId = typeof message.tabId === "number" ? message.tabId : null;
+      const windowId = typeof message.windowId === "number" ? message.windowId : null;
+      if (tabId === null) {
+        sendResponse({ success: false, error: "Invalid tab id" });
+        return true;
+      }
+      chrome.tabs
+        .update(tabId, { active: true })
+        .then(() => {
+          if (windowId !== null) {
+            return chrome.windows.update(windowId, { focused: true });
+          }
+          return null;
+        })
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.warn("Spotlight: failed to focus tab", err);
+          sendResponse({ success: false, error: err?.message || "Unable to focus tab" });
         });
       return true;
     }

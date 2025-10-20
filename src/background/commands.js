@@ -43,6 +43,9 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
         await closeAudibleTabs();
         scheduleRebuild(REBUILD_DELAYS[commandId]);
         return;
+      case "tab-performance":
+        // Performance view is handled within the content script; no background action required.
+        return;
       default:
         throw new Error(`Unknown command: ${commandId}`);
     }

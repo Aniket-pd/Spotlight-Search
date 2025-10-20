@@ -5,6 +5,18 @@ const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+const PERFORMANCE_COMMAND_QUERY = "> performance";
+const PERFORMANCE_QUERY_ALIASES = new Set([
+  "> performance",
+  "> perf",
+  "> tab performance",
+  "> tab-performance",
+  "performance",
+  "perf",
+  "tab performance",
+  "tab-performance",
+]);
+const PERFORMANCE_POLL_INTERVAL = 2000;
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
@@ -41,6 +53,10 @@ let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
+let performanceMode = false;
+let performanceTimer = null;
+let performanceRequestInFlight = false;
+let performanceLastSnapshot = null;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -439,6 +455,360 @@ function resetSlashMenuState() {
   }
 }
 
+function normalizePerformanceQuery(query = "") {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isPerformanceQuery(query = "") {
+  if (!query) {
+    return false;
+  }
+  const normalized = normalizePerformanceQuery(query);
+  if (!normalized) {
+    return false;
+  }
+  if (PERFORMANCE_QUERY_ALIASES.has(normalized)) {
+    return true;
+  }
+  if (normalized.startsWith("> ")) {
+    const remainder = normalized.slice(2);
+    return PERFORMANCE_QUERY_ALIASES.has(`> ${remainder}`);
+  }
+  return false;
+}
+
+function stopPerformanceTimer() {
+  if (performanceTimer) {
+    clearInterval(performanceTimer);
+    performanceTimer = null;
+  }
+}
+
+function exitPerformanceMode({ resetStatus = false } = {}) {
+  if (!performanceMode && !performanceTimer) {
+    return;
+  }
+  performanceMode = false;
+  performanceRequestInFlight = false;
+  performanceLastSnapshot = null;
+  stopPerformanceTimer();
+  if (resetStatus) {
+    setStatus("", { force: true });
+  }
+}
+
+function enterPerformanceMode({ keepInput = false } = {}) {
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  if (!keepInput && inputEl) {
+    inputEl.value = PERFORMANCE_COMMAND_QUERY;
+    inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  }
+
+  lastRequestId = ++requestCounter;
+  if (performanceMode) {
+    setGhostText("");
+    pointerNavigationSuspended = true;
+    selectedSubfilter = null;
+    resetSubfilterState();
+    renderSubfilters();
+    if (!performanceTimer) {
+      performanceTimer = setInterval(() => {
+        if (!performanceMode) {
+          return;
+        }
+        requestPerformanceSnapshot();
+      }, PERFORMANCE_POLL_INTERVAL);
+    }
+    setStatus("Collecting tab performance...", { sticky: true, force: true });
+    requestPerformanceSnapshot();
+    return;
+  }
+
+  performanceMode = true;
+  performanceRequestInFlight = false;
+  performanceLastSnapshot = null;
+  stopPerformanceTimer();
+  performanceTimer = setInterval(() => {
+    if (!performanceMode) {
+      return;
+    }
+    requestPerformanceSnapshot();
+  }, PERFORMANCE_POLL_INTERVAL);
+
+  resultsState = [];
+  lazyList.reset();
+  lazyList.setItems(resultsState);
+  activeIndex = -1;
+  activeFilter = null;
+  pointerNavigationSuspended = true;
+  selectedSubfilter = null;
+  resetSubfilterState();
+  renderSubfilters();
+  setGhostText("");
+  setStatus("Collecting tab performance...", { sticky: true, force: true });
+  renderResults();
+  requestPerformanceSnapshot();
+}
+
+function requestPerformanceSnapshot() {
+  if (!performanceMode || performanceRequestInFlight) {
+    return;
+  }
+  performanceRequestInFlight = true;
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_PERFORMANCE_SNAPSHOT" }, (response) => {
+    performanceRequestInFlight = false;
+    if (!performanceMode) {
+      return;
+    }
+    if (chrome.runtime.lastError) {
+      console.warn("Spotlight performance error", chrome.runtime.lastError);
+      performanceLastSnapshot = { error: chrome.runtime.lastError.message };
+      resultsState = [];
+      lazyList.setItems(resultsState);
+      renderResults();
+      setStatus("Unable to load tab performance", { sticky: true, force: true });
+      return;
+    }
+    if (!response || !response.success) {
+      const errorMessage = response?.error || "Unable to load tab performance";
+      performanceLastSnapshot = { error: errorMessage };
+      resultsState = [];
+      lazyList.setItems(resultsState);
+      renderResults();
+      setStatus(errorMessage, { sticky: true, force: true });
+      return;
+    }
+    applyPerformanceSnapshot(response.snapshot);
+  });
+}
+
+function computeOriginFromUrl(url) {
+  if (!url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url, window.location?.href || undefined);
+    return parsed.origin || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function buildPerformanceResultItems(tabs, snapshot) {
+  if (!Array.isArray(tabs)) {
+    return [];
+  }
+  const timestamp = typeof snapshot?.timestamp === "number" ? snapshot.timestamp : Date.now();
+  const metricsAvailable = snapshot?.metricsAvailable !== false;
+  return tabs.map((tab, index) => {
+    const tabId = typeof tab?.tabId === "number" ? tab.tabId : index;
+    const id = `performance:${tabId}`;
+    const origin = tab?.origin || computeOriginFromUrl(tab?.url || "");
+    return {
+      id,
+      type: "tabPerformance",
+      title: tab?.title || tab?.url || "Untitled tab",
+      url: tab?.url || "",
+      description: tab?.url || "",
+      tabId: typeof tab?.tabId === "number" ? tab.tabId : null,
+      windowId: typeof tab?.windowId === "number" ? tab.windowId : null,
+      active: Boolean(tab?.active),
+      audible: Boolean(tab?.audible),
+      discarded: Boolean(tab?.discarded),
+      autoDiscardable: Boolean(tab?.autoDiscardable),
+      attention: Boolean(tab?.attention),
+      lastAccessed: typeof tab?.lastAccessed === "number" ? tab.lastAccessed : timestamp,
+      faviconUrl: typeof tab?.favIconUrl === "string" ? tab.favIconUrl : null,
+      origin,
+      cpu: Number.isFinite(tab?.cpu) ? tab.cpu : null,
+      memory: Number.isFinite(tab?.memory) ? tab.memory : null,
+      jsMemory: Number.isFinite(tab?.jsMemory) ? tab.jsMemory : null,
+      network: Number.isFinite(tab?.network) ? tab.network : null,
+      metricsAvailable,
+      snapshotTimestamp: timestamp,
+    };
+  });
+}
+
+function applyPerformanceSnapshot(snapshot) {
+  performanceLastSnapshot = snapshot || null;
+  const tabs = Array.isArray(snapshot?.tabs) ? snapshot.tabs : [];
+  const previousActiveId =
+    activeIndex >= 0 && activeIndex < resultsState.length ? resultsState[activeIndex]?.id : null;
+  const items = buildPerformanceResultItems(tabs, snapshot);
+  resultsState = items;
+  lazyList.setItems(resultsState);
+  applyCachedFavicons(resultsState);
+  if (resultsState.length) {
+    const nextIndex = previousActiveId
+      ? resultsState.findIndex((item) => item && item.id === previousActiveId)
+      : 0;
+    activeIndex = nextIndex >= 0 ? nextIndex : 0;
+  } else {
+    activeIndex = -1;
+  }
+  pointerNavigationSuspended = true;
+  renderResults();
+
+  const timestamp = typeof snapshot?.timestamp === "number" ? snapshot.timestamp : Date.now();
+  let formattedTime = "";
+  try {
+    formattedTime = new Date(timestamp).toLocaleTimeString();
+  } catch (err) {
+    formattedTime = "";
+  }
+  let statusMessage = "Live tab performance";
+  if (formattedTime) {
+    statusMessage = `${statusMessage} · Updated ${formattedTime}`;
+  }
+  if (snapshot && snapshot.metricsAvailable === false) {
+    statusMessage = `${statusMessage} · Limited metrics`;
+  }
+  setStatus(statusMessage, { sticky: true, force: true });
+}
+
+function formatPerformanceLocation(result) {
+  if (!result || !result.url) {
+    return result?.title || "";
+  }
+  try {
+    const parsed = new URL(result.url, window.location?.href || undefined);
+    const host = parsed.hostname || "";
+    const path = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "";
+    return path ? `${host}${path}` : host || result.url;
+  } catch (err) {
+    return result.url;
+  }
+}
+
+function formatCpuValue(value) {
+  if (!Number.isFinite(value)) {
+    return "Unknown";
+  }
+  const rounded = value >= 10 ? value.toFixed(0) : value.toFixed(1);
+  return `${rounded}%`;
+}
+
+function computeCpuRatio(value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const ratio = value / 100;
+  if (!Number.isFinite(ratio)) {
+    return null;
+  }
+  return Math.max(0, Math.min(1, ratio));
+}
+
+function formatMemoryValue(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "Unknown";
+  }
+  // chrome.processes reports privateMemory in kilobytes.
+  const kilobytes = value > 1024 * 1024 * 16 ? value / 1024 : value;
+  const megabytes = kilobytes / 1024;
+  if (megabytes >= 1024) {
+    const gigabytes = megabytes / 1024;
+    return `${gigabytes.toFixed(gigabytes >= 10 ? 1 : 2)} GB`;
+  }
+  if (megabytes >= 100) {
+    return `${megabytes.toFixed(0)} MB`;
+  }
+  return `${megabytes.toFixed(1)} MB`;
+}
+
+function formatJsMemoryValue(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  const megabytes = value / (1024 * 1024);
+  if (megabytes >= 1) {
+    return `${megabytes.toFixed(megabytes >= 10 ? 1 : 2)} MB JS`;
+  }
+  const kilobytes = value / 1024;
+  return `${kilobytes.toFixed(0)} KB JS`;
+}
+
+function createPerformanceMetric(label, value, ratio) {
+  const metric = document.createElement("div");
+  metric.className = "spotlight-performance-metric";
+
+  const header = document.createElement("div");
+  header.className = "spotlight-performance-metric-header";
+  header.textContent = label;
+  metric.appendChild(header);
+
+  const display = document.createElement("div");
+  display.className = "spotlight-performance-metric-value";
+  display.textContent = value;
+  metric.appendChild(display);
+
+  if (Number.isFinite(ratio) && ratio !== null) {
+    const bar = document.createElement("div");
+    bar.className = "spotlight-performance-bar";
+    const fill = document.createElement("div");
+    fill.className = "spotlight-performance-bar-fill";
+    fill.style.width = `${Math.max(6, Math.min(100, ratio * 100))}%`;
+    bar.appendChild(fill);
+    metric.appendChild(bar);
+  }
+
+  return metric;
+}
+
+function createPerformanceMetricsElement(result) {
+  const hasCpu = Number.isFinite(result?.cpu);
+  const hasMemory = Number.isFinite(result?.memory);
+  const hasJsMemory = Number.isFinite(result?.jsMemory) && result.jsMemory > 0;
+  if (!hasCpu && !hasMemory && !hasJsMemory) {
+    return null;
+  }
+
+  const metrics = document.createElement("div");
+  metrics.className = "spotlight-performance-metrics";
+
+  if (hasCpu) {
+    metrics.appendChild(createPerformanceMetric("CPU", formatCpuValue(result.cpu), computeCpuRatio(result.cpu)));
+  }
+
+  if (hasMemory) {
+    metrics.appendChild(createPerformanceMetric("Memory", formatMemoryValue(result.memory), null));
+  }
+
+  if (hasJsMemory) {
+    metrics.appendChild(createPerformanceMetric("JS Heap", formatJsMemoryValue(result.jsMemory), null));
+  }
+
+  return metrics;
+}
+
+function createPerformanceTag(label, className) {
+  const tag = document.createElement("span");
+  tag.className = `spotlight-result-tag ${className}`;
+  tag.textContent = label;
+  return tag;
+}
+
+function buildPerformanceTags(result) {
+  const tags = [];
+  if (result?.active) {
+    tags.push(createPerformanceTag("Active", "performance-tag-active"));
+  }
+  if (result?.audible) {
+    tags.push(createPerformanceTag("Audio", "performance-tag-audio"));
+  }
+  if (result?.discarded) {
+    tags.push(createPerformanceTag("Discarded", "performance-tag-discarded"));
+  }
+  if (result?.autoDiscardable === false) {
+    tags.push(createPerformanceTag("Locked", "performance-tag-locked"));
+  }
+  return tags;
+}
+
 function extractSlashQuery(value, caretIndex) {
   if (!value || value[0] !== "/") {
     return null;
@@ -762,6 +1132,8 @@ async function openOverlay() {
     return;
   }
 
+  exitPerformanceMode({ resetStatus: false });
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -794,6 +1166,8 @@ async function openOverlay() {
 
 function closeOverlay() {
   if (!isOpen) return;
+
+  exitPerformanceMode({ resetStatus: false });
 
   isOpen = false;
   if (shadowHostEl) {
@@ -909,6 +1283,13 @@ function handleInputChange() {
     renderResults();
     return;
   }
+  if (isPerformanceQuery(trimmed)) {
+    enterPerformanceMode({ keepInput: false });
+    return;
+  }
+  if (performanceMode) {
+    exitPerformanceMode({ resetStatus: false });
+  }
   setStatus("", { force: true });
   setGhostText("");
   activeIndex = -1;
@@ -923,6 +1304,14 @@ function handleInputChange() {
 }
 
 function requestResults(query) {
+  const trimmed = (query || "").trim();
+  if (isPerformanceQuery(trimmed)) {
+    enterPerformanceMode({ keepInput: false });
+    return;
+  }
+  if (performanceMode) {
+    exitPerformanceMode({ resetStatus: false });
+  }
   lastRequestId = ++requestCounter;
   const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
   if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
@@ -1126,6 +1515,28 @@ function updateActiveResult() {
 
 function openResult(result) {
   if (!result) return;
+  if (result.type === "command" && result.command === "tab-performance") {
+    enterPerformanceMode({ keepInput: false });
+    return;
+  }
+  if (result.type === "tabPerformance") {
+    if (typeof result.tabId === "number") {
+      chrome.runtime.sendMessage(
+        {
+          type: "SPOTLIGHT_FOCUS_TAB",
+          tabId: result.tabId,
+          windowId: typeof result.windowId === "number" ? result.windowId : undefined,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.warn("Spotlight focus tab error", chrome.runtime.lastError);
+          }
+        }
+      );
+    }
+    closeOverlay();
+    return;
+  }
   if (result.type === "command") {
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
@@ -1171,6 +1582,31 @@ function renderResults() {
     return;
   }
 
+  if (performanceMode && !resultsState.length) {
+    const li = document.createElement("li");
+    li.className = "spotlight-result empty";
+    const errorMessage =
+      performanceLastSnapshot && typeof performanceLastSnapshot.error === "string"
+        ? performanceLastSnapshot.error
+        : "";
+    if (errorMessage) {
+      li.textContent = errorMessage;
+    } else if (
+      performanceLastSnapshot &&
+      Array.isArray(performanceLastSnapshot.tabs) &&
+      performanceLastSnapshot.tabs.length === 0
+    ) {
+      li.textContent = "No tabs available to monitor";
+    } else {
+      li.textContent = "Collecting tab performance...";
+    }
+    resultsEl.appendChild(li);
+    if (inputEl) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
+    return;
+  }
+
   if (!resultsState.length) {
     const li = document.createElement("li");
     li.className = "spotlight-result empty";
@@ -1196,7 +1632,8 @@ function renderResults() {
     if (!result) {
       return;
     }
-    const displayIndex = index;
+    const resolvedIndex = resultsState.indexOf(result);
+    const displayIndex = resolvedIndex >= 0 ? resolvedIndex : index;
     const li = document.createElement("li");
     li.className = "spotlight-result";
     li.setAttribute("role", "option");
@@ -1210,6 +1647,13 @@ function renderResults() {
       delete li.dataset.origin;
     }
 
+    if (result.type === "tabPerformance") {
+      li.classList.add("spotlight-result-performance");
+      if (result.active) {
+        li.classList.add("is-active-tab");
+      }
+    }
+
     const iconEl = createIconElement(result);
     if (iconEl) {
       li.appendChild(iconEl);
@@ -1220,48 +1664,81 @@ function renderResults() {
 
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
-    title.textContent = result.title || result.url;
+    title.textContent = result.title || result.url || "";
+    if (result.title) {
+      title.title = result.title;
+    }
 
     const meta = document.createElement("div");
     meta.className = "spotlight-result-meta";
+    if (result.type === "tabPerformance") {
+      meta.classList.add("spotlight-result-meta-performance");
+    }
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
-    if (url.textContent) {
-      url.title = url.textContent;
+    if (result.type === "tabPerformance") {
+      const locationLabel = formatPerformanceLocation(result);
+      url.textContent = locationLabel || result.description || result.url || "";
+      if (result.url) {
+        url.title = result.url;
+      } else if (url.textContent) {
+        url.title = url.textContent;
+      }
+    } else {
+      url.textContent = result.description || result.url || "";
+      if (url.textContent) {
+        url.title = url.textContent;
+      }
     }
 
-    const timestampLabel = formatResultTimestamp(result);
+    const timestampLabel =
+      result.type === "tabPerformance" ? "" : formatResultTimestamp(result);
 
     const type = document.createElement("span");
     type.className = `spotlight-result-type type-${result.type}`;
-    type.textContent = formatTypeLabel(result.type, result);
+    type.textContent =
+      result.type === "tabPerformance" ? "Performance" : formatTypeLabel(result.type, result);
 
     meta.appendChild(url);
-    if (result.type === "topSite") {
-      const visitLabel = formatVisitCount(result.visitCount);
-      if (visitLabel) {
-        const visitChip = document.createElement("span");
-        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
-        visitChip.textContent = visitLabel;
-        meta.appendChild(visitChip);
+    if (result.type === "tabPerformance") {
+      const tags = buildPerformanceTags(result);
+      tags.forEach((tag) => meta.appendChild(tag));
+      const metrics = createPerformanceMetricsElement(result);
+      if (metrics) {
+        meta.appendChild(metrics);
       }
-    }
-    if (timestampLabel) {
-      const timestampEl = document.createElement("span");
-      timestampEl.className = "spotlight-result-timestamp";
-      timestampEl.textContent = timestampLabel;
-      timestampEl.title = timestampLabel;
-      meta.appendChild(timestampEl);
-    }
-    if (result.type === "download") {
-      const stateLabel = formatDownloadStateLabel(result.state);
-      if (stateLabel) {
-        const stateChip = document.createElement("span");
-        stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
-        stateChip.textContent = stateLabel;
-        meta.appendChild(stateChip);
+      if (result.metricsAvailable === false) {
+        const note = document.createElement("span");
+        note.className = "spotlight-performance-note";
+        note.textContent = "Process metrics unavailable";
+        meta.appendChild(note);
+      }
+    } else {
+      if (result.type === "topSite") {
+        const visitLabel = formatVisitCount(result.visitCount);
+        if (visitLabel) {
+          const visitChip = document.createElement("span");
+          visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+          visitChip.textContent = visitLabel;
+          meta.appendChild(visitChip);
+        }
+      }
+      if (timestampLabel) {
+        const timestampEl = document.createElement("span");
+        timestampEl.className = "spotlight-result-timestamp";
+        timestampEl.textContent = timestampLabel;
+        timestampEl.title = timestampLabel;
+        meta.appendChild(timestampEl);
+      }
+      if (result.type === "download") {
+        const stateLabel = formatDownloadStateLabel(result.state);
+        if (stateLabel) {
+          const stateChip = document.createElement("span");
+          stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
+          stateChip.textContent = stateLabel;
+          meta.appendChild(stateChip);
+        }
       }
     }
     meta.appendChild(type);
@@ -1388,6 +1865,8 @@ function formatTypeLabel(type, result) {
     }
     case "command":
       return (result && result.label) || "Command";
+    case "tabPerformance":
+      return "Performance";
     case "navigation":
       if (result && result.direction === "forward") {
         return "Forward";

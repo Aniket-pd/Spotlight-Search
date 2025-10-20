@@ -476,6 +476,31 @@ const STATIC_COMMANDS = [
       return (context?.audibleTabCount || 0) > 0;
     },
   },
+  {
+    id: "command:tab-performance",
+    title: "View tab performance",
+    aliases: [
+      "tab performance",
+      "performance",
+      "cpu usage",
+      "memory usage",
+      "tab cpu",
+      "tab memory",
+      "performance monitor",
+    ],
+    action: "tab-performance",
+    answer(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `Shows live CPU and memory usage for ${countLabel}.`;
+    },
+    description(context) {
+      const countLabel = formatTabCount(context.tabCount);
+      return `${countLabel} · Live CPU & memory`;
+    },
+    isAvailable(context) {
+      return context.tabCount > 0;
+    },
+  },
 ];
 
 function formatTabCount(count) {

@@ -14,6 +14,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 - Close-all-audio command to instantly silence every tab that's currently playing sound.
+- Live tab performance command that surfaces real-time CPU and memory usage for every open tab directly inside Spotlight.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
 
 
@@ -26,6 +27,16 @@ Spotlight presents filter-specific suggestions to help narrow results without ty
 - **Bookmarks** – Browse by bookmark folder (e.g., Work, Personal, Tutorials) to jump straight to the right collection.
 
 Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a chip applies the filter instantly, and you can tap the active chip again to clear it.
+
+## Live Tab Performance
+
+Type `tab performance` (or jump straight to `> performance`) to summon a dedicated performance view that refreshes automatically while Spotlight is open. Every open tab is listed with its favicon, title, domain, and live metrics:
+
+- **CPU** usage with an animated gauge so heavy tabs stand out immediately.
+- **Memory** consumption in megabytes or gigabytes, plus optional JS heap totals when Chrome exposes them.
+- Status chips that call out active, audible, discarded, or locked tabs at a glance.
+
+Select any tab in the performance view to focus it instantly. Behind the scenes Spotlight relies on Chrome's `processes` API, so all monitoring stays on-device with no external requests.
 
 ## Loading the Extension
 1. Clone or download this repository.
