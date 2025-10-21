@@ -1189,6 +1189,38 @@ function renderTypingTestWords() {
   scheduleTypingTestCaretUpdate();
 }
 
+function measureTypingTestRowHeight(wordsWrap) {
+  if (!wordsWrap || !wordsWrap.children || wordsWrap.children.length === 0) {
+    return 0;
+  }
+
+  let referenceTop = null;
+
+  for (let index = 0; index < wordsWrap.children.length; index += 1) {
+    const child = wordsWrap.children[index];
+    if (!(child instanceof HTMLElement)) {
+      continue;
+    }
+
+    const rect = child.getBoundingClientRect();
+    if (!rect || !Number.isFinite(rect.top)) {
+      continue;
+    }
+
+    if (referenceTop === null) {
+      referenceTop = rect.top;
+      continue;
+    }
+
+    const delta = rect.top - referenceTop;
+    if (delta > 0.5) {
+      return delta;
+    }
+  }
+
+  return 0;
+}
+
 function updateTypingTestScroll() {
   if (!typingTestElements.wordsWrap || !typingTestElements.viewport || !typingTestState) {
     return;
@@ -1242,8 +1274,26 @@ function updateTypingTestScroll() {
     lineHeight = fontSize * customLineHeight;
   }
 
-  const rowHeight = Math.max(1, lineHeight + rowGap);
-  state.rowHeight = rowHeight;
+  const fallbackRowHeight = Math.max(1, lineHeight + rowGap);
+  const measuredRowHeight = measureTypingTestRowHeight(wordsWrap);
+  let rowHeight = Number.isFinite(state.rowHeight) && state.rowHeight > 0 ? state.rowHeight : 0;
+
+  if (measuredRowHeight > 0) {
+    rowHeight = measuredRowHeight;
+  } else if (!Number.isFinite(rowHeight) || rowHeight <= 0) {
+    rowHeight = fallbackRowHeight;
+  }
+
+  if (!Number.isFinite(rowHeight) || rowHeight <= 0) {
+    rowHeight = fallbackRowHeight;
+  }
+
+  if (!Number.isFinite(state.rowHeight) || state.rowHeight <= 0 || Math.abs(state.rowHeight - rowHeight) > 0.5) {
+    state.rowHeight = rowHeight;
+  } else {
+    rowHeight = state.rowHeight;
+  }
+
   const currentOffset = Number.isFinite(state.scrollOffset) ? state.scrollOffset : 0;
   const currentRow = Number.isFinite(state.scrollRow)
     ? state.scrollRow
