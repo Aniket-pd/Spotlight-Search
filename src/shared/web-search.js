@@ -29,6 +29,12 @@ const RAW_SEARCH_ENGINES = [
     urlTemplate: "https://search.yahoo.com/search?p=%s",
     aliases: ["y", "yahoo.com"],
   },
+  {
+    id: "youtube",
+    name: "YouTube",
+    urlTemplate: "https://www.youtube.com/results?search_query=%s",
+    aliases: ["yt", "youtube.com"],
+  },
 ];
 
 const DEFAULT_SEARCH_ENGINE_ID = "google";
@@ -44,6 +50,18 @@ function computeDomain(urlTemplate) {
   } catch (err) {
     return "";
   }
+}
+
+function computeEngineIconUrl(engine, domain) {
+  const provided = typeof engine.iconUrl === "string" ? engine.iconUrl.trim() : "";
+  if (provided) {
+    return provided;
+  }
+  if (domain) {
+    const encodedDomain = encodeURIComponent(domain);
+    return `https://www.google.com/s2/favicons?sz=64&domain=${encodedDomain}`;
+  }
+  return "";
 }
 
 function normalizeEngine(engine) {
@@ -68,6 +86,7 @@ function normalizeEngine(engine) {
     name: engine.name,
     urlTemplate: engine.urlTemplate,
     domain,
+    iconUrl: computeEngineIconUrl(engine, domain),
     keywords: Array.from(keywords),
   });
 }
@@ -187,6 +206,7 @@ function createWebSearchResult(query, options = {}) {
     engineId: engine.id,
     engineName: engine.name,
     engineDomain: engine.domain,
+    engineIconUrl: engine.iconUrl,
     query: trimmed,
     score: 0,
     label: "Web",

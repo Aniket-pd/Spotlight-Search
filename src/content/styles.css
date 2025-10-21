@@ -147,8 +147,8 @@
 .spotlight-engine-option {
   padding: 10px 16px;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 12px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.82);
   transition: background 0.18s ease, color 0.18s ease;
@@ -162,6 +162,32 @@
 
 .spotlight-engine-option + .spotlight-engine-option {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.spotlight-engine-option-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.spotlight-engine-option-icon-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.spotlight-engine-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
 .spotlight-engine-option-label {

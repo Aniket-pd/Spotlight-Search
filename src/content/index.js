@@ -568,10 +568,36 @@ function renderEngineMenu() {
       engineMenuEl.setAttribute("aria-activedescendant", optionId);
     }
 
+    const iconWrapper = document.createElement("div");
+    iconWrapper.className = "spotlight-engine-option-icon";
+    iconWrapper.setAttribute("aria-hidden", "true");
+
+    const icon = document.createElement("img");
+    icon.className = "spotlight-engine-option-icon-image";
+    icon.alt = "";
+    icon.loading = "lazy";
+    icon.decoding = "async";
+    const iconUrl = option.iconUrl || "";
+    if (iconUrl) {
+      icon.src = iconUrl;
+    } else {
+      icon.src = DEFAULT_ICON_URL;
+    }
+    icon.addEventListener("error", () => {
+      if (icon.src !== DEFAULT_ICON_URL) {
+        icon.src = DEFAULT_ICON_URL;
+      }
+    });
+    iconWrapper.appendChild(icon);
+    item.appendChild(iconWrapper);
+
+    const content = document.createElement("div");
+    content.className = "spotlight-engine-option-content";
+
     const label = document.createElement("div");
     label.className = "spotlight-engine-option-label";
     label.textContent = option.name || option.id;
-    item.appendChild(label);
+    content.appendChild(label);
 
     const meta = document.createElement("div");
     meta.className = "spotlight-engine-option-meta";
@@ -581,7 +607,9 @@ function renderEngineMenu() {
     } else {
       meta.textContent = "";
     }
-    item.appendChild(meta);
+    content.appendChild(meta);
+
+    item.appendChild(content);
 
     item.addEventListener("pointerenter", () => {
       if (engineMenuActiveIndex !== index) {
