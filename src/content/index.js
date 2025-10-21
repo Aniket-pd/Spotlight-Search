@@ -902,6 +902,7 @@ function createTypingTestState(duration) {
     elapsedMs: 0,
     timerRafId: null,
     scrollOffset: 0,
+    scrollRow: 0,
     results: null,
   };
 }
@@ -1198,6 +1199,7 @@ function updateTypingTestScroll() {
 
   if (!activeEl) {
     state.scrollOffset = 0;
+    state.scrollRow = 0;
     wordsWrap.style.setProperty("--typing-offset", "0px");
     return;
   }
@@ -1205,11 +1207,11 @@ function updateTypingTestScroll() {
   const viewportRect = viewport.getBoundingClientRect();
   if (viewportRect.height <= 0 || viewportRect.width <= 0) {
     state.scrollOffset = 0;
+    state.scrollRow = 0;
     wordsWrap.style.setProperty("--typing-offset", "0px");
     return;
   }
 
-  const activeRect = activeEl.getBoundingClientRect();
   const styles = getComputedStyle(wordsWrap);
 
   let rowGap = parseFloat(styles.rowGap || styles.getPropertyValue("row-gap"));
@@ -1221,6 +1223,7 @@ function updateTypingTestScroll() {
     rowGap = 0;
   }
 
+  const activeRect = activeEl.getBoundingClientRect();
   let lineHeight = activeRect.height;
   if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
     lineHeight = parseFloat(styles.lineHeight);
@@ -1236,32 +1239,33 @@ function updateTypingTestScroll() {
 
   const rowHeight = Math.max(1, lineHeight + rowGap);
   const currentOffset = Number.isFinite(state.scrollOffset) ? state.scrollOffset : 0;
+  const currentRow = Number.isFinite(state.scrollRow)
+    ? state.scrollRow
+    : Math.max(0, Math.round(currentOffset / rowHeight));
   const maxOffset = Math.max(0, wordsWrap.scrollHeight - viewportRect.height);
-  const clampOffset = (value) => Math.min(Math.max(value, 0), maxOffset);
+  const maxRow = Math.max(0, Math.floor(maxOffset / rowHeight + 0.0001));
 
-  const relativeTop = activeRect.top - viewportRect.top;
-  const relativeBottom = activeRect.bottom - viewportRect.top;
+  const relativeTop = activeRect.top - viewportRect.top + currentOffset;
+  const rowIndex = Math.max(0, Math.floor(relativeTop / rowHeight + 0.0001));
 
-  const secondLineTarget = rowHeight;
-  const thirdLineThreshold = Math.max(rowHeight * 2 - Math.max(2, rowGap * 0.75), secondLineTarget + 1);
-  const topThreshold = -Math.max(2, rowHeight * 0.35);
-
-  let nextOffset = currentOffset;
-
-  if (relativeTop < topThreshold) {
-    const desired = currentOffset + relativeTop;
-    nextOffset = clampOffset(desired);
-  } else if (relativeTop >= thirdLineThreshold || relativeBottom > viewportRect.height) {
-    const desired = currentOffset + (relativeTop - secondLineTarget);
-    nextOffset = clampOffset(desired);
+  let nextRow = currentRow;
+  if (rowIndex - nextRow > 1) {
+    nextRow = rowIndex - 1;
+  } else if (rowIndex < nextRow) {
+    nextRow = rowIndex;
   }
 
-  if (!Number.isFinite(nextOffset)) {
-    nextOffset = 0;
+  if (!Number.isFinite(nextRow)) {
+    nextRow = 0;
   }
 
-  state.scrollOffset = nextOffset;
-  const nextValue = `${-nextOffset}px`;
+  nextRow = Math.min(Math.max(nextRow, 0), maxRow);
+  const appliedOffset = Math.min(Math.max(nextRow * rowHeight, 0), maxOffset);
+  const appliedRow = Math.max(0, Math.floor(appliedOffset / rowHeight + 0.0001));
+
+  state.scrollRow = appliedRow;
+  state.scrollOffset = appliedOffset;
+  const nextValue = `${-appliedOffset}px`;
   if (wordsWrap.style.getPropertyValue("--typing-offset") !== nextValue) {
     wordsWrap.style.setProperty("--typing-offset", nextValue);
   }
@@ -1413,6 +1417,7 @@ function restartTypingTest() {
   ensureTypingTestWordBuffer(typingTestState, TYPING_TEST_INITIAL_WORDS);
   typingTestState.remainingMs = duration * 1000;
   typingTestState.scrollOffset = 0;
+  typingTestState.scrollRow = 0;
   renderTypingTestDurations();
   renderTypingTestTimer();
   renderTypingTestWords();
