@@ -67,6 +67,32 @@ function sliceResultsForLimit(items, limit) {
   return items.slice(0, limit);
 }
 
+function isMeaningfulLocalResult(result, minMatchedTokens, totalTokens) {
+  if (!result) {
+    return false;
+  }
+  if (result.type === "webSearch") {
+    return false;
+  }
+  if (result.score === COMMAND_SCORE || result.type === "command") {
+    return true;
+  }
+  if (result.type === "navigation") {
+    return true;
+  }
+  if (typeof result.score !== "number" || !Number.isFinite(result.score)) {
+    return true;
+  }
+  const matchedTokens = typeof result.matchedTokens === "number" ? result.matchedTokens : 0;
+  if (totalTokens > 0 && matchedTokens >= totalTokens) {
+    return true;
+  }
+  if (minMatchedTokens <= 0) {
+    return result.score > 0;
+  }
+  return result.score > 0 && matchedTokens >= minMatchedTokens;
+}
+
 const COMMAND_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
 
@@ -1607,6 +1633,9 @@ export function runSearch(query, data, options = {}) {
     }
     const mapped = buildResultFromItem(item, finalScore);
     if (mapped) {
+      if (totalTokens > 0) {
+        mapped.matchedTokens = matchedCount;
+      }
       results.push(mapped);
     }
   }
@@ -1619,12 +1648,22 @@ export function runSearch(query, data, options = {}) {
 
   const limit = getResultLimit(filterType);
   let finalResults = sliceResultsForLimit(results, limit);
+  const minRequiredMatches = totalTokens >= 3 ? 2 : totalTokens >= 1 ? 1 : 0;
+  const hasMeaningfulLocalResults = finalResults.some((result) =>
+    isMeaningfulLocalResult(result, minRequiredMatches, totalTokens)
+  );
   const { engine: requestedEngine } = resolveRequestedSearchEngine(options?.webSearch);
   let activeWebSearchEngine = requestedEngine;
   const webSearchApi = getWebSearchApi();
   let fallbackResult = null;
 
-  if (!finalResults.length && trimmed && webSearchApi && typeof webSearchApi.createWebSearchResult === "function") {
+  const shouldOfferFallback =
+    trimmed &&
+    webSearchApi &&
+    typeof webSearchApi.createWebSearchResult === "function" &&
+    (!finalResults.length || !hasMeaningfulLocalResults);
+
+  if (shouldOfferFallback) {
     const desiredEngineId = activeWebSearchEngine ? activeWebSearchEngine.id : null;
     fallbackResult = webSearchApi.createWebSearchResult(trimmed, { engineId: desiredEngineId });
     if (fallbackResult) {
