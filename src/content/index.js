@@ -72,6 +72,18 @@ function getActiveWebSearchEngineId() {
   return activeWebSearchEngine ? activeWebSearchEngine.id : null;
 }
 
+function getDefaultWebSearchEngineId() {
+  const api = getWebSearchApi();
+  if (!api || typeof api.getDefaultSearchEngine !== "function") {
+    return null;
+  }
+  const engine = api.getDefaultSearchEngine();
+  if (!engine || typeof engine.id !== "string") {
+    return null;
+  }
+  return engine.id;
+}
+
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
   () => {
@@ -1090,6 +1102,23 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  const wantsDefaultWebSearch =
+    event.key === "Enter" &&
+    !event.altKey &&
+    !event.shiftKey &&
+    ((event.metaKey && !event.ctrlKey) || (!event.metaKey && event.ctrlKey));
+
+  if (wantsDefaultWebSearch) {
+    const trimmed = typeof inputEl.value === "string" ? inputEl.value.trim() : "";
+    if (trimmed) {
+      const defaultEngineId = getDefaultWebSearchEngineId();
+      if (triggerWebSearch(defaultEngineId)) {
+        event.preventDefault();
+      }
+    }
+    return;
+  }
+
   if (slashMenuVisible && slashMenuOptions.length) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -1153,6 +1182,12 @@ function handleInputKeydown(event) {
     const value = inputEl.value.trim();
     if (value === "> reindex") {
       triggerReindex();
+      return;
+    }
+    if (userSelectedWebSearchEngineId && value) {
+      if (triggerWebSearch(userSelectedWebSearchEngineId)) {
+        event.preventDefault();
+      }
       return;
     }
     if ((!resultsState.length || activeIndex < 0) && ghostSuggestionText) {
@@ -1423,6 +1458,22 @@ function updateActiveResult() {
   } else {
     inputEl.removeAttribute("aria-activedescendant");
   }
+}
+
+function triggerWebSearch(engineIdOverride = null) {
+  if (!inputEl) {
+    return false;
+  }
+  const query = typeof inputEl.value === "string" ? inputEl.value.trim() : "";
+  if (!query) {
+    return false;
+  }
+  const payload = { type: "webSearch", query };
+  if (typeof engineIdOverride === "string" && engineIdOverride) {
+    payload.engineId = engineIdOverride;
+  }
+  openResult(payload);
+  return true;
 }
 
 function openResult(result) {
