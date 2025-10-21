@@ -68,6 +68,8 @@ const typingTestElements = {
 let typingTestState = null;
 let typingTestDurationIndex = 0;
 let typingTestWordIdCounter = 0;
+let typingTestCaretFrameId = null;
+let typingTestCaretTrackUntil = 0;
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -1182,6 +1184,7 @@ function renderTypingTestWords() {
   wordsWrap.replaceChildren(fragment);
   updateTypingTestScroll();
   updateTypingTestCaret();
+  scheduleTypingTestCaretUpdate();
 }
 
 function updateTypingTestScroll() {
@@ -1262,6 +1265,35 @@ function updateTypingTestScroll() {
   if (wordsWrap.style.getPropertyValue("--typing-offset") !== nextValue) {
     wordsWrap.style.setProperty("--typing-offset", nextValue);
   }
+}
+
+function scheduleTypingTestCaretUpdate() {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const trackingWindowMs = 240;
+  typingTestCaretTrackUntil = Math.max(typingTestCaretTrackUntil, now + trackingWindowMs);
+  if (typingTestCaretFrameId !== null) {
+    return;
+  }
+  typingTestCaretFrameId = requestAnimationFrame(runTypingTestCaretFrame);
+}
+
+function runTypingTestCaretFrame() {
+  typingTestCaretFrameId = null;
+  updateTypingTestCaret();
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (now < typingTestCaretTrackUntil) {
+    typingTestCaretFrameId = requestAnimationFrame(runTypingTestCaretFrame);
+  } else {
+    typingTestCaretTrackUntil = 0;
+  }
+}
+
+function cancelTypingTestCaretUpdate() {
+  if (typingTestCaretFrameId !== null) {
+    cancelAnimationFrame(typingTestCaretFrameId);
+    typingTestCaretFrameId = null;
+  }
+  typingTestCaretTrackUntil = 0;
 }
 
 function updateTypingTestCaret() {
@@ -1580,6 +1612,7 @@ function exitTypingTestActivity() {
     cancelAnimationFrame(typingTestState.timerRafId);
     typingTestState.timerRafId = null;
   }
+  cancelTypingTestCaretUpdate();
   typingTestState = null;
   if (typingTestElements.root) {
     typingTestElements.root.classList.remove("typing-test-finished");
