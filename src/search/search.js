@@ -1603,9 +1603,10 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    let matchedCount = 0;
     if (totalTokens > 0) {
       const matchedSet = tokenMatches.get(itemId);
-      const matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
+      matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
       if (matchedCount > 0) {
         finalScore += matchedCount * MATCHED_TOKEN_BONUS;
         if (matchedCount === totalTokens) {
