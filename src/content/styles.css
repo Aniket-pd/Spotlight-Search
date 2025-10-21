@@ -351,6 +351,7 @@
   line-height: var(--typing-line-height);
   letter-spacing: 0.02em;
   text-align: center;
+  position: relative;
   transform: translateY(var(--typing-offset, 0px));
   transition: transform 0.2s ease;
 }
@@ -368,6 +369,7 @@
   pointer-events: none;
   will-change: transform, width;
   opacity: 1;
+  z-index: 2;
 }
 
 .typing-test-caret-hidden {

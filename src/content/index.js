@@ -985,7 +985,8 @@ function ensureTypingTestElements() {
 
   const caret = document.createElement("span");
   caret.className = "typing-test-caret typing-test-caret-hidden";
-  viewport.appendChild(caret);
+  caret.setAttribute("aria-hidden", "true");
+  wordsWrap.appendChild(caret);
 
   const results = document.createElement("div");
   results.className = "typing-test-results";
@@ -1183,7 +1184,12 @@ function renderTypingTestWords() {
     fragment.appendChild(wordEl);
   }
 
-  wordsWrap.replaceChildren(fragment);
+  const caretEl = typingTestElements.caret;
+  if (caretEl) {
+    wordsWrap.replaceChildren(fragment, caretEl);
+  } else {
+    wordsWrap.replaceChildren(fragment);
+  }
   updateTypingTestScroll();
   updateTypingTestCaret();
   scheduleTypingTestCaretUpdate();
@@ -1198,7 +1204,7 @@ function measureTypingTestRowHeight(wordsWrap) {
 
   for (let index = 0; index < wordsWrap.children.length; index += 1) {
     const child = wordsWrap.children[index];
-    if (!(child instanceof HTMLElement)) {
+    if (!(child instanceof HTMLElement) || !child.classList.contains("typing-word")) {
       continue;
     }
 
@@ -1361,15 +1367,11 @@ function cancelTypingTestCaretUpdate() {
 }
 
 function updateTypingTestCaret() {
-  if (
-    !typingTestElements.caret ||
-    !typingTestElements.viewport ||
-    !typingTestElements.wordsWrap
-  ) {
+  if (!typingTestElements.caret || !typingTestElements.wordsWrap) {
     return;
   }
 
-  const { caret, viewport, wordsWrap } = typingTestElements;
+  const { caret, wordsWrap } = typingTestElements;
   const state = typingTestState;
 
   if (!isOpen || activeActivity !== "typing-test" || !state || state.phase === "finished") {
@@ -1383,19 +1385,19 @@ function updateTypingTestCaret() {
     return;
   }
 
-  const viewportRect = viewport.getBoundingClientRect();
-  const anchorRect = anchor.getBoundingClientRect();
-  if (viewportRect.width === 0 || viewportRect.height === 0) {
+  const wrapRect = wordsWrap.getBoundingClientRect();
+  if (wrapRect.width === 0 || wrapRect.height === 0) {
     caret.classList.add("typing-test-caret-hidden");
     return;
   }
 
+  const anchorRect = anchor.getBoundingClientRect();
   const fontSize = parseFloat(getComputedStyle(wordsWrap).fontSize || "16");
   const fallbackWidth = Number.isFinite(fontSize) ? Math.max(fontSize * 0.55, 6) : 12;
   const caretWidth = Math.max(anchorRect.width, fallbackWidth);
   const caretHeight = caret.offsetHeight || 2;
-  const x = anchorRect.left - viewportRect.left;
-  const y = anchorRect.bottom - viewportRect.top - caretHeight;
+  const x = anchorRect.left - wrapRect.left;
+  const y = anchorRect.bottom - wrapRect.top - caretHeight;
 
   caret.style.width = `${caretWidth}px`;
   caret.style.transform = `translate3d(${x}px, ${y}px, 0)`;
