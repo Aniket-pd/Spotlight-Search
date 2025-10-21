@@ -903,6 +903,7 @@ function createTypingTestState(duration) {
     timerRafId: null,
     scrollOffset: 0,
     scrollRow: 0,
+    rowHeight: 0,
     results: null,
   };
 }
@@ -1200,6 +1201,7 @@ function updateTypingTestScroll() {
   if (!activeEl) {
     state.scrollOffset = 0;
     state.scrollRow = 0;
+    state.rowHeight = 0;
     wordsWrap.style.setProperty("--typing-offset", "0px");
     return;
   }
@@ -1208,6 +1210,7 @@ function updateTypingTestScroll() {
   if (viewportRect.height <= 0 || viewportRect.width <= 0) {
     state.scrollOffset = 0;
     state.scrollRow = 0;
+    state.rowHeight = 0;
     wordsWrap.style.setProperty("--typing-offset", "0px");
     return;
   }
@@ -1224,20 +1227,23 @@ function updateTypingTestScroll() {
   }
 
   const activeRect = activeEl.getBoundingClientRect();
-  let lineHeight = activeRect.height;
+  const fontSize = parseFloat(styles.fontSize);
+  const customLineHeight = parseFloat(styles.getPropertyValue("--typing-line-height"));
+  let lineHeight = parseFloat(styles.lineHeight);
   if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
-    lineHeight = parseFloat(styles.lineHeight);
-  }
-  if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
-    const fontSize = parseFloat(styles.fontSize);
-    if (Number.isFinite(fontSize)) {
+    if (Number.isFinite(fontSize) && Number.isFinite(customLineHeight) && customLineHeight > 0) {
+      lineHeight = fontSize * customLineHeight;
+    } else if (Number.isFinite(fontSize)) {
       lineHeight = fontSize * 1.4;
     } else {
       lineHeight = viewportRect.height / 3;
     }
+  } else if (Number.isFinite(fontSize) && Number.isFinite(customLineHeight) && customLineHeight > 0) {
+    lineHeight = fontSize * customLineHeight;
   }
 
   const rowHeight = Math.max(1, lineHeight + rowGap);
+  state.rowHeight = rowHeight;
   const currentOffset = Number.isFinite(state.scrollOffset) ? state.scrollOffset : 0;
   const currentRow = Number.isFinite(state.scrollRow)
     ? state.scrollRow
@@ -1263,9 +1269,13 @@ function updateTypingTestScroll() {
   const appliedOffset = Math.min(Math.max(nextRow * rowHeight, 0), maxOffset);
   const appliedRow = Math.max(0, Math.floor(appliedOffset / rowHeight + 0.0001));
 
+  if (Math.abs(appliedOffset - currentOffset) < 0.5 && appliedRow === currentRow) {
+    return;
+  }
+
   state.scrollRow = appliedRow;
   state.scrollOffset = appliedOffset;
-  const nextValue = `${-appliedOffset}px`;
+  const nextValue = `${-Math.round(appliedOffset * 1000) / 1000}px`;
   if (wordsWrap.style.getPropertyValue("--typing-offset") !== nextValue) {
     wordsWrap.style.setProperty("--typing-offset", nextValue);
   }
@@ -1418,6 +1428,7 @@ function restartTypingTest() {
   typingTestState.remainingMs = duration * 1000;
   typingTestState.scrollOffset = 0;
   typingTestState.scrollRow = 0;
+  typingTestState.rowHeight = 0;
   renderTypingTestDurations();
   renderTypingTestTimer();
   renderTypingTestWords();
