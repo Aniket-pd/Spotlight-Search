@@ -41,6 +41,36 @@ let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
 let overlayPreparationPromise = null;
 let overlayGuardsInstalled = false;
+let engineMenuEl = null;
+let engineMenuOptions = [];
+let engineMenuVisible = false;
+let engineMenuActiveIndex = -1;
+let engineMenuAnchor = null;
+let userSelectedWebSearchEngineId = null;
+let activeWebSearchEngine = null;
+
+function getWebSearchApi() {
+  const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
+  if (!api || typeof api !== "object") {
+    return null;
+  }
+  return api;
+}
+
+function resetWebSearchSelection() {
+  const api = getWebSearchApi();
+  userSelectedWebSearchEngineId = null;
+  activeWebSearchEngine = api && typeof api.getDefaultSearchEngine === "function"
+    ? api.getDefaultSearchEngine()
+    : null;
+}
+
+function getActiveWebSearchEngineId() {
+  if (userSelectedWebSearchEngineId) {
+    return userSelectedWebSearchEngineId;
+  }
+  return activeWebSearchEngine ? activeWebSearchEngine.id : null;
+}
 
 const lazyList = createLazyList(
   { initial: LAZY_INITIAL_BATCH, step: LAZY_BATCH_SIZE, threshold: LAZY_LOAD_THRESHOLD },
@@ -301,6 +331,12 @@ function createOverlay() {
   slashMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(slashMenuEl);
 
+  engineMenuEl = document.createElement("div");
+  engineMenuEl.className = "spotlight-engine-menu";
+  engineMenuEl.setAttribute("role", "listbox");
+  engineMenuEl.setAttribute("aria-hidden", "true");
+  inputContainerEl.appendChild(engineMenuEl);
+
   inputWrapper.appendChild(inputContainerEl);
 
   subfilterContainerEl = document.createElement("div");
@@ -437,6 +473,216 @@ function resetSlashMenuState() {
     slashMenuEl.setAttribute("aria-hidden", "true");
     slashMenuEl.removeAttribute("aria-activedescendant");
   }
+}
+
+function resetEngineMenuState() {
+  engineMenuOptions = [];
+  engineMenuVisible = false;
+  engineMenuActiveIndex = -1;
+  engineMenuAnchor = null;
+  if (engineMenuEl) {
+    engineMenuEl.innerHTML = "";
+    engineMenuEl.classList.remove("visible");
+    engineMenuEl.setAttribute("aria-hidden", "true");
+    engineMenuEl.removeAttribute("aria-activedescendant");
+  }
+}
+
+function extractEngineSegment(value, caretIndex) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const caret = typeof caretIndex === "number" ? caretIndex : value.length;
+  if (caret < 0) {
+    return null;
+  }
+  const beforeCaret = value.slice(0, caret);
+  const afterCaret = value.slice(caret);
+  if (afterCaret.trim()) {
+    return null;
+  }
+  const dashIndex = beforeCaret.lastIndexOf("-");
+  if (dashIndex === -1) {
+    return null;
+  }
+  const prefix = beforeCaret.slice(0, dashIndex);
+  if (prefix.includes("\n")) {
+    return null;
+  }
+  if (prefix) {
+    const preceding = prefix[prefix.length - 1];
+    if (preceding && !/\s/.test(preceding)) {
+      return null;
+    }
+  }
+  const trailing = beforeCaret.slice(dashIndex + 1);
+  if (trailing.includes("\n") || trailing.includes(" ")) {
+    if (trailing.trim()) {
+      return null;
+    }
+  }
+  return {
+    start: dashIndex,
+    caret,
+    filter: trailing.trim(),
+    baseValue: value.slice(0, dashIndex),
+  };
+}
+
+function renderEngineMenu() {
+  if (!engineMenuEl) {
+    return;
+  }
+  engineMenuEl.innerHTML = "";
+  if (!engineMenuVisible || !engineMenuOptions.length) {
+    engineMenuEl.classList.remove("visible");
+    engineMenuEl.setAttribute("aria-hidden", "true");
+    engineMenuEl.removeAttribute("aria-activedescendant");
+    return;
+  }
+
+  engineMenuEl.classList.add("visible");
+  engineMenuEl.setAttribute("aria-hidden", "false");
+  engineMenuEl.removeAttribute("aria-activedescendant");
+
+  engineMenuOptions.forEach((option, index) => {
+    const optionId = `spotlight-engine-option-${option.id}`;
+    const item = document.createElement("div");
+    item.className = "spotlight-engine-option";
+    item.id = optionId;
+    item.setAttribute("role", "option");
+    if (index === engineMenuActiveIndex) {
+      item.classList.add("active");
+      engineMenuEl.setAttribute("aria-activedescendant", optionId);
+    }
+
+    const label = document.createElement("div");
+    label.className = "spotlight-engine-option-label";
+    label.textContent = option.name || option.id;
+    item.appendChild(label);
+
+    const meta = document.createElement("div");
+    meta.className = "spotlight-engine-option-meta";
+    if (option.domain) {
+      meta.textContent = option.domain;
+      meta.title = option.domain;
+    } else {
+      meta.textContent = "";
+    }
+    item.appendChild(meta);
+
+    item.addEventListener("pointerenter", () => {
+      if (engineMenuActiveIndex !== index) {
+        engineMenuActiveIndex = index;
+        renderEngineMenu();
+      }
+    });
+
+    item.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+
+    item.addEventListener("click", () => {
+      applyEngineSelection(engineMenuOptions[index]);
+    });
+
+    engineMenuEl.appendChild(item);
+  });
+}
+
+function updateEngineMenu() {
+  if (!inputEl) {
+    return;
+  }
+  const caret = typeof inputEl.selectionStart === "number" ? inputEl.selectionStart : inputEl.value.length;
+  const segment = extractEngineSegment(inputEl.value, caret);
+  if (!segment) {
+    if (engineMenuVisible) {
+      resetEngineMenuState();
+      setGhostText("");
+    }
+    return;
+  }
+
+  const api = getWebSearchApi();
+  if (!api || typeof api.filterSearchEngines !== "function") {
+    resetEngineMenuState();
+    return;
+  }
+
+  const options = api.filterSearchEngines(segment.filter || "");
+  if (!options.length) {
+    resetEngineMenuState();
+    return;
+  }
+
+  engineMenuOptions = options;
+  engineMenuVisible = true;
+  engineMenuAnchor = segment;
+
+  const preferredId = userSelectedWebSearchEngineId || (activeWebSearchEngine ? activeWebSearchEngine.id : null);
+  const previousActiveId = engineMenuOptions[engineMenuActiveIndex]?.id || null;
+  let nextIndex = previousActiveId ? engineMenuOptions.findIndex((option) => option.id === previousActiveId) : -1;
+  if (nextIndex === -1 && preferredId) {
+    nextIndex = engineMenuOptions.findIndex((option) => option.id === preferredId);
+  }
+  engineMenuActiveIndex = nextIndex >= 0 ? nextIndex : 0;
+
+  renderEngineMenu();
+  setGhostText("");
+}
+
+function getActiveEngineOption() {
+  if (!engineMenuVisible || !engineMenuOptions.length) {
+    return null;
+  }
+  return engineMenuOptions[Math.max(0, Math.min(engineMenuActiveIndex, engineMenuOptions.length - 1))] || null;
+}
+
+function moveEngineSelection(delta) {
+  if (!engineMenuVisible || !engineMenuOptions.length) {
+    return;
+  }
+  const count = engineMenuOptions.length;
+  engineMenuActiveIndex = (engineMenuActiveIndex + delta + count) % count;
+  renderEngineMenu();
+}
+
+function applyEngineSelection(option) {
+  if (!option || !inputEl) {
+    return false;
+  }
+  const api = getWebSearchApi();
+  const engine = api && typeof api.findSearchEngine === "function" ? api.findSearchEngine(option.id) : option;
+  if (!engine) {
+    return false;
+  }
+
+  userSelectedWebSearchEngineId = engine.id;
+  activeWebSearchEngine = engine;
+
+  const value = inputEl.value;
+  let nextValue = value;
+  if (engineMenuAnchor) {
+    const before = value.slice(0, engineMenuAnchor.start).replace(/\s+$/, "");
+    const after = value.slice(engineMenuAnchor.caret).replace(/^\s+/, "");
+    nextValue = before;
+    if (nextValue) {
+      nextValue = `${nextValue} `;
+    }
+    if (after) {
+      nextValue += after;
+    }
+  }
+
+  inputEl.focus({ preventScroll: true });
+  inputEl.value = nextValue;
+  const newCaret = nextValue.length;
+  inputEl.setSelectionRange(newCaret, newCaret);
+  resetEngineMenuState();
+  setGhostText("");
+  handleInputChange();
+  return true;
 }
 
 function extractSlashQuery(value, caretIndex) {
@@ -774,6 +1020,8 @@ async function openOverlay() {
   inputEl.value = "";
   setGhostText("");
   resetSlashMenuState();
+  resetEngineMenuState();
+  resetWebSearchSelection();
   pointerNavigationSuspended = true;
 
   if (!shadowHostEl.parentElement) {
@@ -810,6 +1058,8 @@ function closeOverlay() {
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
+  resetEngineMenuState();
+  resetWebSearchSelection();
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -823,6 +1073,9 @@ function closeOverlay() {
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
   if (slashMenuVisible && slashMenuOptions.length) {
+    return;
+  }
+  if (engineMenuVisible && engineMenuOptions.length) {
     return;
   }
   if (event.key === "Escape") {
@@ -857,6 +1110,26 @@ function handleInputKeydown(event) {
     }
   }
 
+  if (engineMenuVisible && engineMenuOptions.length) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveEngineSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) {
+      const applied = applyEngineSelection(getActiveEngineOption());
+      if (applied) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      resetEngineMenuState();
+      return;
+    }
+  }
+
   const selectionAtEnd =
     inputEl.selectionStart === inputEl.value.length && inputEl.selectionEnd === inputEl.value.length;
   if (
@@ -866,7 +1139,8 @@ function handleInputKeydown(event) {
     !event.metaKey &&
     selectionAtEnd &&
     ghostSuggestionText &&
-    !slashMenuVisible
+    !slashMenuVisible &&
+    !engineMenuVisible
   ) {
     const applied = applyGhostSuggestion();
     if (applied) {
@@ -899,6 +1173,7 @@ function handleInputKeydown(event) {
 function handleInputChange() {
   const query = inputEl.value;
   updateSlashMenu();
+  updateEngineMenu();
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
     lastRequestId = ++requestCounter;
@@ -928,6 +1203,10 @@ function requestResults(query) {
   if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
     message.subfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
   }
+  const engineId = getActiveWebSearchEngineId();
+  if (engineId) {
+    message.webSearch = { engineId };
+  }
   chrome.runtime.sendMessage(
     message,
     (response) => {
@@ -951,6 +1230,24 @@ function requestResults(query) {
       renderResults();
       updateSubfilterState(response.subfilters);
 
+      if (response.webSearch && typeof response.webSearch.engineId === "string") {
+        const api = getWebSearchApi();
+        if (api && typeof api.findSearchEngine === "function") {
+          const resolved = api.findSearchEngine(response.webSearch.engineId);
+          if (resolved) {
+            activeWebSearchEngine = resolved;
+            if (userSelectedWebSearchEngineId && userSelectedWebSearchEngineId !== resolved.id) {
+              userSelectedWebSearchEngineId = resolved.id;
+            }
+          }
+        }
+      } else if (!userSelectedWebSearchEngineId) {
+        const api = getWebSearchApi();
+        if (api && typeof api.getDefaultSearchEngine === "function") {
+          activeWebSearchEngine = api.getDefaultSearchEngine();
+        }
+      }
+
       const trimmed = inputEl.value.trim();
       if (trimmed === "> reindex") {
         setGhostText("");
@@ -959,7 +1256,7 @@ function requestResults(query) {
 
       const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
       const answer = typeof response.answer === "string" ? response.answer : "";
-      setGhostText(slashMenuVisible ? "" : ghost);
+      setGhostText(slashMenuVisible || engineMenuVisible ? "" : ghost);
       const filterLabel = getFilterStatusLabel(activeFilter);
       const subfilterLabel = getActiveSubfilterLabel();
       let statusMessage = "";
@@ -971,6 +1268,10 @@ function requestResults(query) {
       }
       if (answer) {
         statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
+      }
+      const engineStatusLabel = formatWebSearchStatus(response.webSearch);
+      if (engineStatusLabel) {
+        statusMessage = statusMessage ? `${statusMessage} · ${engineStatusLabel}` : engineStatusLabel;
       }
       if (statusMessage) {
         setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
@@ -1149,6 +1450,30 @@ function openResult(result) {
     closeOverlay();
     return;
   }
+  if (result.type === "webSearch") {
+    const payload = {
+      type: "SPOTLIGHT_WEB_SEARCH",
+      query:
+        typeof result.query === "string" && result.query
+          ? result.query
+          : inputEl && typeof inputEl.value === "string"
+          ? inputEl.value.trim()
+          : "",
+    };
+    if (result.engineId) {
+      payload.engineId = result.engineId;
+    }
+    if (result.url) {
+      payload.url = result.url;
+    }
+    chrome.runtime.sendMessage(payload, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("Spotlight web search error", chrome.runtime.lastError);
+      }
+    });
+    closeOverlay();
+    return;
+  }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   closeOverlay();
 }
@@ -1319,6 +1644,24 @@ function getFilterStatusLabel(type) {
   }
 }
 
+function formatWebSearchStatus(info) {
+  const engine = activeWebSearchEngine;
+  if (!engine) {
+    return "";
+  }
+  const engineName = info && typeof info.engineName === "string" && info.engineName ? info.engineName : engine.name;
+  if (!engineName) {
+    return "";
+  }
+  if (info && info.fallback) {
+    return `Web search · ${engineName}`;
+  }
+  if (userSelectedWebSearchEngineId) {
+    return `Web search: ${engineName}`;
+  }
+  return "";
+}
+
 const DOWNLOAD_STATE_LABELS = {
   complete: "Completed",
   in_progress: "In Progress",
@@ -1395,6 +1738,11 @@ function formatTypeLabel(type, result) {
       return "Back";
     case "topSite":
       return "Top Site";
+    case "webSearch":
+      if (result && result.engineName) {
+        return `Web · ${result.engineName}`;
+      }
+      return "Web Search";
     default:
       return type || "";
   }

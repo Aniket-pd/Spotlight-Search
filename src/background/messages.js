@@ -1,3 +1,5 @@
+import "../shared/web-search.js";
+
 export function registerMessageHandlers({
   context,
   runSearch,
@@ -22,6 +24,7 @@ export function registerMessageHandlers({
             runSearch(message.query || "", data, {
               subfilter: message.subfilter,
               navigation: navigationState,
+              webSearch: message.webSearch,
             }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
@@ -89,6 +92,29 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_WEB_SEARCH") {
+      const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
+      const query = typeof message.query === "string" ? message.query.trim() : "";
+      if (!api || typeof api.buildSearchUrl !== "function" || !query) {
+        sendResponse({ success: false, error: "Web search unavailable" });
+        return true;
+      }
+      const engineId = typeof message.engineId === "string" ? message.engineId : null;
+      const url = api.buildSearchUrl(engineId, query);
+      if (!url) {
+        sendResponse({ success: false, error: "Web search unavailable" });
+        return true;
+      }
+      chrome.tabs
+        .create({ url })
+        .then(() => sendResponse({ success: true, url }))
+        .catch((err) => {
+          console.error("Spotlight: web search open failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to open web search" });
         });
       return true;
     }
