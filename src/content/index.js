@@ -49,6 +49,15 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+const TAB_SUMMARY_CACHE_LIMIT = 40;
+const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
+const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
+const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
+const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
+const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
+const tabSummaryState = new Map();
+let tabSummaryRequestCounter = 0;
+let tabSummaryEnsureTimer = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -166,6 +175,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     hint: "Current tab forward history",
     value: "forward:",
     keywords: ["forward", "ahead", "history", "navigate"],
+  },
+  {
+    id: "slash-summarize",
+    label: "Summaries",
+    hint: "Filter tabs and preview AI key points",
+    value: "summarize:",
+    keywords: ["summary", "summaries", "digest", "ai", "tab digest"],
   },
 ];
 
@@ -1169,6 +1185,10 @@ function closeOverlay() {
     clearTimeout(pendingQueryTimeout);
     pendingQueryTimeout = null;
   }
+  if (tabSummaryEnsureTimer) {
+    clearTimeout(tabSummaryEnsureTimer);
+    tabSummaryEnsureTimer = null;
+  }
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
@@ -1389,6 +1409,7 @@ function requestResults(query) {
       }
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
+      pruneSummaryState();
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
@@ -1589,6 +1610,8 @@ function updateActiveResult() {
   } else {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  updateActiveSummaryPanel();
+  scheduleEnsureSummaryForActiveResult();
 }
 
 function triggerWebSearch(engineIdOverride = null) {
@@ -1671,6 +1694,340 @@ function openResult(result) {
   }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   closeOverlay();
+}
+
+function shouldSummarizeResult(result) {
+  if (!result || typeof result !== "object") {
+    return false;
+  }
+  if (result.type !== "tab") {
+    return false;
+  }
+  const url = typeof result.url === "string" ? result.url : "";
+  if (!url) {
+    return false;
+  }
+  const lower = url.toLowerCase();
+  if (lower.startsWith("chrome://") || lower.startsWith("chrome-extension://")) {
+    return false;
+  }
+  if (!/^https?:/.test(lower) && !lower.startsWith("file://")) {
+    return false;
+  }
+  if (typeof result.tabId !== "number" || Number.isNaN(result.tabId)) {
+    return false;
+  }
+  return true;
+}
+
+function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
+  if (tabSummaryState.size <= limit) {
+    return;
+  }
+  const entries = Array.from(tabSummaryState.entries());
+  entries.sort((a, b) => {
+    const aTime = a[1]?.lastUsed || 0;
+    const bTime = b[1]?.lastUsed || 0;
+    return aTime - bTime;
+  });
+  while (tabSummaryState.size > limit && entries.length) {
+    const [key] = entries.shift();
+    tabSummaryState.delete(key);
+  }
+}
+
+function buildSummaryCopyText(entry) {
+  if (!entry) {
+    return "";
+  }
+  if (Array.isArray(entry.bullets) && entry.bullets.length) {
+    return entry.bullets.map((bullet) => `• ${bullet}`).join("\n");
+  }
+  if (typeof entry.raw === "string" && entry.raw) {
+    return entry.raw;
+  }
+  return "";
+}
+
+function handleSummaryCopy(url) {
+  if (!url) {
+    return;
+  }
+  const entry = tabSummaryState.get(url);
+  if (!entry || entry.status !== "ready") {
+    return;
+  }
+  const text = buildSummaryCopyText(entry);
+  if (!text) {
+    setStatus("No summary available", { force: true });
+    return;
+  }
+  const onSuccess = () => {
+    setStatus("Summary copied to clipboard", { force: true });
+  };
+  const onError = (error) => {
+    console.warn("Spotlight: failed to copy summary", error);
+    setStatus("Unable to copy summary", { force: true });
+  };
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(onError);
+    return;
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+    onSuccess();
+  } catch (err) {
+    onError(err);
+  }
+}
+
+function scheduleEnsureSummaryForActiveResult(delay = 80) {
+  if (tabSummaryEnsureTimer) {
+    clearTimeout(tabSummaryEnsureTimer);
+  }
+  tabSummaryEnsureTimer = setTimeout(() => {
+    tabSummaryEnsureTimer = null;
+    ensureSummaryForActiveResult();
+  }, delay);
+}
+
+function ensureSummaryForActiveResult() {
+  if (!isOpen) {
+    return;
+  }
+  if (activeIndex < 0 || activeIndex >= resultsState.length) {
+    updateActiveSummaryPanel();
+    return;
+  }
+  const result = resultsState[activeIndex];
+  if (!shouldSummarizeResult(result)) {
+    updateActiveSummaryPanel();
+    return;
+  }
+  const url = typeof result.url === "string" ? result.url : "";
+  if (!url) {
+    updateActiveSummaryPanel();
+    return;
+  }
+  const now = Date.now();
+  const existing = tabSummaryState.get(url);
+  if (existing) {
+    existing.lastUsed = now;
+    tabSummaryState.set(url, existing);
+    if (existing.status === "loading" || existing.status === "ready") {
+      updateActiveSummaryPanel();
+      return;
+    }
+  }
+  const requestId = ++tabSummaryRequestCounter;
+  const entry = {
+    status: "loading",
+    requestId,
+    bullets: Array.isArray(existing?.bullets) ? existing.bullets.slice() : [],
+    raw: typeof existing?.raw === "string" ? existing.raw : "",
+    error: "",
+    cached: Boolean(existing?.cached),
+    source: typeof existing?.source === "string" ? existing.source : "",
+    lastUsed: now,
+  };
+  tabSummaryState.set(url, entry);
+  pruneSummaryState();
+  updateActiveSummaryPanel();
+  const payload = {
+    type: "SPOTLIGHT_SUMMARIZE",
+    url,
+  };
+  if (typeof result.tabId === "number" && !Number.isNaN(result.tabId)) {
+    payload.tabId = result.tabId;
+  }
+  try {
+    chrome.runtime.sendMessage(payload, (response) => {
+      const current = tabSummaryState.get(url);
+      if (!current || current.requestId !== requestId) {
+        if (response && response.success) {
+          tabSummaryState.set(url, {
+            status: "ready",
+            requestId,
+            bullets: Array.isArray(response.bullets) ? response.bullets.filter(Boolean) : [],
+            raw: typeof response.raw === "string" ? response.raw : "",
+            error: "",
+            cached: Boolean(response.cached),
+            source: typeof response.source === "string" ? response.source : "",
+            lastUsed: Date.now(),
+          });
+          pruneSummaryState();
+        }
+        return;
+      }
+      if (chrome.runtime.lastError || !response || !response.success) {
+        const errorMessage =
+          (response && response.error) ||
+          (chrome.runtime.lastError && chrome.runtime.lastError.message) ||
+          "Summary unavailable";
+        current.status = "error";
+        current.error = errorMessage;
+        current.cached = false;
+        current.lastUsed = Date.now();
+        tabSummaryState.set(url, current);
+        pruneSummaryState();
+        updateActiveSummaryPanel();
+        return;
+      }
+      current.status = "ready";
+      current.bullets = Array.isArray(response.bullets) ? response.bullets.filter(Boolean) : [];
+      current.raw = typeof response.raw === "string" ? response.raw : "";
+      current.error = "";
+      current.cached = Boolean(response.cached);
+      current.source = typeof response.source === "string" ? response.source : "";
+      current.lastUsed = Date.now();
+      tabSummaryState.set(url, current);
+      pruneSummaryState();
+      updateActiveSummaryPanel();
+    });
+  } catch (err) {
+    const current = tabSummaryState.get(url);
+    if (!current || current.requestId !== requestId) {
+      return;
+    }
+    current.status = "error";
+    current.error = err?.message || "Summary unavailable";
+    current.cached = false;
+    current.lastUsed = Date.now();
+    tabSummaryState.set(url, current);
+    pruneSummaryState();
+    updateActiveSummaryPanel();
+  }
+}
+
+function updateActiveSummaryPanel() {
+  if (!resultsEl) {
+    return;
+  }
+  const existingPanels = resultsEl.querySelectorAll(`.${TAB_SUMMARY_PANEL_CLASS}`);
+  existingPanels.forEach((panel) => panel.remove());
+  if (!isOpen || activeIndex < 0 || activeIndex >= resultsState.length) {
+    return;
+  }
+  const result = resultsState[activeIndex];
+  if (!shouldSummarizeResult(result)) {
+    return;
+  }
+  const url = typeof result.url === "string" ? result.url : "";
+  if (!url) {
+    return;
+  }
+  const entry = tabSummaryState.get(url);
+  if (!entry) {
+    return;
+  }
+  const item = resultsEl.querySelector(`li[data-index='${activeIndex}']`);
+  if (!item) {
+    return;
+  }
+  const body = item.querySelector(".spotlight-result-content");
+  if (!body) {
+    return;
+  }
+  const panel = document.createElement("div");
+  panel.className = TAB_SUMMARY_PANEL_CLASS;
+  panel.dataset.url = url;
+
+  const header = document.createElement("div");
+  header.className = "spotlight-ai-panel-header";
+  const title = document.createElement("span");
+  title.className = "spotlight-ai-panel-title";
+  title.textContent = "Tab Digest";
+  header.appendChild(title);
+
+  const controls = document.createElement("div");
+  controls.className = "spotlight-ai-panel-controls";
+  let hasControls = false;
+
+  if (entry.cached) {
+    const badge = document.createElement("span");
+    badge.className = TAB_SUMMARY_BADGE_CLASS;
+    badge.textContent = "Cached";
+    controls.appendChild(badge);
+    hasControls = true;
+  }
+
+  const canCopy = entry.status === "ready" && (Array.isArray(entry.bullets) ? entry.bullets.length : Boolean(entry.raw));
+  if (canCopy) {
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = TAB_SUMMARY_COPY_CLASS;
+    copyButton.textContent = "Copy";
+    copyButton.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    copyButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    copyButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleSummaryCopy(url);
+    });
+    controls.appendChild(copyButton);
+    hasControls = true;
+  }
+
+  if (hasControls) {
+    header.appendChild(controls);
+  }
+
+  panel.appendChild(header);
+
+  if (entry.status === "loading") {
+    const status = document.createElement("div");
+    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
+    status.textContent = "Summarizing…";
+    panel.appendChild(status);
+  } else if (entry.status === "error") {
+    const status = document.createElement("div");
+    status.className = `${TAB_SUMMARY_STATUS_CLASS} error`;
+    status.textContent = entry.error || "Summary unavailable";
+    panel.appendChild(status);
+  } else if (entry.status === "ready") {
+    if (Array.isArray(entry.bullets) && entry.bullets.length) {
+      const list = document.createElement("ul");
+      list.className = TAB_SUMMARY_LIST_CLASS;
+      entry.bullets.slice(0, 3).forEach((bullet) => {
+        const itemEl = document.createElement("li");
+        itemEl.textContent = bullet;
+        list.appendChild(itemEl);
+      });
+      panel.appendChild(list);
+    } else if (entry.raw) {
+      const fallback = document.createElement("div");
+      fallback.className = TAB_SUMMARY_STATUS_CLASS;
+      fallback.textContent = entry.raw;
+      panel.appendChild(fallback);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = `${TAB_SUMMARY_STATUS_CLASS} empty`;
+      empty.textContent = "No summary available.";
+      panel.appendChild(empty);
+    }
+  } else {
+    const status = document.createElement("div");
+    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
+    status.textContent = "Preparing summary…";
+    panel.appendChild(status);
+  }
+
+  entry.lastUsed = Date.now();
+  tabSummaryState.set(url, entry);
+  body.appendChild(panel);
 }
 
 function renderResults() {
@@ -2440,15 +2797,60 @@ function applyIconToResults(origin, faviconUrl) {
   });
 }
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (!message || message.type !== "SPOTLIGHT_TOGGLE") {
-    return;
+function collectPageTextForSummary() {
+  try {
+    let text = "";
+    if (document.body) {
+      text = document.body.innerText || document.body.textContent || "";
+    } else if (document.documentElement) {
+      text = document.documentElement.innerText || document.documentElement.textContent || "";
+    }
+    let normalized = (text || "").replace(/\u00a0/g, " ");
+    normalized = normalized.replace(/\r\n?/g, "\n");
+    normalized = normalized.replace(/\s+\n/g, "\n");
+    normalized = normalized.replace(/\n{3,}/g, "\n\n").trim();
+    if (normalized.length > 24000) {
+      normalized = normalized.slice(0, 24000);
+    }
+    const href = typeof window.location === "object" && typeof window.location.href === "string"
+      ? window.location.href
+      : "";
+    return {
+      success: Boolean(normalized),
+      text: normalized,
+      title: document.title || "",
+      lastModified: typeof document.lastModified === "string" ? document.lastModified : "",
+      url: href,
+    };
+  } catch (err) {
+    return { success: false, error: err?.message || "Unable to read page" };
   }
-  if (isOpen) {
-    closeOverlay();
-  } else {
-    void openOverlay();
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || typeof message.type !== "string") {
+    return undefined;
   }
+  if (message.type === "SPOTLIGHT_TOGGLE") {
+    if (isOpen) {
+      closeOverlay();
+    } else {
+      void openOverlay();
+    }
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {
+    setTimeout(() => {
+      const payload = collectPageTextForSummary();
+      try {
+        sendResponse(payload);
+      } catch (err) {
+        console.warn("Spotlight: failed to respond with page text", err);
+      }
+    }, 0);
+    return true;
+  }
+  return undefined;
 });
 
 if (document.readyState === "loading") {

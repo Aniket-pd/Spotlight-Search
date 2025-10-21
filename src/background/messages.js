@@ -6,6 +6,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  summaries,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -130,6 +131,30 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_SUMMARIZE") {
+      if (!summaries || typeof summaries.requestSummary !== "function") {
+        sendResponse({ success: false, error: "Summaries unavailable" });
+        return true;
+      }
+      const url = typeof message.url === "string" ? message.url : "";
+      if (!url) {
+        sendResponse({ success: false, error: "Missing URL for summary" });
+        return true;
+      }
+      const tabId = typeof message.tabId === "number" ? message.tabId : null;
+      summaries
+        .requestSummary({ url, tabId })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((err) => {
+          console.error("Spotlight: summary generation failed", err);
+          const errorMessage = err?.message || "Unable to generate summary";
+          sendResponse({ success: false, error: errorMessage });
         });
       return true;
     }
