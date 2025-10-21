@@ -124,6 +124,86 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
+.spotlight-engine-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 12px;
+  min-width: 220px;
+  max-width: calc(100% - 24px);
+  background: rgba(24, 28, 40, 0.95);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.35);
+  padding: 8px 0;
+  display: none;
+  z-index: 6;
+  backdrop-filter: blur(12px);
+}
+
+.spotlight-engine-menu.visible {
+  display: block;
+}
+
+.spotlight-engine-option {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.82);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.spotlight-engine-option:hover,
+.spotlight-engine-option.active {
+  background: linear-gradient(135deg, rgba(118, 141, 255, 0.7), rgba(96, 204, 255, 0.6));
+  color: #fff;
+}
+
+.spotlight-engine-option + .spotlight-engine-option {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.spotlight-engine-option-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.spotlight-engine-option-icon-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.spotlight-engine-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.spotlight-engine-option-label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.spotlight-engine-option-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .spotlight-input-container.focused {
   border-color: rgba(99, 137, 255, 0.6);
   box-shadow: 0 0 0 3px rgba(99, 137, 255, 0.2);
@@ -350,6 +430,11 @@
   flex-wrap: wrap;
 }
 
+.spotlight-result-meta.spotlight-result-meta-web-search {
+  gap: 4px;
+  font-size: 13px;
+}
+
 .spotlight-result-url {
   color: rgba(255, 255, 255, 0.65);
   overflow: hidden;
@@ -357,6 +442,11 @@
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+}
+
+.spotlight-result-meta-web-search .spotlight-result-url {
+  color: rgba(201, 221, 255, 0.85);
+  font-weight: 500;
 }
 
 .spotlight-result-type {

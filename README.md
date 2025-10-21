@@ -15,6 +15,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 - Close-all-audio command to instantly silence every tab that's currently playing sound.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
+- Web search fallback that offers Google results when no local matches remain, with a "-" engine picker for Google, Bing, DuckDuckGo, Brave, Yahoo, and YouTube (all rendered with favicons).
 
 
 ## Contextual Subfilters
@@ -26,6 +27,18 @@ Spotlight presents filter-specific suggestions to help narrow results without ty
 - **Bookmarks** – Browse by bookmark folder (e.g., Work, Personal, Tutorials) to jump straight to the right collection.
 
 Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a chip applies the filter instantly, and you can tap the active chip again to clear it.
+
+## Web Search Fallback & Engine Picker
+
+Spotlight keeps web search only one keystroke away when local data comes up empty:
+
+1. Type your query in the Spotlight input field as usual.
+2. Press `Cmd+Enter` (`Ctrl+Enter` on Windows/Linux) at any time to open the query in a new tab using your default engine (Google out of the box).
+3. Press the `-` key to open the engine picker menu. The menu filters as you continue typing and lists each provider with its favicon so you can quickly differentiate between Google, Bing, DuckDuckGo, Brave Search, Yahoo, and YouTube.
+4. Confirm an engine from the picker with `Enter` or click. Spotlight will preview the pending web search as a single result row highlighting your query and the chosen engine.
+5. Press `Enter` to open the previewed engine in a new tab, or press `Esc` to return to the full local results list.
+
+The shared web search utilities live in `src/shared/web-search.js` if you want to add or customize engines.
 
 ## Loading the Extension
 1. Clone or download this repository.
@@ -39,5 +52,6 @@ Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a c
 - The overlay UI lives in `src/content/index.js` with styles from `src/content/styles.css`.
 - Indexing and search logic reside in `src/search/indexer.js` and `src/search/search.js` respectively.
 - Background orchestration is handled by the modules in `src/background/` with `src/background/index.js` wiring listeners together.
+- Web search configuration, engine metadata, and fallback helpers are centralized in `src/shared/web-search.js`.
 
 Enjoy lightning-fast, private browsing search!

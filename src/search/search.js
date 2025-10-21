@@ -1,4 +1,35 @@
 import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
+import "../shared/web-search.js";
+
+function getWebSearchApi() {
+  const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
+  if (!api || typeof api !== "object") {
+    return null;
+  }
+  return api;
+}
+
+function resolveRequestedSearchEngine(webSearchOptions) {
+  const api = getWebSearchApi();
+  if (!api) {
+    return { engine: null, engineId: null };
+  }
+  const requestedId =
+    webSearchOptions && typeof webSearchOptions.engineId === "string"
+      ? webSearchOptions.engineId
+      : null;
+  if (requestedId) {
+    const requested = api.findSearchEngine(requestedId);
+    if (requested) {
+      return { engine: requested, engineId: requested.id };
+    }
+  }
+  const fallback = api.getDefaultSearchEngine ? api.getDefaultSearchEngine() : null;
+  return {
+    engine: fallback || null,
+    engineId: fallback ? fallback.id : null,
+  };
+}
 
 const DEFAULT_MAX_RESULTS = 12;
 const HISTORY_MAX_RESULTS = Number.POSITIVE_INFINITY;
@@ -34,6 +65,32 @@ function sliceResultsForLimit(items, limit) {
     return items.slice();
   }
   return items.slice(0, limit);
+}
+
+function isMeaningfulLocalResult(result, minMatchedTokens, totalTokens) {
+  if (!result) {
+    return false;
+  }
+  if (result.type === "webSearch") {
+    return false;
+  }
+  if (result.score === COMMAND_SCORE || result.type === "command") {
+    return true;
+  }
+  if (result.type === "navigation") {
+    return true;
+  }
+  if (typeof result.score !== "number" || !Number.isFinite(result.score)) {
+    return true;
+  }
+  const matchedTokens = typeof result.matchedTokens === "number" ? result.matchedTokens : 0;
+  if (totalTokens > 0 && matchedTokens >= totalTokens) {
+    return true;
+  }
+  if (minMatchedTokens <= 0) {
+    return result.score > 0;
+  }
+  return result.score > 0 && matchedTokens >= minMatchedTokens;
 }
 
 const COMMAND_ICON_DATA_URL =
@@ -1546,9 +1603,10 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
+    let matchedCount = 0;
     if (totalTokens > 0) {
       const matchedSet = tokenMatches.get(itemId);
-      const matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
+      matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
       if (matchedCount > 0) {
         finalScore += matchedCount * MATCHED_TOKEN_BONUS;
         if (matchedCount === totalTokens) {
@@ -1576,6 +1634,9 @@ export function runSearch(query, data, options = {}) {
     }
     const mapped = buildResultFromItem(item, finalScore);
     if (mapped) {
+      if (totalTokens > 0) {
+        mapped.matchedTokens = matchedCount;
+      }
       results.push(mapped);
     }
   }
@@ -1587,47 +1648,91 @@ export function runSearch(query, data, options = {}) {
   results.sort(compareResults);
 
   const limit = getResultLimit(filterType);
-  const finalResults = sliceResultsForLimit(results, limit);
+  let finalResults = sliceResultsForLimit(results, limit);
+  const minRequiredMatches = totalTokens >= 3 ? 2 : totalTokens >= 1 ? 1 : 0;
+  const hasMeaningfulLocalResults = finalResults.some((result) =>
+    isMeaningfulLocalResult(result, minRequiredMatches, totalTokens)
+  );
+  const { engine: requestedEngine } = resolveRequestedSearchEngine(options?.webSearch);
+  let activeWebSearchEngine = requestedEngine;
+  const webSearchApi = getWebSearchApi();
+  let fallbackResult = null;
+
+  const shouldOfferFallback =
+    trimmed &&
+    webSearchApi &&
+    typeof webSearchApi.createWebSearchResult === "function" &&
+    (!finalResults.length || !hasMeaningfulLocalResults);
+
+  if (shouldOfferFallback) {
+    const desiredEngineId = activeWebSearchEngine ? activeWebSearchEngine.id : null;
+    fallbackResult = webSearchApi.createWebSearchResult(trimmed, { engineId: desiredEngineId });
+    if (fallbackResult) {
+      finalResults = [fallbackResult];
+      if (webSearchApi.findSearchEngine && fallbackResult.engineId) {
+        const resolvedEngine = webSearchApi.findSearchEngine(fallbackResult.engineId);
+        if (resolvedEngine) {
+          activeWebSearchEngine = resolvedEngine;
+        }
+      }
+    }
+  }
+
   const topResult = finalResults[0] || null;
   const hasCommand = finalResults.some((result) => result?.score === COMMAND_SCORE);
   let ghostPayload = null;
   let answer = "";
 
-  const topIsCommand = Boolean(topResult && (topResult.type === "command" || topResult.score === COMMAND_SCORE));
+  if (fallbackResult) {
+    const engineName = fallbackResult.engineName || activeWebSearchEngine?.name || "the web";
+    answer = `Search with ${engineName}`;
+  } else {
+    const topIsCommand = Boolean(topResult && (topResult.type === "command" || topResult.score === COMMAND_SCORE));
 
-  if (topIsCommand) {
-    const commandGhostText = topResult.title || commandSuggestions.ghost || "";
-    ghostPayload = commandGhostText ? { text: commandGhostText } : null;
-    answer = commandSuggestions.answer || "";
-  } else if (topResult) {
-    const normalizedQuery = normalizeGhostValue(trimmed);
-    const topDisplay = topResult.title || topResult.url || "";
-    if (normalizedQuery && topDisplay && normalizeGhostValue(topDisplay).startsWith(normalizedQuery)) {
-      ghostPayload = { text: topDisplay };
-    } else {
-      const primarySuggestion = findGhostSuggestionForResult(trimmed, topResult);
-      if (primarySuggestion) {
-        ghostPayload = { text: primarySuggestion };
+    if (topIsCommand) {
+      const commandGhostText = topResult.title || commandSuggestions.ghost || "";
+      ghostPayload = commandGhostText ? { text: commandGhostText } : null;
+      answer = commandSuggestions.answer || "";
+    } else if (topResult) {
+      const normalizedQuery = normalizeGhostValue(trimmed);
+      const topDisplay = topResult.title || topResult.url || "";
+      if (normalizedQuery && topDisplay && normalizeGhostValue(topDisplay).startsWith(normalizedQuery)) {
+        ghostPayload = { text: topDisplay };
       } else {
-        const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
-        if (fallbackGhost) {
-          ghostPayload = fallbackGhost;
-          answer = fallbackGhost.answer || "";
+        const primarySuggestion = findGhostSuggestionForResult(trimmed, topResult);
+        if (primarySuggestion) {
+          ghostPayload = { text: primarySuggestion };
+        } else {
+          const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
+          if (fallbackGhost) {
+            ghostPayload = fallbackGhost;
+            answer = fallbackGhost.answer || "";
+          }
         }
       }
+    } else if (hasCommand && commandSuggestions.ghost) {
+      ghostPayload = { text: commandSuggestions.ghost };
+      answer = commandSuggestions.answer || "";
     }
-  } else if (hasCommand && commandSuggestions.ghost) {
-    ghostPayload = { text: commandSuggestions.ghost };
-    answer = commandSuggestions.answer || "";
+
+    if (!ghostPayload && !hasCommand) {
+      const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
+      if (fallbackGhost) {
+        ghostPayload = fallbackGhost;
+        answer = fallbackGhost.answer || "";
+      }
+    }
   }
 
-  if (!ghostPayload && !hasCommand) {
-    const fallbackGhost = findGhostSuggestion(trimmed, finalResults);
-    if (fallbackGhost) {
-      ghostPayload = fallbackGhost;
-      answer = fallbackGhost.answer || "";
-    }
-  }
+  const webSearchInfo = activeWebSearchEngine
+    ? {
+        engineId: activeWebSearchEngine.id,
+        engineName: activeWebSearchEngine.name,
+        engineDomain: activeWebSearchEngine.domain || "",
+        query: trimmed,
+        fallback: Boolean(fallbackResult),
+      }
+    : null;
 
   return {
     results: finalResults,
@@ -1635,5 +1740,6 @@ export function runSearch(query, data, options = {}) {
     answer,
     filter: filterType,
     subfilters: subfilterPayload,
+    webSearch: webSearchInfo,
   };
 }
