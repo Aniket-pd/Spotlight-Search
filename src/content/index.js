@@ -48,6 +48,7 @@ let engineMenuActiveIndex = -1;
 let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
+let webSearchPreviewResult = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -63,6 +64,7 @@ function resetWebSearchSelection() {
   activeWebSearchEngine = api && typeof api.getDefaultSearchEngine === "function"
     ? api.getDefaultSearchEngine()
     : null;
+  webSearchPreviewResult = null;
 }
 
 function getActiveWebSearchEngineId() {
@@ -688,6 +690,80 @@ function moveEngineSelection(delta) {
   renderEngineMenu();
 }
 
+function applyWebSearchPreview(rawQuery, engineIdOverride = null) {
+  const trimmed = typeof rawQuery === "string" ? rawQuery.trim() : "";
+  if (!trimmed) {
+    webSearchPreviewResult = null;
+    return false;
+  }
+  const api = getWebSearchApi();
+  if (!api || typeof api.createWebSearchResult !== "function") {
+    webSearchPreviewResult = null;
+    return false;
+  }
+  const desiredEngineId =
+    typeof engineIdOverride === "string" && engineIdOverride
+      ? engineIdOverride
+      : getActiveWebSearchEngineId();
+  if (!desiredEngineId) {
+    webSearchPreviewResult = null;
+    return false;
+  }
+  if (
+    webSearchPreviewResult &&
+    webSearchPreviewResult.query === trimmed &&
+    webSearchPreviewResult.engineId === desiredEngineId
+  ) {
+    resultsState = [webSearchPreviewResult];
+    lazyList.setItems(resultsState);
+    activeIndex = 0;
+    pointerNavigationSuspended = true;
+    if (pendingQueryTimeout) {
+      clearTimeout(pendingQueryTimeout);
+      pendingQueryTimeout = null;
+    }
+    lastRequestId = 0;
+    setGhostText("");
+    renderResults();
+    const existingEngineName =
+      webSearchPreviewResult.engineName || activeWebSearchEngine?.name || "";
+    if (existingEngineName) {
+      setStatus(`Web search: ${existingEngineName}`, { force: true });
+    } else {
+      setStatus("", { force: true });
+    }
+    return true;
+  }
+  const preview = api.createWebSearchResult(trimmed, { engineId: desiredEngineId });
+  if (!preview) {
+    webSearchPreviewResult = null;
+    return false;
+  }
+  if (preview.engineIconUrl && !preview.faviconUrl) {
+    preview.faviconUrl = preview.engineIconUrl;
+  }
+  preview.preview = true;
+  webSearchPreviewResult = preview;
+  resultsState = [preview];
+  lazyList.setItems(resultsState);
+  activeIndex = 0;
+  pointerNavigationSuspended = true;
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  lastRequestId = 0;
+  setGhostText("");
+  renderResults();
+  const engineName = preview.engineName || activeWebSearchEngine?.name || "";
+  if (engineName) {
+    setStatus(`Web search: ${engineName}`, { force: true });
+  } else {
+    setStatus("", { force: true });
+  }
+  return true;
+}
+
 function applyEngineSelection(option) {
   if (!option || !inputEl) {
     return false;
@@ -1254,7 +1330,34 @@ function handleInputChange() {
   pointerNavigationSuspended = true;
   if (pendingQueryTimeout) {
     clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
   }
+
+  if (userSelectedWebSearchEngineId) {
+    if (!trimmed) {
+      webSearchPreviewResult = null;
+      resultsState = [];
+      lazyList.setItems(resultsState);
+      if (resultsEl) {
+        resultsEl.innerHTML = "";
+      }
+      if (inputEl) {
+        inputEl.removeAttribute("aria-activedescendant");
+      }
+      lastRequestId = 0;
+      const engineName = activeWebSearchEngine?.name || "";
+      if (engineName) {
+        setStatus(`Web search: ${engineName}`, { force: true });
+      }
+      return;
+    }
+    if (applyWebSearchPreview(trimmed, userSelectedWebSearchEngineId)) {
+      return;
+    }
+  } else {
+    webSearchPreviewResult = null;
+  }
+
   pendingQueryTimeout = setTimeout(() => {
     requestResults(query);
   }, 80);
@@ -1496,9 +1599,22 @@ function triggerWebSearch(engineIdOverride = null) {
   if (!query) {
     return false;
   }
+  const api = getWebSearchApi();
+  const desiredEngineId =
+    (typeof engineIdOverride === "string" && engineIdOverride) || getActiveWebSearchEngineId();
+  if (api && typeof api.createWebSearchResult === "function") {
+    const result = api.createWebSearchResult(query, { engineId: desiredEngineId });
+    if (result) {
+      if (result.engineIconUrl && !result.faviconUrl) {
+        result.faviconUrl = result.engineIconUrl;
+      }
+      openResult(result);
+      return true;
+    }
+  }
   const payload = { type: "webSearch", query };
-  if (typeof engineIdOverride === "string" && engineIdOverride) {
-    payload.engineId = engineIdOverride;
+  if (desiredEngineId) {
+    payload.engineId = desiredEngineId;
   }
   openResult(payload);
   return true;
@@ -1575,6 +1691,13 @@ function renderResults() {
     return;
   }
 
+  if (userSelectedWebSearchEngineId && (!inputEl || !inputEl.value.trim())) {
+    if (inputEl) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
+    return;
+  }
+
   if (!resultsState.length) {
     const li = document.createElement("li");
     li.className = "spotlight-result empty";
@@ -1622,53 +1745,83 @@ function renderResults() {
     const body = document.createElement("div");
     body.className = "spotlight-result-content";
 
+    const isWebSearch = result.type === "webSearch";
+    if (isWebSearch) {
+      li.classList.add("spotlight-result-web-search");
+    }
+
     const title = document.createElement("div");
     title.className = "spotlight-result-title";
-    title.textContent = result.title || result.url;
+    let titleText = result.title || result.url || "";
+    if (isWebSearch && typeof result.query === "string" && result.query) {
+      titleText = result.query;
+    }
+    title.textContent = titleText;
 
     const meta = document.createElement("div");
     meta.className = "spotlight-result-meta";
+    if (isWebSearch) {
+      meta.classList.add("spotlight-result-meta-web-search");
+    }
 
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
-    url.textContent = result.description || result.url || "";
-    if (url.textContent) {
-      url.title = url.textContent;
-    }
 
-    const timestampLabel = formatResultTimestamp(result);
-
-    const type = document.createElement("span");
-    type.className = `spotlight-result-type type-${result.type}`;
-    type.textContent = formatTypeLabel(result.type, result);
-
-    meta.appendChild(url);
-    if (result.type === "topSite") {
-      const visitLabel = formatVisitCount(result.visitCount);
-      if (visitLabel) {
-        const visitChip = document.createElement("span");
-        visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
-        visitChip.textContent = visitLabel;
-        meta.appendChild(visitChip);
+    if (isWebSearch) {
+      const engineLabel =
+        (typeof result.engineLabel === "string" && result.engineLabel) ||
+        (typeof result.engineName === "string" && result.engineName) ||
+        (typeof result.description === "string" && result.description) ||
+        (typeof result.engineDomain === "string" && result.engineDomain) ||
+        "";
+      if (engineLabel) {
+        url.textContent = engineLabel;
+        url.title = engineLabel;
+        meta.appendChild(url);
       }
-    }
-    if (timestampLabel) {
-      const timestampEl = document.createElement("span");
-      timestampEl.className = "spotlight-result-timestamp";
-      timestampEl.textContent = timestampLabel;
-      timestampEl.title = timestampLabel;
-      meta.appendChild(timestampEl);
-    }
-    if (result.type === "download") {
-      const stateLabel = formatDownloadStateLabel(result.state);
-      if (stateLabel) {
-        const stateChip = document.createElement("span");
-        stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
-        stateChip.textContent = stateLabel;
-        meta.appendChild(stateChip);
+    } else {
+      const descriptionText = result.description || result.url || "";
+      if (descriptionText) {
+        url.textContent = descriptionText;
+        url.title = descriptionText;
+      } else {
+        url.textContent = "";
       }
+      meta.appendChild(url);
+
+      const timestampLabel = formatResultTimestamp(result);
+
+      if (result.type === "topSite") {
+        const visitLabel = formatVisitCount(result.visitCount);
+        if (visitLabel) {
+          const visitChip = document.createElement("span");
+          visitChip.className = "spotlight-result-tag spotlight-result-tag-topsite";
+          visitChip.textContent = visitLabel;
+          meta.appendChild(visitChip);
+        }
+      }
+      if (timestampLabel) {
+        const timestampEl = document.createElement("span");
+        timestampEl.className = "spotlight-result-timestamp";
+        timestampEl.textContent = timestampLabel;
+        timestampEl.title = timestampLabel;
+        meta.appendChild(timestampEl);
+      }
+      if (result.type === "download") {
+        const stateLabel = formatDownloadStateLabel(result.state);
+        if (stateLabel) {
+          const stateChip = document.createElement("span");
+          stateChip.className = `spotlight-result-tag ${getDownloadStateClassName(result.state)}`;
+          stateChip.textContent = stateLabel;
+          meta.appendChild(stateChip);
+        }
+      }
+
+      const type = document.createElement("span");
+      type.className = `spotlight-result-type type-${result.type}`;
+      type.textContent = formatTypeLabel(result.type, result);
+      meta.appendChild(type);
     }
-    meta.appendChild(type);
 
     body.appendChild(title);
     body.appendChild(meta);

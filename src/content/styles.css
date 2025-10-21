@@ -430,6 +430,11 @@
   flex-wrap: wrap;
 }
 
+.spotlight-result-meta.spotlight-result-meta-web-search {
+  gap: 4px;
+  font-size: 13px;
+}
+
 .spotlight-result-url {
   color: rgba(255, 255, 255, 0.65);
   overflow: hidden;
@@ -437,6 +442,11 @@
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+}
+
+.spotlight-result-meta-web-search .spotlight-result-url {
+  color: rgba(201, 221, 255, 0.85);
+  font-weight: 500;
 }
 
 .spotlight-result-type {

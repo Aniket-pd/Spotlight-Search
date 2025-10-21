@@ -196,17 +196,20 @@ function createWebSearchResult(query, options = {}) {
   }
   const identifier = encodeURIComponent(trimmed).replace(/%/g, "-").slice(0, 96);
   const resultId = `web-search:${engine.id}:${identifier}`;
-  const hostLabel = engine.domain || engine.name;
+  const engineLabel = engine.name || engine.domain || engine.id;
   return {
     id: resultId,
-    title: `Search ${engine.name} for \u201c${trimmed}\u201d`,
+    title: trimmed,
     url,
-    description: hostLabel,
+    description: engineLabel,
     type: "webSearch",
     engineId: engine.id,
     engineName: engine.name,
     engineDomain: engine.domain,
     engineIconUrl: engine.iconUrl,
+    engineLabel,
+    faviconUrl: engine.iconUrl || "",
+    iconHint: "webSearch",
     query: trimmed,
     score: 0,
     label: "Web",
