@@ -45,8 +45,8 @@ The launcher automatically falls back to the legacy keyword behavior when the Pr
 
 1. Open Spotlight with `Cmd+K`/`Ctrl+K`.
 2. Scope to history by typing `history:` (or `h:`), choosing the History slash command (`/` → **History**), or clicking the **History** filter chip.
-3. Enter a natural-language request (for example, "show the docs I read yesterday", "open the flight check-in page from last week", or "list the recipes after my Amazon search").
-4. Spotlight sends the remaining text to Gemini Nano along with the current time. The interpreter extracts relevant topics, applies an appropriate history date subfilter (Today, Yesterday, Last 7 Days, Last 30 Days, or Older), and limits the result count when you specify a quantity.
+3. When the history scope is active, a dedicated **Smart history prompt** input appears under the filter chips—describe the pages or timeframe you're after there (for example, "show the docs I read yesterday", "open the flight check-in page from last week", or "list the recipes after my Amazon search"). You can still keep manual keywords in the main Spotlight field if you want to combine both approaches.
+4. Spotlight combines the prompt with any remaining history keywords and sends them to Gemini Nano along with the current time. The interpreter extracts relevant topics, applies an appropriate history date subfilter (Today, Yesterday, Last 7 Days, Last 30 Days, or Older), and limits the result count when you specify a quantity.
 5. If you say "open" or "reopen", Spotlight will automatically open the top history matches (up to 10) once the intent confidence clears the built-in threshold. Otherwise it just narrows the suggestion list.
 6. When the interpreter is unsure, Spotlight surfaces its clarifying question next to the status line so you can refine the query.
 

@@ -25,6 +25,12 @@ let bodyOverflowBackup = "";
 let statusEl = null;
 let ghostEl = null;
 let inputContainerEl = null;
+let historyPromptContainerEl = null;
+let historyPromptEl = null;
+let historyPromptVisible = false;
+let historyPromptDirty = false;
+let historyPromptValue = "";
+let historyPromptDebounce = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -64,6 +70,8 @@ const SMART_HISTORY_AUTO_OPEN_THRESHOLD = 0.75;
 const SMART_HISTORY_DEFAULT_OPEN_LIMIT = 5;
 const SMART_HISTORY_MAX_OPEN_LIMIT = 10;
 const SMART_HISTORY_MAX_RESULT_LIMIT = 50;
+const HISTORY_PROMPT_INPUT_ID = "spotlight-history-ai-input";
+const HISTORY_PROMPT_DEBOUNCE_MS = 140;
 let smartHistoryDirective = null;
 let selectedSubfilterOrigin = null;
 
@@ -245,11 +253,21 @@ async function evaluateSmartHistoryIntent(query) {
   if (!context.active) {
     return null;
   }
-  const remainder = context.remainder.trim();
+
+  const rawRemainder = typeof context.remainder === "string" ? context.remainder : "";
+  const trimmedRemainder = rawRemainder.trim();
+  const trimmedPrompt = typeof historyPromptValue === "string" ? historyPromptValue.trim() : "";
+  let intentSource = "";
+  if (trimmedPrompt && trimmedRemainder && trimmedPrompt !== trimmedRemainder) {
+    intentSource = `${trimmedPrompt} ${trimmedRemainder}`;
+  } else {
+    intentSource = trimmedPrompt || trimmedRemainder;
+  }
+
   const nowIso = new Date().toISOString();
   let interpretation = null;
   try {
-    interpretation = await api.interpret({ query: remainder, now: nowIso, historyFilterActive: true });
+    interpretation = await api.interpret({ query: intentSource, now: nowIso, historyFilterActive: true });
   } catch (err) {
     console.warn("Spotlight: history intent request failed", err);
     return null;
@@ -288,7 +306,7 @@ async function evaluateSmartHistoryIntent(query) {
       : { start: null, end: null };
   const subfilterId = rawRange.start || rawRange.end ? mapDateRangeToHistorySubfilter(rawRange, nowIso) : null;
 
-  const normalizedRemainder = remainder.toLowerCase();
+  const normalizedRemainder = rawRemainder.toLowerCase();
   const appendedTopics = [];
   for (const topic of topics) {
     const normalizedTopic = topic.toLowerCase();
@@ -297,7 +315,7 @@ async function evaluateSmartHistoryIntent(query) {
     }
   }
 
-  let queryBody = remainder;
+  let queryBody = rawRemainder;
   if (appendedTopics.length) {
     queryBody = queryBody ? `${queryBody} ${appendedTopics.join(" ")}` : appendedTopics.join(" ");
   }
@@ -347,6 +365,135 @@ async function evaluateSmartHistoryIntent(query) {
     confidence,
     fallbackQuery,
   };
+}
+
+function setHistoryPromptValue(value) {
+  const nextValue = typeof value === "string" ? value : "";
+  historyPromptValue = nextValue;
+  if (historyPromptEl && historyPromptEl.value !== nextValue) {
+    historyPromptEl.value = nextValue;
+  }
+}
+
+function setHistoryPromptVisibility(visible) {
+  historyPromptVisible = Boolean(visible);
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.toggle("visible", historyPromptVisible);
+    historyPromptContainerEl.setAttribute("aria-hidden", historyPromptVisible ? "false" : "true");
+    if (!historyPromptVisible) {
+      historyPromptContainerEl.classList.remove("focused");
+    } else if (document.activeElement === historyPromptEl) {
+      historyPromptContainerEl.classList.add("focused");
+    }
+  }
+  if (historyPromptEl) {
+    historyPromptEl.disabled = !historyPromptVisible;
+    historyPromptEl.tabIndex = historyPromptVisible ? 0 : -1;
+    if (!historyPromptVisible && document.activeElement === historyPromptEl && inputEl) {
+      inputEl.focus({ preventScroll: true });
+    }
+  }
+}
+
+function resetHistoryPromptState(options = {}) {
+  const { clearValue = true } = options;
+  historyPromptDirty = false;
+  if (historyPromptDebounce) {
+    clearTimeout(historyPromptDebounce);
+    historyPromptDebounce = null;
+  }
+  if (clearValue) {
+    setHistoryPromptValue("");
+  }
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.remove("focused");
+  }
+}
+
+function refreshHistoryPromptContext(options = {}) {
+  const query =
+    typeof options.query === "string"
+      ? options.query
+      : inputEl && typeof inputEl.value === "string"
+      ? inputEl.value
+      : "";
+  const context = computeHistoryQueryContext(query);
+  if (!context.active) {
+    if (historyPromptVisible) {
+      setHistoryPromptVisibility(false);
+    }
+    resetHistoryPromptState({ clearValue: true });
+    return context;
+  }
+
+  setHistoryPromptVisibility(true);
+
+  if (!historyPromptDirty && context.reason === "prefix") {
+    const remainderValue = typeof context.remainder === "string" ? context.remainder.trim() : "";
+    setHistoryPromptValue(remainderValue);
+  }
+
+  return context;
+}
+
+function scheduleHistoryPromptRequest() {
+  if (!isOpen || !inputEl) {
+    return;
+  }
+  if (historyPromptDebounce) {
+    clearTimeout(historyPromptDebounce);
+  }
+  historyPromptDebounce = setTimeout(() => {
+    historyPromptDebounce = null;
+    requestResults(inputEl.value);
+  }, HISTORY_PROMPT_DEBOUNCE_MS);
+}
+
+function handleHistoryPromptInput() {
+  if (!historyPromptEl) {
+    return;
+  }
+  historyPromptDirty = true;
+  historyPromptValue = historyPromptEl.value || "";
+  scheduleHistoryPromptRequest();
+}
+
+function handleHistoryPromptFocus() {
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.add("focused");
+  }
+}
+
+function handleHistoryPromptBlur() {
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.remove("focused");
+  }
+}
+
+function handleHistoryPromptKeydown(event) {
+  if (event.key === "Enter" && !event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    if (historyPromptDebounce) {
+      clearTimeout(historyPromptDebounce);
+      historyPromptDebounce = null;
+    }
+    if (inputEl) {
+      requestResults(inputEl.value);
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    if (inputEl) {
+      inputEl.focus({ preventScroll: true });
+      inputEl.select();
+    }
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    navigateResults(event.key === "ArrowDown" ? 1 : -1);
+  }
 }
 
 const lazyList = createLazyList(
@@ -632,6 +779,28 @@ function createOverlay() {
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
 
+  historyPromptContainerEl = document.createElement("div");
+  historyPromptContainerEl.className = "spotlight-history-prompt";
+  historyPromptContainerEl.setAttribute("aria-hidden", "true");
+
+  const historyPromptLabel = document.createElement("label");
+  historyPromptLabel.className = "spotlight-history-prompt-label";
+  historyPromptLabel.setAttribute("for", HISTORY_PROMPT_INPUT_ID);
+  historyPromptLabel.textContent = "Smart history prompt";
+  historyPromptContainerEl.appendChild(historyPromptLabel);
+
+  historyPromptEl = document.createElement("input");
+  historyPromptEl.className = "spotlight-history-prompt-input";
+  historyPromptEl.type = "text";
+  historyPromptEl.id = HISTORY_PROMPT_INPUT_ID;
+  historyPromptEl.setAttribute("spellcheck", "false");
+  historyPromptEl.setAttribute("autocomplete", "off");
+  historyPromptEl.setAttribute("placeholder", "Describe the pages or time range to find…");
+  historyPromptContainerEl.appendChild(historyPromptEl);
+  inputWrapper.appendChild(historyPromptContainerEl);
+
+  setHistoryPromptVisibility(false);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -685,6 +854,23 @@ function createOverlay() {
     if (inputContainerEl) {
       inputContainerEl.classList.remove("focused");
     }
+  });
+  historyPromptEl.addEventListener("input", (event) => {
+    event.stopPropagation();
+    handleHistoryPromptInput();
+  });
+  historyPromptEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    handleHistoryPromptKeydown(event);
+  });
+  historyPromptEl.addEventListener("keyup", (event) => {
+    event.stopPropagation();
+  });
+  historyPromptEl.addEventListener("focus", () => {
+    handleHistoryPromptFocus();
+  });
+  historyPromptEl.addEventListener("blur", () => {
+    handleHistoryPromptBlur();
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
@@ -1238,6 +1424,7 @@ function resetSubfilterState() {
   selectedSubfilter = null;
   selectedSubfilterOrigin = null;
   renderSubfilters();
+  refreshHistoryPromptContext();
 }
 
 function updateSubfilterState(payload) {
@@ -1366,6 +1553,7 @@ function handleSubfilterClick(option) {
     selectedSubfilter = null;
     selectedSubfilterOrigin = null;
     renderSubfilters();
+    refreshHistoryPromptContext();
     requestResults(inputEl.value);
     return;
   }
@@ -1375,6 +1563,7 @@ function handleSubfilterClick(option) {
     selectedSubfilter = null;
     selectedSubfilterOrigin = null;
     renderSubfilters();
+    refreshHistoryPromptContext();
     requestResults(inputEl.value);
     return;
   }
@@ -1383,6 +1572,7 @@ function handleSubfilterClick(option) {
   selectedSubfilter = { type: subfilterState.type, id: nextId };
   selectedSubfilterOrigin = "user";
   renderSubfilters();
+  refreshHistoryPromptContext();
   requestResults(inputEl.value);
 }
 
@@ -1408,6 +1598,8 @@ async function openOverlay() {
   activeFilter = null;
   resetSubfilterState();
   smartHistoryDirective = null;
+  resetHistoryPromptState();
+  setHistoryPromptVisibility(false);
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -1449,6 +1641,8 @@ function closeOverlay() {
   activeFilter = null;
   resetSubfilterState();
   smartHistoryDirective = null;
+  resetHistoryPromptState();
+  setHistoryPromptVisibility(false);
   setGhostText("");
   resetSlashMenuState();
   resetEngineMenuState();
@@ -1590,6 +1784,7 @@ function handleInputChange() {
   const query = inputEl.value;
   updateSlashMenu();
   updateEngineMenu();
+  refreshHistoryPromptContext({ query });
   const trimmed = query.trim();
   if (trimmed === "> reindex") {
     lastRequestId = ++requestCounter;
@@ -1797,6 +1992,7 @@ async function requestResults(query, options = {}) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      refreshHistoryPromptContext();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);

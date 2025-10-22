@@ -73,6 +73,53 @@
   transition: border 0.2s, box-shadow 0.2s;
 }
 
+.spotlight-history-prompt {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(18, 22, 32, 0.75);
+  padding: 10px 12px 12px;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotlight-history-prompt.visible {
+  display: flex;
+}
+
+.spotlight-history-prompt.focused {
+  border-color: rgba(118, 141, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(118, 141, 255, 0.35);
+}
+
+.spotlight-history-prompt-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.spotlight-history-prompt-input {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  padding: 0;
+  min-height: 22px;
+  outline: none;
+}
+
+.spotlight-history-prompt-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spotlight-history-prompt-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
 .spotlight-slash-menu {
   position: absolute;
   top: calc(100% + 8px);
