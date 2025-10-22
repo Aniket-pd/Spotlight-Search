@@ -1694,24 +1694,34 @@ function shouldSummarizeResult(result) {
   if (!result || typeof result !== "object") {
     return false;
   }
-  if (result.type !== "tab") {
-    return false;
-  }
+  const type = typeof result.type === "string" ? result.type : "";
   const url = typeof result.url === "string" ? result.url : "";
-  if (!url) {
+  if (!type || !url) {
     return false;
   }
   const lower = url.toLowerCase();
   if (lower.startsWith("chrome://") || lower.startsWith("chrome-extension://")) {
     return false;
   }
-  if (!/^https?:/.test(lower) && !lower.startsWith("file://")) {
-    return false;
+
+  const isHttp = /^https?:/.test(lower);
+  const isFile = lower.startsWith("file://");
+
+  if (type === "tab") {
+    if (!isHttp && !isFile) {
+      return false;
+    }
+    if (typeof result.tabId !== "number" || Number.isNaN(result.tabId)) {
+      return false;
+    }
+    return true;
   }
-  if (typeof result.tabId !== "number" || Number.isNaN(result.tabId)) {
-    return false;
+
+  if (type === "bookmark" || type === "history") {
+    return isHttp;
   }
-  return true;
+
+  return false;
 }
 
 function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
