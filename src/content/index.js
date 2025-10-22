@@ -25,6 +25,11 @@ let bodyOverflowBackup = "";
 let statusEl = null;
 let ghostEl = null;
 let inputContainerEl = null;
+let historyPromptContainerEl = null;
+let historyPromptInputEl = null;
+let historyPromptHelperEl = null;
+let historyPromptValue = "";
+let lastHistoryFollowUp = "";
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -59,6 +64,10 @@ const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
 const HISTORY_FILTER_PREFIXES = ["history:", "hist:", "h:"];
+const HISTORY_PROMPT_INPUT_ID = "spotlight-history-prompt";
+const HISTORY_PROMPT_HELPER_ID = "spotlight-history-prompt-helper";
+const HISTORY_PROMPT_PLACEHOLDER = "Describe what to find in your history…";
+const HISTORY_PROMPT_HELPER_DEFAULT = "Gemini refines history results from natural language prompts.";
 const HISTORY_AI_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -223,6 +232,56 @@ function extractHistoryFilterContext(value) {
   return { active: false, remainder: trimmedStart, leadingOffset };
 }
 
+function isHistoryFilterQueryActive() {
+  if (!inputEl) {
+    return activeFilter === "history";
+  }
+  const value = typeof inputEl.value === "string" ? inputEl.value : "";
+  const context = extractHistoryFilterContext(value);
+  if (context.active) {
+    return true;
+  }
+  return activeFilter === "history";
+}
+
+function updateHistoryPromptUi(aiState = historyAiState) {
+  if (!historyPromptContainerEl) {
+    return;
+  }
+  const shouldShow = isHistoryFilterQueryActive();
+  historyPromptContainerEl.classList.toggle("visible", shouldShow);
+  historyPromptContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    historyPromptContainerEl.classList.remove("has-follow-up");
+    if (historyPromptInputEl) {
+      historyPromptInputEl.setAttribute("placeholder", HISTORY_PROMPT_PLACEHOLDER);
+    }
+    if (historyPromptHelperEl) {
+      historyPromptHelperEl.textContent = HISTORY_PROMPT_HELPER_DEFAULT;
+      historyPromptHelperEl.classList.remove("follow-up");
+    }
+    lastHistoryFollowUp = "";
+    return;
+  }
+  const followUp = aiState && typeof aiState.followUp === "string" ? aiState.followUp.trim() : "";
+  const hasFollowUp = Boolean(followUp);
+  const followUpChanged = hasFollowUp && followUp !== lastHistoryFollowUp;
+  const placeholder = !historyPromptValue.trim() && followUp ? followUp : HISTORY_PROMPT_PLACEHOLDER;
+  if (historyPromptInputEl) {
+    historyPromptInputEl.setAttribute("placeholder", placeholder);
+  }
+  if (historyPromptHelperEl) {
+    historyPromptHelperEl.textContent = hasFollowUp ? followUp : HISTORY_PROMPT_HELPER_DEFAULT;
+    historyPromptHelperEl.classList.toggle("follow-up", hasFollowUp);
+  }
+  historyPromptContainerEl.classList.toggle("has-follow-up", hasFollowUp);
+  lastHistoryFollowUp = hasFollowUp ? followUp : "";
+  if (followUpChanged && historyPromptInputEl && document.activeElement !== historyPromptInputEl) {
+    historyPromptInputEl.focus({ preventScroll: true });
+    historyPromptInputEl.select();
+  }
+}
+
 function sanitizeHistoryAiResult(result) {
   if (!result || typeof result !== "object") {
     return null;
@@ -268,12 +327,13 @@ function sanitizeHistoryAiResult(result) {
   };
 }
 
-async function maybeInterpretHistoryQuery(query, requestId) {
+async function maybeInterpretHistoryPrompt(query, promptOverride, requestId) {
   const context = extractHistoryFilterContext(query || "");
   if (!context.active) {
     return null;
   }
-  const historyQuery = context.remainder.trim();
+  const promptText = typeof promptOverride === "string" ? promptOverride.trim() : "";
+  const historyQuery = promptText || context.remainder.trim();
   if (!historyQuery) {
     return null;
   }
@@ -592,6 +652,35 @@ function createOverlay() {
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
 
+  historyPromptContainerEl = document.createElement("div");
+  historyPromptContainerEl.className = "spotlight-history-prompt";
+  historyPromptContainerEl.setAttribute("aria-hidden", "true");
+
+  const historyPromptLabelEl = document.createElement("label");
+  historyPromptLabelEl.className = "spotlight-history-prompt-label";
+  historyPromptLabelEl.setAttribute("for", HISTORY_PROMPT_INPUT_ID);
+  historyPromptLabelEl.textContent = "History assistant";
+  historyPromptContainerEl.appendChild(historyPromptLabelEl);
+
+  historyPromptInputEl = document.createElement("input");
+  historyPromptInputEl.className = "spotlight-history-prompt-input";
+  historyPromptInputEl.type = "text";
+  historyPromptInputEl.id = HISTORY_PROMPT_INPUT_ID;
+  historyPromptInputEl.setAttribute("placeholder", HISTORY_PROMPT_PLACEHOLDER);
+  historyPromptInputEl.setAttribute("spellcheck", "false");
+  historyPromptInputEl.setAttribute("autocomplete", "off");
+  historyPromptInputEl.setAttribute("aria-label", "History assistant prompt");
+  historyPromptInputEl.setAttribute("aria-describedby", HISTORY_PROMPT_HELPER_ID);
+  historyPromptContainerEl.appendChild(historyPromptInputEl);
+
+  historyPromptHelperEl = document.createElement("div");
+  historyPromptHelperEl.className = "spotlight-history-prompt-helper";
+  historyPromptHelperEl.id = HISTORY_PROMPT_HELPER_ID;
+  historyPromptHelperEl.textContent = HISTORY_PROMPT_HELPER_DEFAULT;
+  historyPromptContainerEl.appendChild(historyPromptHelperEl);
+
+  inputWrapper.appendChild(historyPromptContainerEl);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -645,6 +734,14 @@ function createOverlay() {
     if (inputContainerEl) {
       inputContainerEl.classList.remove("focused");
     }
+  });
+  historyPromptInputEl.addEventListener("input", (event) => {
+    event.stopPropagation();
+    handleHistoryPromptInput();
+  });
+  historyPromptInputEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    handleHistoryPromptKeydown(event);
   });
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
@@ -1364,11 +1461,16 @@ async function openOverlay() {
   resetSubfilterState();
   resultsEl.innerHTML = "";
   inputEl.value = "";
+  historyPromptValue = "";
+  if (historyPromptInputEl) {
+    historyPromptInputEl.value = "";
+  }
   setGhostText("");
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
   pointerNavigationSuspended = true;
+  updateHistoryPromptUi(null);
 
   if (!shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
@@ -1406,6 +1508,11 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  historyPromptValue = "";
+  if (historyPromptInputEl) {
+    historyPromptInputEl.value = "";
+  }
+  updateHistoryPromptUi(null);
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -1433,6 +1540,47 @@ function handleGlobalKeydown(event) {
     event.preventDefault();
     navigateResults(event.key === "ArrowDown" ? 1 : -1);
   }
+}
+
+function submitCurrentQuery(event = null) {
+  const trimmedValue = typeof inputEl?.value === "string" ? inputEl.value.trim() : "";
+  if (trimmedValue === "> reindex") {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    triggerReindex();
+    return true;
+  }
+  if (userSelectedWebSearchEngineId && trimmedValue) {
+    if (triggerWebSearch(userSelectedWebSearchEngineId)) {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+    }
+    return true;
+  }
+  if ((!resultsState.length || activeIndex < 0) && ghostSuggestionText) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    applyGhostSuggestion();
+    return true;
+  }
+  if (resultsState.length > 0 && activeIndex >= 0) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    openResult(resultsState[activeIndex]);
+    return true;
+  }
+  if (resultsState.length === 1) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    openResult(resultsState[0]);
+    return true;
+  }
+  return false;
 }
 
 function handleInputKeydown(event) {
@@ -1513,30 +1661,36 @@ function handleInputKeydown(event) {
   }
 
   if (event.key === "Enter") {
-    const value = inputEl.value.trim();
-    if (value === "> reindex") {
-      triggerReindex();
-      return;
-    }
-    if (userSelectedWebSearchEngineId && value) {
-      if (triggerWebSearch(userSelectedWebSearchEngineId)) {
-        event.preventDefault();
-      }
-      return;
-    }
-    if ((!resultsState.length || activeIndex < 0) && ghostSuggestionText) {
-      event.preventDefault();
-      applyGhostSuggestion();
-      return;
-    }
-    if (resultsState.length > 0 && activeIndex >= 0) {
-      event.preventDefault();
-      openResult(resultsState[activeIndex]);
-    } else if (resultsState.length === 1) {
-      event.preventDefault();
-      openResult(resultsState[0]);
-    }
+    submitCurrentQuery(event);
   }
+}
+
+function prepareForQueryDispatch() {
+  setStatus("", { force: true });
+  setGhostText("");
+  historyAiState = null;
+  activeIndex = -1;
+  updateActiveResult();
+  pointerNavigationSuspended = true;
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+}
+
+function scheduleResultsRequest(query) {
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  pendingQueryTimeout = setTimeout(() => {
+    const promise = requestResults(query);
+    if (promise && typeof promise.catch === "function") {
+      promise.catch((error) => {
+        console.warn("Spotlight query dispatch failed", error);
+      });
+    }
+  }, 80);
 }
 
 function handleInputChange() {
@@ -1551,18 +1705,11 @@ function handleInputChange() {
     resultsState = [];
     lazyList.reset();
     renderResults();
+    updateHistoryPromptUi(null);
     return;
   }
-  setStatus("", { force: true });
-  setGhostText("");
-  historyAiState = null;
-  activeIndex = -1;
-  updateActiveResult();
-  pointerNavigationSuspended = true;
-  if (pendingQueryTimeout) {
-    clearTimeout(pendingQueryTimeout);
-    pendingQueryTimeout = null;
-  }
+  prepareForQueryDispatch();
+  updateHistoryPromptUi();
 
   if (userSelectedWebSearchEngineId) {
     if (!trimmed) {
@@ -1589,14 +1736,44 @@ function handleInputChange() {
     webSearchPreviewResult = null;
   }
 
-  pendingQueryTimeout = setTimeout(() => {
-    const promise = requestResults(query);
-    if (promise && typeof promise.catch === "function") {
-      promise.catch((error) => {
-        console.warn("Spotlight query dispatch failed", error);
-      });
+  scheduleResultsRequest(query);
+}
+
+function handleHistoryPromptInput() {
+  if (!historyPromptInputEl) {
+    return;
+  }
+  historyPromptValue = historyPromptInputEl.value || "";
+  if (!isHistoryFilterQueryActive() || !inputEl) {
+    updateHistoryPromptUi();
+    return;
+  }
+  prepareForQueryDispatch();
+  updateHistoryPromptUi();
+  scheduleResultsRequest(inputEl.value);
+}
+
+function handleHistoryPromptKeydown(event) {
+  const wantsDefaultWebSearch =
+    event.key === "Enter" &&
+    !event.altKey &&
+    !event.shiftKey &&
+    ((event.metaKey && !event.ctrlKey) || (!event.metaKey && event.ctrlKey));
+
+  if (wantsDefaultWebSearch) {
+    const trimmed = typeof inputEl?.value === "string" ? inputEl.value.trim() : "";
+    if (trimmed) {
+      const defaultEngineId = getDefaultWebSearchEngineId();
+      if (triggerWebSearch(defaultEngineId)) {
+        event.preventDefault();
+      }
     }
-  }, 80);
+    return;
+  }
+
+  if (event.key === "Enter") {
+    submitCurrentQuery(event);
+  }
 }
 
 async function requestResults(query) {
@@ -1604,7 +1781,7 @@ async function requestResults(query) {
   lastRequestId = requestId;
   let historyAiPayload = null;
   try {
-    historyAiPayload = await maybeInterpretHistoryQuery(query, requestId);
+    historyAiPayload = await maybeInterpretHistoryPrompt(query, historyPromptValue, requestId);
   } catch (err) {
     console.warn("Spotlight history intent interpretation failed", err);
     historyAiPayload = null;
@@ -1638,6 +1815,7 @@ async function requestResults(query) {
         return;
       }
       historyAiState = response.historyAi && typeof response.historyAi === "object" ? response.historyAi : null;
+      updateHistoryPromptUi(historyAiState);
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
       pruneSummaryState();
@@ -1697,9 +1875,12 @@ async function requestResults(query) {
         ? historyAiState.followUp.trim()
         : "";
       if (historyFollowUp) {
-        statusMessage = historyFollowUp;
         statusSticky = false;
-      } else if (historyStatus) {
+        statusMessage = statusMessage
+          ? `${statusMessage} · Answer the history assistant prompt`
+          : "Answer the history assistant prompt";
+      }
+      if (historyStatus) {
         statusMessage = statusMessage ? `${statusMessage} · ${historyStatus}` : historyStatus;
       }
       if (statusMessage) {
