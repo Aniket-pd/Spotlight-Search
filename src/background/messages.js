@@ -6,6 +6,7 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
+  summaries,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -130,6 +131,60 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_SUMMARIZE") {
+      if (!summaries || typeof summaries.requestSummary !== "function") {
+        sendResponse({ success: false, error: "Summaries unavailable" });
+        return true;
+      }
+      const url = typeof message.url === "string" ? message.url : "";
+      if (!url) {
+        sendResponse({ success: false, error: "Missing URL for summary" });
+        return true;
+      }
+      const tabId = typeof message.tabId === "number" ? message.tabId : null;
+      const requestId =
+        typeof message.summaryRequestId === "number" && Number.isFinite(message.summaryRequestId)
+          ? message.summaryRequestId
+          : null;
+      const requesterTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      const notifyProgress = (update) => {
+        if (requestId === null || requesterTabId === null) {
+          return;
+        }
+        const payload = {
+          type: "SPOTLIGHT_SUMMARY_PROGRESS",
+          url,
+          requestId,
+          bullets: Array.isArray(update?.bullets) ? update.bullets.filter(Boolean).slice(0, 3) : undefined,
+          raw: typeof update?.raw === "string" ? update.raw : undefined,
+          cached: Boolean(update?.cached),
+          source: typeof update?.source === "string" ? update.source : undefined,
+          done: Boolean(update?.done),
+        };
+        try {
+          const maybePromise = chrome.tabs.sendMessage(requesterTabId, payload);
+          if (maybePromise && typeof maybePromise.catch === "function") {
+            maybePromise.catch((error) => {
+              console.warn("Spotlight: failed to post summary progress", error);
+            });
+          }
+        } catch (err) {
+          console.warn("Spotlight: summary progress dispatch failed", err);
+        }
+      };
+      summaries
+        .requestSummary({ url, tabId, onProgress: notifyProgress })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((err) => {
+          console.error("Spotlight: summary generation failed", err);
+          const errorMessage = err?.message || "Unable to generate summary";
+          sendResponse({ success: false, error: errorMessage });
         });
       return true;
     }

@@ -430,6 +430,145 @@
   flex-wrap: wrap;
 }
 
+.spotlight-result-summary-button {
+  margin-left: auto;
+  background: rgba(118, 141, 255, 0.16);
+  border: 1px solid rgba(118, 141, 255, 0.35);
+  color: #dbeafe;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, border 0.18s ease, color 0.18s ease;
+  flex-shrink: 0;
+}
+
+.spotlight-result-summary-button:hover:not(:disabled) {
+  background: rgba(118, 141, 255, 0.28);
+  border-color: rgba(148, 163, 255, 0.55);
+  color: #fff;
+}
+
+.spotlight-result-summary-button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.spotlight-result-summary-button.loading {
+  cursor: progress;
+}
+
+.spotlight-ai-panel {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(42, 52, 82, 0.35);
+  border: 1px solid rgba(118, 141, 255, 0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spotlight-ai-panel-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spotlight-ai-panel-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: rgba(208, 223, 255, 0.86);
+}
+
+.spotlight-ai-panel-badge {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(148, 163, 255, 0.25);
+  color: rgba(224, 231, 255, 0.9);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.spotlight-ai-panel-copy {
+  margin-left: 0;
+  background: rgba(118, 141, 255, 0.18);
+  border: 1px solid rgba(118, 141, 255, 0.45);
+  color: #e0e7ff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, border 0.18s ease;
+}
+
+.spotlight-ai-panel-copy:hover {
+  background: rgba(118, 141, 255, 0.32);
+  color: #fff;
+  border-color: rgba(148, 163, 255, 0.65);
+}
+
+.spotlight-ai-panel-list {
+  list-style: disc;
+  list-style-position: inside;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: rgba(233, 242, 255, 0.92);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.spotlight-ai-panel-list.loading {
+  color: rgba(224, 231, 255, 0.78);
+}
+
+.spotlight-ai-panel-list li {
+  padding-left: 4px;
+}
+
+.spotlight-ai-panel-list.loading li {
+  opacity: 0.85;
+}
+
+.spotlight-ai-panel-status {
+  font-size: 13px;
+  color: rgba(224, 231, 255, 0.78);
+  line-height: 1.45;
+}
+
+.spotlight-ai-panel-status.loading {
+  color: rgba(180, 198, 255, 0.82);
+}
+
+.spotlight-ai-panel-status.loading-preview {
+  color: rgba(224, 231, 255, 0.78);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.spotlight-ai-panel-status.error {
+  color: rgba(255, 186, 186, 0.9);
+}
+
+.spotlight-ai-panel-status.empty {
+  color: rgba(209, 213, 219, 0.75);
+}
+
 .spotlight-result-meta.spotlight-result-meta-web-search {
   gap: 4px;
   font-size: 13px;
