@@ -194,14 +194,19 @@ async function ensureHistoryIntentSession() {
     historyIntentUnavailable = true;
     return null;
   }
+  const sessionLanguageOptions = {
+    expectedInputs: [{ type: "text", languages: ["en"] }],
+    expectedOutputs: [{ type: "text", languages: ["en"] }],
+  };
   historyIntentSessionPromise = (async () => {
     try {
-      const availability = await api.availability();
+      const availability = await api.availability(sessionLanguageOptions);
       if (availability === "unavailable") {
         historyIntentUnavailable = true;
         return null;
       }
       const session = await api.create({
+        ...sessionLanguageOptions,
         initialPrompts: [{ role: "system", content: HISTORY_AI_SYSTEM_PROMPT }],
       });
       historyIntentSession = session;
