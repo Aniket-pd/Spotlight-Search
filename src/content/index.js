@@ -30,6 +30,9 @@ let historyPromptInputEl = null;
 let historyPromptHelperEl = null;
 let historyPromptValue = "";
 let lastHistoryFollowUp = "";
+let historyPromptHelperPreviousText = null;
+let historyPromptLoadingRequestId = 0;
+let historyPromptHelperWasFollowUp = false;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -68,6 +71,7 @@ const HISTORY_PROMPT_INPUT_ID = "spotlight-history-prompt";
 const HISTORY_PROMPT_HELPER_ID = "spotlight-history-prompt-helper";
 const HISTORY_PROMPT_PLACEHOLDER = "Describe what to find in your history…";
 const HISTORY_PROMPT_HELPER_DEFAULT = "Gemini refines history results from natural language prompts.";
+const HISTORY_PROMPT_LOADING_MESSAGE = "Interpreting history prompt…";
 const HISTORY_AI_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -257,6 +261,7 @@ function updateHistoryPromptUi(aiState = historyAiState) {
   historyPromptContainerEl.classList.toggle("visible", shouldShow);
   historyPromptContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   if (!shouldShow) {
+    setHistoryPromptLoading(false);
     historyPromptContainerEl.classList.remove("has-follow-up");
     if (historyPromptInputEl) {
       historyPromptInputEl.setAttribute("placeholder", HISTORY_PROMPT_PLACEHOLDER);
@@ -265,6 +270,8 @@ function updateHistoryPromptUi(aiState = historyAiState) {
       historyPromptHelperEl.textContent = HISTORY_PROMPT_HELPER_DEFAULT;
       historyPromptHelperEl.classList.remove("follow-up");
     }
+    historyPromptHelperPreviousText = null;
+    historyPromptHelperWasFollowUp = false;
     lastHistoryFollowUp = "";
     return;
   }
@@ -275,9 +282,12 @@ function updateHistoryPromptUi(aiState = historyAiState) {
   if (historyPromptInputEl) {
     historyPromptInputEl.setAttribute("placeholder", placeholder);
   }
-  if (historyPromptHelperEl) {
+  const isLoading = historyPromptContainerEl.classList.contains("loading");
+  if (historyPromptHelperEl && !isLoading) {
     historyPromptHelperEl.textContent = hasFollowUp ? followUp : HISTORY_PROMPT_HELPER_DEFAULT;
     historyPromptHelperEl.classList.toggle("follow-up", hasFollowUp);
+    historyPromptHelperPreviousText = null;
+    historyPromptHelperWasFollowUp = hasFollowUp;
   }
   historyPromptContainerEl.classList.toggle("has-follow-up", hasFollowUp);
   lastHistoryFollowUp = hasFollowUp ? followUp : "";
@@ -285,6 +295,43 @@ function updateHistoryPromptUi(aiState = historyAiState) {
     historyPromptInputEl.focus({ preventScroll: true });
     historyPromptInputEl.select();
   }
+}
+
+function setHistoryPromptLoading(isLoading, requestId = 0) {
+  if (!historyPromptContainerEl) {
+    historyPromptHelperPreviousText = null;
+    historyPromptLoadingRequestId = 0;
+    return;
+  }
+  if (isLoading) {
+    historyPromptLoadingRequestId = requestId || historyPromptLoadingRequestId || -1;
+    historyPromptContainerEl.classList.add("loading");
+    if (historyPromptHelperEl) {
+      if (historyPromptHelperPreviousText === null) {
+        historyPromptHelperPreviousText = historyPromptHelperEl.textContent || "";
+        historyPromptHelperWasFollowUp = historyPromptHelperEl.classList.contains("follow-up");
+      }
+      historyPromptHelperEl.textContent = HISTORY_PROMPT_LOADING_MESSAGE;
+      historyPromptHelperEl.classList.remove("follow-up");
+      historyPromptHelperEl.classList.add("loading");
+    }
+    setStatus(HISTORY_PROMPT_LOADING_MESSAGE, { force: true });
+    return;
+  }
+  if (requestId && requestId !== historyPromptLoadingRequestId) {
+    return;
+  }
+  historyPromptLoadingRequestId = 0;
+  historyPromptContainerEl.classList.remove("loading");
+  if (historyPromptHelperEl) {
+    historyPromptHelperEl.classList.remove("loading");
+    if (historyPromptHelperPreviousText !== null) {
+      historyPromptHelperEl.textContent = historyPromptHelperPreviousText;
+      historyPromptHelperEl.classList.toggle("follow-up", historyPromptHelperWasFollowUp);
+    }
+  }
+  historyPromptHelperPreviousText = null;
+  historyPromptHelperWasFollowUp = false;
 }
 
 function sanitizeHistoryAiResult(result) {
@@ -342,36 +389,41 @@ async function maybeInterpretHistoryPrompt(query, promptOverride, requestId) {
   if (!historyQuery) {
     return null;
   }
-  const session = await ensureHistoryIntentSession();
-  if (!session) {
-    return null;
-  }
-  const payload = {
-    query: historyQuery,
-    now: new Date().toISOString(),
-    historyFilterActive: true,
-  };
-  let response;
+  setHistoryPromptLoading(true, requestId);
   try {
-    response = await session.prompt(
-      [{ role: "user", content: JSON.stringify(payload) }],
-      { responseConstraint: HISTORY_AI_RESPONSE_SCHEMA, omitResponseConstraintInput: true }
-    );
-  } catch (err) {
-    console.warn("Spotlight history intent prompt failed", err);
-    return null;
+    const session = await ensureHistoryIntentSession();
+    if (!session) {
+      return null;
+    }
+    const payload = {
+      query: historyQuery,
+      now: new Date().toISOString(),
+      historyFilterActive: true,
+    };
+    let response;
+    try {
+      response = await session.prompt(
+        [{ role: "user", content: JSON.stringify(payload) }],
+        { responseConstraint: HISTORY_AI_RESPONSE_SCHEMA, omitResponseConstraintInput: true }
+      );
+    } catch (err) {
+      console.warn("Spotlight history intent prompt failed", err);
+      return null;
+    }
+    if (requestId !== lastRequestId) {
+      return null;
+    }
+    let parsed;
+    try {
+      parsed = typeof response === "string" ? JSON.parse(response) : response;
+    } catch (err) {
+      console.warn("Spotlight history intent produced invalid response", err);
+      return null;
+    }
+    return sanitizeHistoryAiResult(parsed);
+  } finally {
+    setHistoryPromptLoading(false, requestId);
   }
-  if (requestId !== lastRequestId) {
-    return null;
-  }
-  let parsed;
-  try {
-    parsed = typeof response === "string" ? JSON.parse(response) : response;
-  } catch (err) {
-    console.warn("Spotlight history intent produced invalid response", err);
-    return null;
-  }
-  return sanitizeHistoryAiResult(parsed);
 }
 
 const lazyList = createLazyList(
@@ -1666,7 +1718,28 @@ function handleInputKeydown(event) {
   }
 
   if (event.key === "Enter") {
-    submitCurrentQuery(event);
+    event.preventDefault();
+    submitHistoryPrompt();
+  }
+}
+
+function submitHistoryPrompt() {
+  if (!inputEl) {
+    return;
+  }
+  if (historyPromptInputEl) {
+    historyPromptValue = historyPromptInputEl.value || "";
+  }
+  if (!isHistoryFilterQueryActive()) {
+    return;
+  }
+  prepareForQueryDispatch();
+  updateHistoryPromptUi();
+  const promise = requestResults(inputEl.value);
+  if (promise && typeof promise.catch === "function") {
+    promise.catch((error) => {
+      console.warn("Spotlight history prompt submission failed", error);
+    });
   }
 }
 

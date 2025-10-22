@@ -258,6 +258,11 @@
   display: flex;
 }
 
+.spotlight-history-prompt.loading {
+  border-color: rgba(118, 141, 255, 0.45);
+  box-shadow: 0 0 0 2px rgba(118, 141, 255, 0.14);
+}
+
 .spotlight-history-prompt.has-follow-up {
   border-color: rgba(118, 141, 255, 0.6);
   box-shadow: 0 0 0 3px rgba(118, 141, 255, 0.18);
@@ -291,6 +296,10 @@
 .spotlight-history-prompt-helper {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
+}
+
+.spotlight-history-prompt-helper.loading {
+  color: rgba(145, 170, 255, 0.85);
 }
 
 .spotlight-history-prompt-helper.follow-up {
