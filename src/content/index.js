@@ -56,6 +56,7 @@ const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
+const SUMMARIZABLE_RESULT_TYPES = new Set(["tab", "bookmark", "history"]);
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
 
@@ -1694,7 +1695,8 @@ function shouldSummarizeResult(result) {
   if (!result || typeof result !== "object") {
     return false;
   }
-  if (result.type !== "tab") {
+  const resultType = typeof result.type === "string" ? result.type : "";
+  if (!SUMMARIZABLE_RESULT_TYPES.has(resultType)) {
     return false;
   }
   const url = typeof result.url === "string" ? result.url : "";
@@ -1705,11 +1707,15 @@ function shouldSummarizeResult(result) {
   if (lower.startsWith("chrome://") || lower.startsWith("chrome-extension://")) {
     return false;
   }
-  if (!/^https?:/.test(lower) && !lower.startsWith("file://")) {
+  const isHttpUrl = /^https?:/.test(lower);
+  const isFileUrl = lower.startsWith("file://");
+  if (!isHttpUrl && !(resultType === "tab" && isFileUrl)) {
     return false;
   }
-  if (typeof result.tabId !== "number" || Number.isNaN(result.tabId)) {
-    return false;
+  if (resultType === "tab") {
+    if (typeof result.tabId !== "number" || Number.isNaN(result.tabId)) {
+      return false;
+    }
   }
   return true;
 }
