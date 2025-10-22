@@ -8,7 +8,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Weighted scoring with support for exact, prefix, and fuzzy matches (edit distance ≤ 1).
 - Arrow-key navigation, Enter to open, and Esc/click outside to dismiss.
 - Optional `Alt+Space` shortcut.
-- Command suggestions with inline ghost completions and contextual answers (e.g., tab count for "Tab sort").
+- On-device Smart History interpreter that understands natural-language date ranges when you scope to history.
 - Command `> reindex` to rebuild the local search index on demand.
 - All processing performed locally—no network calls.
 - Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
@@ -27,6 +27,30 @@ Spotlight presents filter-specific suggestions to help narrow results without ty
 - **Bookmarks** – Browse by bookmark folder (e.g., Work, Personal, Tutorials) to jump straight to the right collection.
 
 Each subfilter chip adopts a macOS Spotlight-inspired pill design. Selecting a chip applies the filter instantly, and you can tap the active chip again to clear it.
+
+## Smart History Search (Prompt API)
+
+Spotlight can translate conversational history requests into concrete filters and actions by calling Chrome's on-device Prompt API with the Smart History interpreter content script.
+
+### Prerequisites
+
+- Chrome 127 or newer running on Windows 10/11, macOS 13+, Linux, or a Chromebook Plus device (Prompt API is currently desktop-only).
+- Hardware that meets Google's on-device Gemini Nano requirements (≥4 CPU cores and 16 GB RAM for CPU inference, or a GPU with >4 GB VRAM).
+- Sufficient free storage for the Gemini Nano model (Chrome removes it if less than 10 GB remain). Check **chrome://on-device-internals** to confirm the download status.
+- If your Chrome build still hides the API behind a flag, enable **chrome://flags/#prompt-api-for-gemini-nano** and restart the browser.
+
+The launcher automatically falls back to the legacy keyword behavior when the Prompt API is unavailable, so you can still search by typing manual filters.
+
+### Using Smart History Search
+
+1. Open Spotlight with `Cmd+K`/`Ctrl+K`.
+2. Scope to history by typing `history:` (or `h:`), choosing the History slash command (`/` → **History**), or clicking the **History** filter chip.
+3. Enter a natural-language request (for example, "show the docs I read yesterday", "open the flight check-in page from last week", or "list the recipes after my Amazon search").
+4. Spotlight sends the remaining text to Gemini Nano along with the current time. The interpreter extracts relevant topics, applies an appropriate history date subfilter (Today, Yesterday, Last 7 Days, Last 30 Days, or Older), and limits the result count when you specify a quantity.
+5. If you say "open" or "reopen", Spotlight will automatically open the top history matches (up to 10) once the intent confidence clears the built-in threshold. Otherwise it just narrows the suggestion list.
+6. When the interpreter is unsure, Spotlight surfaces its clarifying question next to the status line so you can refine the query.
+
+You can cancel the AI assistance at any time by clearing the history scope (press `Esc` or remove the `history:` prefix) and the overlay reverts to the traditional keyword search.
 
 ## Web Search Fallback & Engine Picker
 
