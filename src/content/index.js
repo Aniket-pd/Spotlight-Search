@@ -375,6 +375,23 @@ function setHistoryPromptValue(value) {
   }
 }
 
+function syncHistoryPromptValueFromInput(options = {}) {
+  if (!historyPromptEl) {
+    return { changed: false, value: historyPromptValue };
+  }
+
+  const { markDirty = false } = options;
+  const nextValue = historyPromptEl.value || "";
+  const changed = historyPromptValue !== nextValue;
+
+  historyPromptValue = nextValue;
+  if (markDirty || changed) {
+    historyPromptDirty = true;
+  }
+
+  return { changed, value: historyPromptValue };
+}
+
 function setHistoryPromptVisibility(visible) {
   historyPromptVisible = Boolean(visible);
   if (historyPromptContainerEl) {
@@ -453,8 +470,7 @@ function handleHistoryPromptInput() {
   if (!historyPromptEl) {
     return;
   }
-  historyPromptDirty = true;
-  historyPromptValue = historyPromptEl.value || "";
+  syncHistoryPromptValueFromInput({ markDirty: true });
   scheduleHistoryPromptRequest();
 }
 
@@ -473,6 +489,7 @@ function handleHistoryPromptBlur() {
 function handleHistoryPromptKeydown(event) {
   if (event.key === "Enter" && !event.altKey && !event.shiftKey) {
     event.preventDefault();
+    syncHistoryPromptValueFromInput({ markDirty: true });
     if (historyPromptDebounce) {
       clearTimeout(historyPromptDebounce);
       historyPromptDebounce = null;
