@@ -317,10 +317,19 @@ async function evaluateSmartHistoryIntent(query) {
       subfilterId: null,
       action,
       confidence,
+      fallbackQuery: null,
     };
   }
 
   const finalQuery = buildHistoryQuery(context, queryBody);
+  let fallbackQuery = null;
+  if (canApply) {
+    const fallbackBody = appendedTopics.join(" ");
+    const fallbackCandidate = buildHistoryQuery(context, fallbackBody);
+    if (fallbackCandidate !== finalQuery) {
+      fallbackQuery = fallbackCandidate;
+    }
+  }
   const autoOpen = action === "open" && confidence >= SMART_HISTORY_AUTO_OPEN_THRESHOLD;
   const autoOpenCount = autoOpen
     ? Math.min(normalizedMaxItems || SMART_HISTORY_DEFAULT_OPEN_LIMIT, SMART_HISTORY_MAX_OPEN_LIMIT)
@@ -336,6 +345,7 @@ async function evaluateSmartHistoryIntent(query) {
     subfilterId,
     action,
     confidence,
+    fallbackQuery,
   };
 }
 
@@ -1630,27 +1640,39 @@ function handleInputChange() {
   }, 80);
 }
 
-async function requestResults(query) {
+async function requestResults(query, options = {}) {
   const requestId = ++requestCounter;
   lastRequestId = requestId;
   smartHistoryDirective = null;
 
+  const { directive: providedDirective = null, fallbackAttempted = false, overrideQuery } = options;
+
   let finalQuery = typeof query === "string" ? query : "";
   let directiveInfo = null;
 
-  try {
-    const evaluation = await evaluateSmartHistoryIntent(finalQuery);
-    if (requestId !== lastRequestId) {
-      return;
+  if (providedDirective && typeof providedDirective === "object") {
+    directiveInfo = { ...providedDirective };
+    if (typeof overrideQuery === "string") {
+      finalQuery = overrideQuery;
+      directiveInfo.query = overrideQuery;
+    } else if (typeof directiveInfo.query === "string") {
+      finalQuery = directiveInfo.query;
     }
-    if (evaluation && typeof evaluation === "object") {
-      directiveInfo = evaluation;
-      if (typeof evaluation.query === "string" && evaluation.query) {
-        finalQuery = evaluation.query;
+  } else {
+    try {
+      const evaluation = await evaluateSmartHistoryIntent(finalQuery);
+      if (requestId !== lastRequestId) {
+        return;
       }
+      if (evaluation && typeof evaluation === "object") {
+        directiveInfo = evaluation;
+        if (typeof evaluation.query === "string") {
+          finalQuery = evaluation.query;
+        }
+      }
+    } catch (err) {
+      console.warn("Spotlight: smart history evaluation failed", err);
     }
-  } catch (err) {
-    console.warn("Spotlight: smart history evaluation failed", err);
   }
 
   if (requestId !== lastRequestId) {
@@ -1679,6 +1701,8 @@ async function requestResults(query) {
     message.webSearch = { engineId };
   }
 
+  const directiveBlueprint = directiveInfo && typeof directiveInfo === "object" ? { ...directiveInfo } : null;
+
   smartHistoryDirective =
     directiveInfo && typeof directiveInfo === "object"
       ? {
@@ -1698,6 +1722,12 @@ async function requestResults(query) {
               ? directiveInfo.confidence
               : 0,
           autoOpenHandled: false,
+          fallbackQuery:
+            directiveInfo.apply && typeof directiveInfo.fallbackQuery === "string"
+              ? directiveInfo.fallbackQuery
+              : null,
+          fallbackAttempted: Boolean(fallbackAttempted),
+          blueprint: directiveBlueprint,
         }
       : {
           requestId,
@@ -1710,6 +1740,9 @@ async function requestResults(query) {
           action: "show",
           confidence: 0,
           autoOpenHandled: false,
+          fallbackQuery: null,
+          fallbackAttempted: Boolean(fallbackAttempted),
+          blueprint: null,
         };
 
   chrome.runtime.sendMessage(
@@ -1735,6 +1768,28 @@ async function requestResults(query) {
       let incomingResults = Array.isArray(response.results) ? response.results.slice() : [];
       if (directive && directive.apply && Number.isFinite(directive.maxItems) && directive.maxItems > 0) {
         incomingResults = incomingResults.slice(0, directive.maxItems);
+      }
+      const hasHistoryResults = incomingResults.some((result) => result && result.type === "history");
+      const fallbackActive = Boolean(response.webSearch && response.webSearch.fallback);
+      if (
+        directive &&
+        directive.apply &&
+        directive.action === "show" &&
+        directive.fallbackQuery &&
+        !directive.fallbackAttempted &&
+        (fallbackActive || !hasHistoryResults)
+      ) {
+        const fallbackDirective = directive.blueprint ? { ...directive.blueprint } : null;
+        if (fallbackDirective) {
+          fallbackDirective.query = directive.fallbackQuery;
+          directive.fallbackAttempted = true;
+          requestResults(directive.fallbackQuery, {
+            directive: fallbackDirective,
+            fallbackAttempted: true,
+            overrideQuery: directive.fallbackQuery,
+          });
+          return;
+        }
       }
       resultsState = incomingResults;
       lazyList.setItems(resultsState);
