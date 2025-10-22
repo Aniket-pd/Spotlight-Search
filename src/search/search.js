@@ -469,6 +469,187 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
   return true;
 }
 
+function parseDateBoundary(value, isEnd = false) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10) - 1;
+  const day = Number.parseInt(match[3], 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  const date = new Date(year, month, day);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  if (isEnd) {
+    date.setHours(23, 59, 59, 999);
+  } else {
+    date.setHours(0, 0, 0, 0);
+  }
+  return { timestamp: date.getTime(), label: `${match[1]}-${match[2]}-${match[3]}` };
+}
+
+function normalizeHistoryDateRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const startBoundary = parseDateBoundary(range.start, false);
+  const endBoundary = parseDateBoundary(range.end, true);
+  if (!startBoundary && !endBoundary) {
+    return null;
+  }
+  let startTimestamp = startBoundary ? startBoundary.timestamp : null;
+  let endTimestamp = endBoundary ? endBoundary.timestamp : null;
+  let startLabel = startBoundary ? startBoundary.label : null;
+  let endLabel = endBoundary ? endBoundary.label : null;
+
+  if (startTimestamp !== null && endTimestamp !== null && startTimestamp > endTimestamp) {
+    const tempTimestamp = startTimestamp;
+    startTimestamp = endTimestamp;
+    endTimestamp = tempTimestamp;
+    const tempLabel = startLabel;
+    startLabel = endLabel;
+    endLabel = tempLabel;
+  }
+
+  return {
+    startTimestamp,
+    endTimestamp,
+    startLabel,
+    endLabel,
+  };
+}
+
+function normalizeHistoryAiOptions(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const action = payload.action === "open" ? "open" : "show";
+  const topics = Array.isArray(payload.topics)
+    ? payload.topics
+        .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const rawMaxItems = typeof payload.maxItems === "number" && Number.isFinite(payload.maxItems)
+    ? Math.max(1, Math.min(50, Math.round(payload.maxItems)))
+    : null;
+  const followUp = typeof payload.followUp === "string" ? payload.followUp.trim() : "";
+  const confidenceRaw = typeof payload.confidence === "number" && Number.isFinite(payload.confidence)
+    ? payload.confidence
+    : 0;
+  const confidence = Math.min(1, Math.max(0, confidenceRaw));
+  const dateRange = normalizeHistoryDateRange(payload.dateRange);
+
+  const hasDirective = Boolean(topics.length || dateRange || rawMaxItems !== null || followUp);
+  if (!hasDirective && confidence <= 0.3) {
+    return null;
+  }
+
+  return {
+    action,
+    topics,
+    dateRange,
+    maxItems: rawMaxItems,
+    followUp,
+    confidence,
+  };
+}
+
+function matchesHistoryAiConstraints(item, filterType, historyAi) {
+  if (filterType !== "history" || !historyAi) {
+    return true;
+  }
+  const range = historyAi.dateRange;
+  if (!range) {
+    return true;
+  }
+  const timestamp = typeof item?.lastVisitTime === "number" ? item.lastVisitTime : null;
+  if (timestamp === null) {
+    return false;
+  }
+  if (range.startTimestamp !== null && timestamp < range.startTimestamp) {
+    return false;
+  }
+  if (range.endTimestamp !== null && timestamp > range.endTimestamp) {
+    return false;
+  }
+  return true;
+}
+
+function applyHistoryAiLimit(limit, filterType, historyAi) {
+  if (filterType !== "history" || !historyAi) {
+    return limit;
+  }
+  const maxItems = historyAi.maxItems;
+  if (typeof maxItems === "number" && Number.isFinite(maxItems) && maxItems > 0) {
+    if (!Number.isFinite(limit)) {
+      return maxItems;
+    }
+    return Math.min(limit, maxItems);
+  }
+  return limit;
+}
+
+function formatHistoryAiStatus(historyAi) {
+  if (!historyAi) {
+    return "";
+  }
+  const parts = [];
+  if (historyAi.dateRange) {
+    const { startLabel, endLabel } = historyAi.dateRange;
+    if (startLabel && endLabel) {
+      parts.push(`${startLabel} → ${endLabel}`);
+    } else if (startLabel) {
+      parts.push(`Since ${startLabel}`);
+    } else if (endLabel) {
+      parts.push(`Through ${endLabel}`);
+    }
+  }
+  if (Array.isArray(historyAi.topics) && historyAi.topics.length) {
+    parts.push(`Topics: ${historyAi.topics.join(", ")}`);
+  }
+  if (typeof historyAi.maxItems === "number" && Number.isFinite(historyAi.maxItems)) {
+    parts.push(`Limit ${historyAi.maxItems}`);
+  }
+  if (!parts.length) {
+    return "";
+  }
+  return `AI filter · ${parts.join(" · ")}`;
+}
+
+function buildHistoryAiResponse(historyAi) {
+  if (!historyAi) {
+    return null;
+  }
+  return {
+    action: historyAi.action,
+    topics: historyAi.topics,
+    dateRange: historyAi.dateRange
+      ? {
+          start: historyAi.dateRange.startLabel,
+          end: historyAi.dateRange.endLabel,
+          startTimestamp: historyAi.dateRange.startTimestamp,
+          endTimestamp: historyAi.dateRange.endTimestamp,
+        }
+      : null,
+    maxItems: historyAi.maxItems,
+    followUp: historyAi.followUp,
+    confidence: historyAi.confidence,
+    status: formatHistoryAiStatus(historyAi),
+  };
+}
+
 const STATIC_COMMANDS = [
   {
     id: "command:tab-sort",
@@ -1434,6 +1615,7 @@ export function runSearch(query, data, options = {}) {
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
 
+  const historyAi = filterType === "history" ? normalizeHistoryAiOptions(options?.historyAi) : null;
   const navigationState = options.navigation || null;
 
   if (NAVIGATION_FILTERS.has(filterType)) {
@@ -1444,6 +1626,7 @@ export function runSearch(query, data, options = {}) {
       answer: "",
       filter: filterType,
       subfilters: null,
+      historyAi: null,
     };
   }
 
@@ -1467,14 +1650,18 @@ export function runSearch(query, data, options = {}) {
   const commandContext = { tabCount, tabs, audibleTabCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
-  if (!trimmed) {
+  if (!trimmed && (!historyAi || historyAi.topics.length === 0)) {
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()
         : items.filter((item) => item.type === filterType)
       : items.filter((item) => item.type === "tab");
 
-    defaultItems = defaultItems.filter((item) => matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext));
+    defaultItems = defaultItems.filter(
+      (item) =>
+        matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext) &&
+        matchesHistoryAiConstraints(item, filterType, historyAi)
+    );
 
     if (filterType === "tab" || !filterType) {
       defaultItems.sort((a, b) => {
@@ -1511,7 +1698,7 @@ export function runSearch(query, data, options = {}) {
       });
     }
 
-    const limit = getResultLimit(filterType);
+    const limit = applyHistoryAiLimit(getResultLimit(filterType), filterType, historyAi);
 
     if (filterType === "topSite") {
       const limitedItems = sliceResultsForLimit(defaultItems, limit);
@@ -1523,6 +1710,7 @@ export function runSearch(query, data, options = {}) {
         answer: "",
         filter: filterType,
         subfilters: subfilterPayload,
+        historyAi: buildHistoryAiResponse(historyAi),
       };
     }
 
@@ -1547,6 +1735,7 @@ export function runSearch(query, data, options = {}) {
         answer: "",
         filter: filterType,
         subfilters: subfilterPayload,
+        historyAi: buildHistoryAiResponse(historyAi),
       };
     }
 
@@ -1557,14 +1746,23 @@ export function runSearch(query, data, options = {}) {
       answer: "",
       filter: filterType,
       subfilters: subfilterPayload,
+      historyAi: buildHistoryAiResponse(historyAi),
     };
   }
 
-  const tokens = tokenize(trimmed);
+  const historyTopics = Array.isArray(historyAi?.topics) ? historyAi.topics : [];
+  const effectiveQuery = historyTopics.length ? `${trimmed} ${historyTopics.join(" ")}`.trim() : trimmed;
+  const tokens = tokenize(effectiveQuery);
   const uniqueTokens = Array.from(new Set(tokens));
   const totalTokens = uniqueTokens.length;
   if (tokens.length === 0) {
-    return { results: [], ghost: null, answer: "", filter: filterType };
+    return {
+      results: [],
+      ghost: null,
+      answer: "",
+      filter: filterType,
+      historyAi: buildHistoryAiResponse(historyAi),
+    };
   }
 
   const scores = new Map();
@@ -1591,7 +1789,7 @@ export function runSearch(query, data, options = {}) {
   }
 
   const results = [];
-  const shortQuery = trimmed.replace(/\s+/g, "").length <= 3;
+  const shortQuery = effectiveQuery.replace(/\s+/g, "").length <= 3;
 
   for (const [itemId, score] of scores.entries()) {
     const item = items[itemId];
@@ -1600,6 +1798,9 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     if (!matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)) {
+      continue;
+    }
+    if (!matchesHistoryAiConstraints(item, filterType, historyAi)) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
@@ -1647,7 +1848,7 @@ export function runSearch(query, data, options = {}) {
 
   results.sort(compareResults);
 
-  const limit = getResultLimit(filterType);
+  const limit = applyHistoryAiLimit(getResultLimit(filterType), filterType, historyAi);
   let finalResults = sliceResultsForLimit(results, limit);
   const minRequiredMatches = totalTokens >= 3 ? 2 : totalTokens >= 1 ? 1 : 0;
   const hasMeaningfulLocalResults = finalResults.some((result) =>
@@ -1740,6 +1941,7 @@ export function runSearch(query, data, options = {}) {
     answer,
     filter: filterType,
     subfilters: subfilterPayload,
+    historyAi: buildHistoryAiResponse(historyAi),
     webSearch: webSearchInfo,
   };
 }

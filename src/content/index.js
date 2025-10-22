@@ -58,6 +58,67 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const HISTORY_FILTER_PREFIXES = ["history:", "hist:", "h:"];
+const HISTORY_AI_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { enum: ["open", "show"] },
+    topics: {
+      type: "array",
+      items: { type: "string" },
+    },
+    dateRange: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          properties: {
+            start: { anyOf: [{ type: "string" }, { type: "null" }] },
+            end: { anyOf: [{ type: "string" }, { type: "null" }] },
+          },
+          additionalProperties: false,
+        },
+      ],
+    },
+    maxItems: { anyOf: [{ type: "integer" }, { type: "null" }] },
+    followUp: { type: "string" },
+    confidence: { type: "number" },
+  },
+  required: ["action", "topics", "dateRange", "maxItems", "followUp", "confidence"],
+  additionalProperties: false,
+};
+const HISTORY_AI_SYSTEM_PROMPT = `You are the Smart History Search interpreter for the Spotlight launcher.
+- Input: a JSON object { "query": string, "now": ISO 8601 date-time, "historyFilterActive": boolean }.
+- Only return a result when historyFilterActive is true; otherwise reply with { "confidence": 0 }.
+- Extract:
+  • action: "open" when the user wants tabs opened automatically, "show" when they just want suggestions.
+  • topics: array of keywords or short phrases describing what to match in browsing history.
+  • dateRange: { "start": ISO 8601 date, "end": ISO 8601 date } when the user specifies a time window (e.g., “last week”, “yesterday”, “September 2024”). Leave null when no constraint is present.
+  • maxItems: integer (default 5) when the user specifies a quantity (e.g., “first three”, “all”, “the top result” → 1).
+  • followUp: string question to disambiguate when intent is unclear; empty string when confident.
+  • confidence: number from 0–1 summarizing how certain you are about the interpretation.
+
+Guidelines:
+- Map “open” / “launch” / “reopen” intents to action "open". Map “show”, “find”, “what were”, “list” to action "show".
+- Interpret relative dates relative to \`now\`.
+- When the request references parts of a browsing session (“the ones after Amazon”), include key terms in topics to help the search ranker.
+- If you cannot determine any topics, set topics to an empty array and confidence to ≤0.25.
+- Never fabricate URLs or tab IDs. Your job is only to translate the natural language into filters.
+Return JSON only, matching this schema:
+{
+  "action": "open" | "show",
+  "topics": string[],
+  "dateRange": { "start": string | null, "end": string | null },
+  "maxItems": number | null,
+  "followUp": string,
+  "confidence": number
+}`;
+const HISTORY_AI_OPEN_CONFIDENCE_THRESHOLD = 0.65;
+let historyIntentSessionPromise = null;
+let historyIntentSession = null;
+let historyIntentUnavailable = false;
+let historyAiState = null;
+let lastHistoryAutoOpenRequestId = 0;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -93,6 +154,159 @@ function getDefaultWebSearchEngineId() {
     return null;
   }
   return engine.id;
+}
+
+function getLanguageModelApi() {
+  const root = typeof globalThis !== "undefined" ? globalThis : window;
+  if (root?.ai?.languageModel) {
+    return root.ai.languageModel;
+  }
+  if (root?.LanguageModel) {
+    return root.LanguageModel;
+  }
+  if (typeof chrome !== "undefined" && chrome?.ai?.languageModel) {
+    return chrome.ai.languageModel;
+  }
+  return null;
+}
+
+async function ensureHistoryIntentSession() {
+  if (historyIntentSession) {
+    return historyIntentSession;
+  }
+  if (historyIntentUnavailable) {
+    return null;
+  }
+  if (historyIntentSessionPromise) {
+    return historyIntentSessionPromise;
+  }
+  const api = getLanguageModelApi();
+  if (!api || typeof api.create !== "function" || typeof api.availability !== "function") {
+    historyIntentUnavailable = true;
+    return null;
+  }
+  historyIntentSessionPromise = (async () => {
+    try {
+      const availability = await api.availability();
+      if (availability === "unavailable") {
+        historyIntentUnavailable = true;
+        return null;
+      }
+      const session = await api.create({
+        initialPrompts: [{ role: "system", content: HISTORY_AI_SYSTEM_PROMPT }],
+      });
+      historyIntentSession = session;
+      return session;
+    } catch (err) {
+      console.warn("Spotlight history intent session failed", err);
+      historyIntentUnavailable = true;
+      return null;
+    }
+  })();
+  return historyIntentSessionPromise;
+}
+
+function extractHistoryFilterContext(value) {
+  const raw = typeof value === "string" ? value : "";
+  const trimmedStart = raw.replace(/^\s+/, "");
+  const leadingOffset = raw.length - trimmedStart.length;
+  const lower = trimmedStart.toLowerCase();
+  for (const prefix of HISTORY_FILTER_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      return {
+        active: true,
+        remainder: trimmedStart.slice(prefix.length),
+        leadingOffset,
+      };
+    }
+  }
+  return { active: false, remainder: trimmedStart, leadingOffset };
+}
+
+function sanitizeHistoryAiResult(result) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const action = result.action === "open" ? "open" : "show";
+  const topics = Array.isArray(result.topics)
+    ? result.topics
+        .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
+        .filter(Boolean)
+    : [];
+  let dateRange = null;
+  if (result.dateRange && typeof result.dateRange === "object") {
+    const startRaw = typeof result.dateRange.start === "string" ? result.dateRange.start.trim() : "";
+    const endRaw = typeof result.dateRange.end === "string" ? result.dateRange.end.trim() : "";
+    const start = startRaw || null;
+    const end = endRaw || null;
+    if (start || end) {
+      dateRange = { start, end };
+    }
+  }
+  let maxItems = null;
+  if (typeof result.maxItems === "number" && Number.isFinite(result.maxItems)) {
+    const rounded = Math.round(result.maxItems);
+    if (rounded > 0) {
+      maxItems = Math.min(50, Math.max(1, rounded));
+    }
+  }
+  const followUp = typeof result.followUp === "string" ? result.followUp.trim() : "";
+  const confidence = typeof result.confidence === "number" && Number.isFinite(result.confidence)
+    ? Math.min(1, Math.max(0, result.confidence))
+    : 0;
+  const hasDirective = Boolean(topics.length || dateRange || maxItems !== null || followUp);
+  if (!hasDirective && confidence <= 0.3) {
+    return null;
+  }
+  return {
+    action,
+    topics,
+    dateRange,
+    maxItems,
+    followUp,
+    confidence,
+  };
+}
+
+async function maybeInterpretHistoryQuery(query, requestId) {
+  const context = extractHistoryFilterContext(query || "");
+  if (!context.active) {
+    return null;
+  }
+  const historyQuery = context.remainder.trim();
+  if (!historyQuery) {
+    return null;
+  }
+  const session = await ensureHistoryIntentSession();
+  if (!session) {
+    return null;
+  }
+  const payload = {
+    query: historyQuery,
+    now: new Date().toISOString(),
+    historyFilterActive: true,
+  };
+  let response;
+  try {
+    response = await session.prompt(
+      [{ role: "user", content: JSON.stringify(payload) }],
+      { responseConstraint: HISTORY_AI_RESPONSE_SCHEMA, omitResponseConstraintInput: true }
+    );
+  } catch (err) {
+    console.warn("Spotlight history intent prompt failed", err);
+    return null;
+  }
+  if (requestId !== lastRequestId) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = typeof response === "string" ? JSON.parse(response) : response;
+  } catch (err) {
+    console.warn("Spotlight history intent produced invalid response", err);
+    return null;
+  }
+  return sanitizeHistoryAiResult(parsed);
 }
 
 const lazyList = createLazyList(
@@ -1341,6 +1555,7 @@ function handleInputChange() {
   }
   setStatus("", { force: true });
   setGhostText("");
+  historyAiState = null;
   activeIndex = -1;
   updateActiveResult();
   pointerNavigationSuspended = true;
@@ -1375,19 +1590,38 @@ function handleInputChange() {
   }
 
   pendingQueryTimeout = setTimeout(() => {
-    requestResults(query);
+    const promise = requestResults(query);
+    if (promise && typeof promise.catch === "function") {
+      promise.catch((error) => {
+        console.warn("Spotlight query dispatch failed", error);
+      });
+    }
   }, 80);
 }
 
-function requestResults(query) {
-  lastRequestId = ++requestCounter;
-  const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
+async function requestResults(query) {
+  const requestId = ++requestCounter;
+  lastRequestId = requestId;
+  let historyAiPayload = null;
+  try {
+    historyAiPayload = await maybeInterpretHistoryQuery(query, requestId);
+  } catch (err) {
+    console.warn("Spotlight history intent interpretation failed", err);
+    historyAiPayload = null;
+  }
+  if (requestId !== lastRequestId) {
+    return null;
+  }
+  const message = { type: "SPOTLIGHT_QUERY", query, requestId };
   if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
     message.subfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
   }
   const engineId = getActiveWebSearchEngineId();
   if (engineId) {
     message.webSearch = { engineId };
+  }
+  if (historyAiPayload) {
+    message.historyAi = historyAiPayload;
   }
   chrome.runtime.sendMessage(
     message,
@@ -1403,6 +1637,7 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      historyAiState = response.historyAi && typeof response.historyAi === "object" ? response.historyAi : null;
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
       pruneSummaryState();
@@ -1443,6 +1678,7 @@ function requestResults(query) {
       const filterLabel = getFilterStatusLabel(activeFilter);
       const subfilterLabel = getActiveSubfilterLabel();
       let statusMessage = "";
+      let statusSticky = Boolean(filterLabel);
       if (filterLabel) {
         statusMessage = `Filtering ${filterLabel}`;
         if (subfilterLabel) {
@@ -1456,13 +1692,25 @@ function requestResults(query) {
       if (engineStatusLabel) {
         statusMessage = statusMessage ? `${statusMessage} · ${engineStatusLabel}` : engineStatusLabel;
       }
+      const historyStatus = historyAiState && typeof historyAiState.status === "string" ? historyAiState.status : "";
+      const historyFollowUp = historyAiState && typeof historyAiState.followUp === "string"
+        ? historyAiState.followUp.trim()
+        : "";
+      if (historyFollowUp) {
+        statusMessage = historyFollowUp;
+        statusSticky = false;
+      } else if (historyStatus) {
+        statusMessage = statusMessage ? `${statusMessage} · ${historyStatus}` : historyStatus;
+      }
       if (statusMessage) {
-        setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
+        setStatus(statusMessage, { force: true, sticky: statusSticky });
       } else if (!ghostSuggestionText) {
         setStatus("", { force: true });
       }
+      maybeAutoOpenHistoryResults(historyAiState, response.requestId);
     }
   );
+  return null;
 }
 
 function setStatus(message, options = {}) {
@@ -1635,6 +1883,40 @@ function triggerWebSearch(engineIdOverride = null) {
   }
   openResult(payload);
   return true;
+}
+
+function maybeAutoOpenHistoryResults(historyInfo, requestId) {
+  if (!historyInfo || historyInfo.action !== "open") {
+    return;
+  }
+  if (!Array.isArray(resultsState) || !resultsState.length) {
+    return;
+  }
+  const followUp = typeof historyInfo.followUp === "string" ? historyInfo.followUp.trim() : "";
+  if (followUp) {
+    return;
+  }
+  const confidence = typeof historyInfo.confidence === "number" ? historyInfo.confidence : 0;
+  if (confidence < HISTORY_AI_OPEN_CONFIDENCE_THRESHOLD) {
+    return;
+  }
+  if (requestId === lastHistoryAutoOpenRequestId) {
+    return;
+  }
+  const maxItems = typeof historyInfo.maxItems === "number" && Number.isFinite(historyInfo.maxItems)
+    ? Math.max(1, Math.min(Math.floor(historyInfo.maxItems), resultsState.length))
+    : Math.min(5, resultsState.length);
+  const candidates = resultsState
+    .slice(0, maxItems)
+    .filter((result) => result && result.type === "history" && typeof result.id === "number");
+  if (!candidates.length) {
+    return;
+  }
+  lastHistoryAutoOpenRequestId = requestId;
+  for (const result of candidates) {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  }
+  closeOverlay();
 }
 
 function openResult(result) {

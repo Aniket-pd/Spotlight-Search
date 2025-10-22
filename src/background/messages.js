@@ -26,6 +26,7 @@ export function registerMessageHandlers({
               subfilter: message.subfilter,
               navigation: navigationState,
               webSearch: message.webSearch,
+              historyAi: message.historyAi,
             }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
