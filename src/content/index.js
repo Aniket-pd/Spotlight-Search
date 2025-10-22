@@ -134,6 +134,56 @@ let historyIntentUnavailable = false;
 let historyAiState = null;
 let lastHistoryAutoOpenRequestId = 0;
 
+const DEFAULT_SUPPORTED_COMMAND_ACTIONS = [
+  "tab-sort",
+  "tab-shuffle",
+  "tab-close",
+  "tab-close-all",
+  "tab-close-domain",
+  "tab-close-audio",
+];
+
+function getSupportedCommandApi() {
+  return typeof globalThis !== "undefined" ? globalThis.SpotlightCommands : null;
+}
+
+function createSupportedCommandActionSet() {
+  const api = getSupportedCommandApi();
+  const actions = Array.isArray(api?.SUPPORTED_COMMAND_ACTIONS) && api.SUPPORTED_COMMAND_ACTIONS.length
+    ? api.SUPPORTED_COMMAND_ACTIONS
+    : DEFAULT_SUPPORTED_COMMAND_ACTIONS;
+  return new Set(actions);
+}
+
+const SUPPORTED_COMMAND_ACTION_SET = createSupportedCommandActionSet();
+
+function isSupportedCommandAction(action) {
+  const api = getSupportedCommandApi();
+  if (api && typeof api.isSupportedCommandAction === "function") {
+    return api.isSupportedCommandAction(action);
+  }
+  return typeof action === "string" && SUPPORTED_COMMAND_ACTION_SET.has(action);
+}
+
+function filterUnsupportedCommandResults(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return [];
+  }
+  const filtered = [];
+  for (const result of results) {
+    if (!result || result.type !== "command") {
+      filtered.push(result);
+      continue;
+    }
+    if (isSupportedCommandAction(result.command)) {
+      filtered.push(result);
+    } else {
+      console.warn("Spotlight ignored unsupported command result", result);
+    }
+  }
+  return filtered;
+}
+
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
   if (!api || typeof api !== "object") {
@@ -347,7 +397,16 @@ function sanitizeHistoryAiResult(result) {
   if (!result || typeof result !== "object") {
     return null;
   }
-  const action = result.action === "open" ? "open" : "show";
+  const rawAction = typeof result.action === "string" ? result.action.trim().toLowerCase() : "";
+  let action = "show";
+  if (rawAction === "open") {
+    action = "open";
+  } else if (rawAction === "show" || !rawAction) {
+    action = "show";
+  } else {
+    console.warn("Spotlight history intent produced unsupported action", rawAction);
+    return null;
+  }
   const topics = Array.isArray(result.topics)
     ? result.topics
         .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
@@ -1906,7 +1965,8 @@ async function requestResults(query) {
       }
       historyAiState = response.historyAi && typeof response.historyAi === "object" ? response.historyAi : null;
       updateHistoryPromptUi(historyAiState);
-      resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+      const rawResults = Array.isArray(response.results) ? response.results.slice() : [];
+      resultsState = filterUnsupportedCommandResults(rawResults);
       lazyList.setItems(resultsState);
       pruneSummaryState();
       applyCachedFavicons(resultsState);
@@ -2193,6 +2253,10 @@ function maybeAutoOpenHistoryResults(historyInfo, requestId) {
 function openResult(result) {
   if (!result) return;
   if (result.type === "command") {
+    if (!isSupportedCommandAction(result.command)) {
+      console.warn("Spotlight blocked unsupported command execution", result);
+      return;
+    }
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
       payload.args = result.args;

@@ -1,5 +1,6 @@
 import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
 import "../shared/web-search.js";
+import { isSupportedCommandAction } from "../shared/commands.js";
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -717,7 +718,16 @@ function normalizeHistoryAiOptions(payload) {
     return null;
   }
 
-  const action = payload.action === "open" ? "open" : "show";
+  const rawAction = typeof payload.action === "string" ? payload.action.trim().toLowerCase() : "";
+  let action = "show";
+  if (rawAction === "open") {
+    action = "open";
+  } else if (rawAction === "show" || !rawAction) {
+    action = "show";
+  } else {
+    console.warn("Spotlight history AI received unsupported action", payload.action);
+    return null;
+  }
   const topics = Array.isArray(payload.topics)
     ? payload.topics
         .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
@@ -978,7 +988,7 @@ const STATIC_COMMANDS = [
       return (context?.audibleTabCount || 0) > 0;
     },
   },
-];
+].filter((command) => isSupportedCommandAction(command.action));
 
 function formatTabCount(count) {
   if (count === 1) {
@@ -988,6 +998,9 @@ function formatTabCount(count) {
 }
 
 function buildCloseAudioTabsCommandResult(audibleCount) {
+  if (!isSupportedCommandAction("tab-close-audio")) {
+    return null;
+  }
   const countLabel = formatTabCount(audibleCount);
   const title = audibleCount === 1
     ? "Close tab playing audio"
@@ -1448,6 +1461,9 @@ function buildCloseTabResult(tab) {
   if (tabId === null) {
     return null;
   }
+  if (!isSupportedCommandAction("tab-close")) {
+    return null;
+  }
   const domain = getTabDomain(tab);
   const windowLabel = formatWindowLabel(tab);
   const descriptionParts = [];
@@ -1506,6 +1522,9 @@ function collectTabCloseSuggestions(query, context) {
       };
     }
     const result = buildCloseAudioTabsCommandResult(audibleCount);
+    if (!result) {
+      return { results: [], ghost: null, answer: "" };
+    }
     return {
       results: [result],
       ghost: result.title,
@@ -1574,6 +1593,9 @@ function collectCloseAllSuggestions(words, context) {
       };
     }
     const result = buildCloseAudioTabsCommandResult(audibleCount);
+    if (!result) {
+      return { results: [], ghost: null, answer: "" };
+    }
     return {
       results: [result],
       ghost: result.title,
@@ -1586,6 +1608,9 @@ function collectCloseAllSuggestions(words, context) {
 
   const domainQuery = remainingWords.join(" ").trim();
   if (!domainQuery) {
+    if (!isSupportedCommandAction("tab-close-all")) {
+      return { results: [], ghost: null, answer: "" };
+    }
     const activeTab = tabs.find((tab) => tab.active);
     const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
     const windowTabs = windowId === null ? tabs : tabs.filter((tab) => tab.windowId === windowId);
@@ -1622,22 +1647,27 @@ function collectCloseAllSuggestions(words, context) {
     return { results: [], ghost: null, answer: "" };
   }
 
-  const results = domainMatches.map(({ domain, count }) => {
-    const title = `Close all ${count === 1 ? "tab" : "tabs"} from ${domain}`;
-    const description = `${count} ${count === 1 ? "tab" : "tabs"} · ${domain}`;
-    return {
-      id: `command:close-domain:${domain}`,
-      title,
-      url: description,
-      description,
-      type: "command",
-      command: "tab-close-domain",
-      args: { domain },
-      label: "Command",
-      score: COMMAND_SCORE,
-      faviconUrl: COMMAND_ICON_DATA_URL,
-    };
-  });
+  const results = domainMatches
+    .map(({ domain, count }) => {
+      if (!isSupportedCommandAction("tab-close-domain")) {
+        return null;
+      }
+      const title = `Close all ${count === 1 ? "tab" : "tabs"} from ${domain}`;
+      const description = `${count} ${count === 1 ? "tab" : "tabs"} · ${domain}`;
+      return {
+        id: `command:close-domain:${domain}`,
+        title,
+        url: description,
+        description,
+        type: "command",
+        command: "tab-close-domain",
+        args: { domain },
+        label: "Command",
+        score: COMMAND_SCORE,
+        faviconUrl: COMMAND_ICON_DATA_URL,
+      };
+    })
+    .filter(Boolean);
 
   return {
     results,
