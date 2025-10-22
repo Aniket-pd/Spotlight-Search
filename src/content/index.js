@@ -58,6 +58,14 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const HISTORY_FILTER_PREFIXES = ["history:", "hist:", "h:"];
+const SMART_HISTORY_APPLY_THRESHOLD = 0.55;
+const SMART_HISTORY_AUTO_OPEN_THRESHOLD = 0.75;
+const SMART_HISTORY_DEFAULT_OPEN_LIMIT = 5;
+const SMART_HISTORY_MAX_OPEN_LIMIT = 10;
+const SMART_HISTORY_MAX_RESULT_LIMIT = 50;
+let smartHistoryDirective = null;
+let selectedSubfilterOrigin = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -93,6 +101,242 @@ function getDefaultWebSearchEngineId() {
     return null;
   }
   return engine.id;
+}
+
+function getHistoryIntentApi() {
+  const api = typeof globalThis !== "undefined" ? globalThis.SpotlightHistoryIntent : null;
+  if (!api || typeof api !== "object" || typeof api.interpret !== "function") {
+    return null;
+  }
+  return api;
+}
+
+function computeHistoryQueryContext(query) {
+  const original = typeof query === "string" ? query : "";
+  const leadingMatch = original.match(/^\s*/);
+  const leadingWhitespace = leadingMatch ? leadingMatch[0] : "";
+  const rest = original.slice(leadingWhitespace.length);
+  const lower = rest.toLowerCase();
+  for (const prefix of HISTORY_FILTER_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      const actualPrefix = rest.slice(0, prefix.length);
+      const remainder = rest.slice(prefix.length);
+      return {
+        active: true,
+        prefix: actualPrefix,
+        remainder,
+        leadingWhitespace,
+        original,
+        reason: "prefix",
+      };
+    }
+  }
+  const filterActive =
+    (typeof activeFilter === "string" && activeFilter === "history") ||
+    (selectedSubfilter && selectedSubfilter.type === "history");
+  if (filterActive) {
+    return {
+      active: true,
+      prefix: "history:",
+      remainder: rest,
+      leadingWhitespace,
+      original,
+      reason: "state",
+    };
+  }
+  return {
+    active: false,
+    prefix: "",
+    remainder: rest,
+    leadingWhitespace,
+    original,
+    reason: null,
+  };
+}
+
+function toStartOfDayMs(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    return NaN;
+  }
+  const clone = new Date(value.getTime());
+  clone.setHours(0, 0, 0, 0);
+  return clone.getTime();
+}
+
+function mapDateRangeToHistorySubfilter(range, nowIso) {
+  if (!range || (!range.start && !range.end)) {
+    return null;
+  }
+  const now = nowIso ? new Date(nowIso) : new Date();
+  const nowMs = toStartOfDayMs(now);
+  if (!Number.isFinite(nowMs)) {
+    return null;
+  }
+  const DAY = 24 * 60 * 60 * 1000;
+  let startMs = null;
+  if (typeof range.start === "string" && range.start) {
+    const startDate = new Date(range.start);
+    const normalized = toStartOfDayMs(startDate);
+    if (Number.isFinite(normalized)) {
+      startMs = normalized;
+    }
+  }
+  let endMs = null;
+  if (typeof range.end === "string" && range.end) {
+    const endDate = new Date(range.end);
+    const normalized = toStartOfDayMs(endDate);
+    if (Number.isFinite(normalized)) {
+      endMs = normalized;
+    }
+  }
+
+  if (startMs !== null && startMs >= nowMs) {
+    return "today";
+  }
+
+  if (endMs !== null && endMs >= nowMs) {
+    const startReference = startMs !== null ? startMs : endMs;
+    if (startReference >= nowMs - 6 * DAY) {
+      return "last7";
+    }
+    if (startReference >= nowMs - 29 * DAY) {
+      return "last30";
+    }
+    return "older";
+  }
+
+  if (
+    endMs !== null &&
+    endMs < nowMs &&
+    endMs >= nowMs - DAY &&
+    (startMs === null || (startMs >= nowMs - DAY && startMs <= endMs))
+  ) {
+    return "yesterday";
+  }
+
+  const reference = startMs !== null ? startMs : endMs;
+  if (reference === null) {
+    return null;
+  }
+  if (reference >= nowMs - 6 * DAY) {
+    return "last7";
+  }
+  if (reference >= nowMs - 29 * DAY) {
+    return "last30";
+  }
+  return "older";
+}
+
+function buildHistoryQuery(context, body) {
+  const ctx = context || {};
+  const prefix = ctx.prefix || "history:";
+  const leading = typeof ctx.leadingWhitespace === "string" ? ctx.leadingWhitespace : "";
+  const trimmedBody = typeof body === "string" ? body.trim() : "";
+  const spacing = trimmedBody ? " " : "";
+  return `${leading}${prefix}${spacing}${trimmedBody}`.trimEnd();
+}
+
+async function evaluateSmartHistoryIntent(query) {
+  const api = getHistoryIntentApi();
+  if (!api) {
+    return null;
+  }
+  const context = computeHistoryQueryContext(query);
+  if (!context.active) {
+    return null;
+  }
+  const remainder = context.remainder.trim();
+  const nowIso = new Date().toISOString();
+  let interpretation = null;
+  try {
+    interpretation = await api.interpret({ query: remainder, now: nowIso, historyFilterActive: true });
+  } catch (err) {
+    console.warn("Spotlight: history intent request failed", err);
+    return null;
+  }
+  if (!interpretation || typeof interpretation !== "object") {
+    return null;
+  }
+  const action = interpretation.action === "open" ? "open" : "show";
+  const rawConfidence =
+    typeof interpretation.confidence === "number" && Number.isFinite(interpretation.confidence)
+      ? interpretation.confidence
+      : 0;
+  const confidence = Math.max(0, Math.min(1, rawConfidence));
+  const followUp = typeof interpretation.followUp === "string" ? interpretation.followUp.trim() : "";
+  const topics = Array.isArray(interpretation.topics)
+    ? interpretation.topics
+        .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const normalizedMaxItems =
+    typeof interpretation.maxItems === "number" && Number.isFinite(interpretation.maxItems)
+      ? Math.max(1, Math.min(SMART_HISTORY_MAX_RESULT_LIMIT, Math.floor(interpretation.maxItems)))
+      : null;
+  const rawRange =
+    interpretation.dateRange && typeof interpretation.dateRange === "object"
+      ? {
+          start:
+            typeof interpretation.dateRange.start === "string" && interpretation.dateRange.start
+              ? interpretation.dateRange.start
+              : null,
+          end:
+            typeof interpretation.dateRange.end === "string" && interpretation.dateRange.end
+              ? interpretation.dateRange.end
+              : null,
+        }
+      : { start: null, end: null };
+  const subfilterId = rawRange.start || rawRange.end ? mapDateRangeToHistorySubfilter(rawRange, nowIso) : null;
+
+  const normalizedRemainder = remainder.toLowerCase();
+  const appendedTopics = [];
+  for (const topic of topics) {
+    const normalizedTopic = topic.toLowerCase();
+    if (normalizedTopic && (!normalizedRemainder || !normalizedRemainder.includes(normalizedTopic))) {
+      appendedTopics.push(topic);
+    }
+  }
+
+  let queryBody = remainder;
+  if (appendedTopics.length) {
+    queryBody = queryBody ? `${queryBody} ${appendedTopics.join(" ")}` : appendedTopics.join(" ");
+  }
+
+  const canApply =
+    confidence >= SMART_HISTORY_APPLY_THRESHOLD &&
+    (appendedTopics.length > 0 || subfilterId || normalizedMaxItems !== null || action === "open");
+
+  if (!canApply) {
+    return {
+      apply: false,
+      query: context.original,
+      followUp,
+      autoOpen: false,
+      autoOpenCount: 0,
+      maxItems: null,
+      subfilterId: null,
+      action,
+      confidence,
+    };
+  }
+
+  const finalQuery = buildHistoryQuery(context, queryBody);
+  const autoOpen = action === "open" && confidence >= SMART_HISTORY_AUTO_OPEN_THRESHOLD;
+  const autoOpenCount = autoOpen
+    ? Math.min(normalizedMaxItems || SMART_HISTORY_DEFAULT_OPEN_LIMIT, SMART_HISTORY_MAX_OPEN_LIMIT)
+    : 0;
+
+  return {
+    apply: true,
+    query: finalQuery,
+    followUp,
+    autoOpen,
+    autoOpenCount,
+    maxItems: normalizedMaxItems,
+    subfilterId,
+    action,
+    confidence,
+  };
 }
 
 const lazyList = createLazyList(
@@ -982,6 +1226,7 @@ function applySlashSelection(option) {
 function resetSubfilterState() {
   subfilterState = { type: null, options: [], activeId: null };
   selectedSubfilter = null;
+  selectedSubfilterOrigin = null;
   renderSubfilters();
 }
 
@@ -1027,6 +1272,7 @@ function updateSubfilterState(payload) {
     selectedSubfilter = { type, id: resolvedActiveId };
   } else {
     selectedSubfilter = null;
+    selectedSubfilterOrigin = null;
   }
   renderSubfilters();
 }
@@ -1108,6 +1354,7 @@ function handleSubfilterClick(option) {
     }
     subfilterState = { ...subfilterState, activeId: "all" };
     selectedSubfilter = null;
+    selectedSubfilterOrigin = null;
     renderSubfilters();
     requestResults(inputEl.value);
     return;
@@ -1116,6 +1363,7 @@ function handleSubfilterClick(option) {
   if (nextId === "all") {
     subfilterState = { ...subfilterState, activeId: "all" };
     selectedSubfilter = null;
+    selectedSubfilterOrigin = null;
     renderSubfilters();
     requestResults(inputEl.value);
     return;
@@ -1123,6 +1371,7 @@ function handleSubfilterClick(option) {
 
   subfilterState = { ...subfilterState, activeId: nextId };
   selectedSubfilter = { type: subfilterState.type, id: nextId };
+  selectedSubfilterOrigin = "user";
   renderSubfilters();
   requestResults(inputEl.value);
 }
@@ -1148,6 +1397,7 @@ async function openOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  smartHistoryDirective = null;
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -1188,6 +1438,7 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  smartHistoryDirective = null;
   setGhostText("");
   resetSlashMenuState();
   resetEngineMenuState();
@@ -1379,16 +1630,88 @@ function handleInputChange() {
   }, 80);
 }
 
-function requestResults(query) {
-  lastRequestId = ++requestCounter;
-  const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
-  if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
-    message.subfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
+async function requestResults(query) {
+  const requestId = ++requestCounter;
+  lastRequestId = requestId;
+  smartHistoryDirective = null;
+
+  let finalQuery = typeof query === "string" ? query : "";
+  let directiveInfo = null;
+
+  try {
+    const evaluation = await evaluateSmartHistoryIntent(finalQuery);
+    if (requestId !== lastRequestId) {
+      return;
+    }
+    if (evaluation && typeof evaluation === "object") {
+      directiveInfo = evaluation;
+      if (typeof evaluation.query === "string" && evaluation.query) {
+        finalQuery = evaluation.query;
+      }
+    }
+  } catch (err) {
+    console.warn("Spotlight: smart history evaluation failed", err);
   }
+
+  if (requestId !== lastRequestId) {
+    return;
+  }
+
+  const message = { type: "SPOTLIGHT_QUERY", query: finalQuery, requestId };
+
+  let appliedSubfilter = null;
+  if (directiveInfo && directiveInfo.apply && directiveInfo.subfilterId) {
+    appliedSubfilter = { type: "history", id: directiveInfo.subfilterId };
+  } else if (selectedSubfilterOrigin === "intent") {
+    selectedSubfilterOrigin = null;
+    selectedSubfilter = null;
+  }
+
+  if (!appliedSubfilter && selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
+    appliedSubfilter = { type: selectedSubfilter.type, id: selectedSubfilter.id };
+  }
+  if (appliedSubfilter) {
+    message.subfilter = appliedSubfilter;
+  }
+
   const engineId = getActiveWebSearchEngineId();
   if (engineId) {
     message.webSearch = { engineId };
   }
+
+  smartHistoryDirective =
+    directiveInfo && typeof directiveInfo === "object"
+      ? {
+          requestId,
+          followUp: directiveInfo.followUp || "",
+          autoOpen: Boolean(directiveInfo.autoOpen),
+          autoOpenCount: directiveInfo.autoOpen ? directiveInfo.autoOpenCount : 0,
+          maxItems:
+            directiveInfo.apply && typeof directiveInfo.maxItems === "number" && directiveInfo.maxItems > 0
+              ? directiveInfo.maxItems
+              : null,
+          apply: Boolean(directiveInfo.apply),
+          subfilterId: directiveInfo.apply ? directiveInfo.subfilterId || null : null,
+          action: directiveInfo.action || "show",
+          confidence:
+            typeof directiveInfo.confidence === "number" && Number.isFinite(directiveInfo.confidence)
+              ? directiveInfo.confidence
+              : 0,
+          autoOpenHandled: false,
+        }
+      : {
+          requestId,
+          followUp: "",
+          autoOpen: false,
+          autoOpenCount: 0,
+          maxItems: null,
+          apply: false,
+          subfilterId: null,
+          action: "show",
+          confidence: 0,
+          autoOpenHandled: false,
+        };
+
   chrome.runtime.sendMessage(
     message,
     (response) => {
@@ -1403,7 +1726,17 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
-      resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+
+      const directive =
+        smartHistoryDirective && smartHistoryDirective.requestId === response.requestId
+          ? smartHistoryDirective
+          : null;
+
+      let incomingResults = Array.isArray(response.results) ? response.results.slice() : [];
+      if (directive && directive.apply && Number.isFinite(directive.maxItems) && directive.maxItems > 0) {
+        incomingResults = incomingResults.slice(0, directive.maxItems);
+      }
+      resultsState = incomingResults;
       lazyList.setItems(resultsState);
       pruneSummaryState();
       applyCachedFavicons(resultsState);
@@ -1412,6 +1745,12 @@ function requestResults(query) {
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
+
+      if (directive && directive.apply && directive.subfilterId) {
+        selectedSubfilterOrigin = "intent";
+      } else if (selectedSubfilterOrigin === "intent" && (!directive || !directive.apply)) {
+        selectedSubfilterOrigin = null;
+      }
 
       if (response.webSearch && typeof response.webSearch.engineId === "string") {
         const api = getWebSearchApi();
@@ -1431,8 +1770,8 @@ function requestResults(query) {
         }
       }
 
-      const trimmed = inputEl.value.trim();
-      if (trimmed === "> reindex") {
+      const trimmedInput = inputEl.value.trim();
+      if (trimmedInput === "> reindex") {
         setGhostText("");
         return;
       }
@@ -1456,10 +1795,28 @@ function requestResults(query) {
       if (engineStatusLabel) {
         statusMessage = statusMessage ? `${statusMessage} · ${engineStatusLabel}` : engineStatusLabel;
       }
+      if (directive && directive.followUp) {
+        statusMessage = statusMessage ? `${statusMessage} · ${directive.followUp}` : directive.followUp;
+      }
+      const stickyFlag = Boolean(filterLabel) || Boolean(directive && directive.followUp);
       if (statusMessage) {
-        setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
+        setStatus(statusMessage, { force: true, sticky: stickyFlag });
       } else if (!ghostSuggestionText) {
         setStatus("", { force: true });
+      }
+
+      if (directive && directive.autoOpen && !directive.autoOpenHandled) {
+        const openLimit = directive.autoOpenCount > 0 ? directive.autoOpenCount : SMART_HISTORY_DEFAULT_OPEN_LIMIT;
+        const historyTargets = resultsState
+          .filter((result) => result && result.type === "history")
+          .slice(0, openLimit);
+        if (historyTargets.length) {
+          historyTargets.forEach((result) => {
+            chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+          });
+          closeOverlay();
+        }
+        directive.autoOpenHandled = true;
       }
     }
   );

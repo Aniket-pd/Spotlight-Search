@@ -11,7 +11,8 @@
     "scripting",
     "webNavigation",
     "downloads",
-    "topSites"
+    "topSites",
+    "languageModel"
   ],
   "host_permissions": ["file:///*"],
   "background": {
@@ -36,7 +37,11 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/shared/web-search.js", "src/content/index.js"],
+      "js": [
+        "src/shared/web-search.js",
+        "src/content/history-intent.js",
+        "src/content/index.js"
+      ],
       "run_at": "document_idle"
     }
   ],
