@@ -1880,6 +1880,13 @@ async function requestResults(query) {
   if (engineId) {
     message.webSearch = { engineId };
   }
+  const historyPromptText = typeof historyPromptValue === "string" ? historyPromptValue.trim() : "";
+  if (historyPromptText) {
+    const historyContext = extractHistoryFilterContext(query || "");
+    if (historyContext.active) {
+      message.historyPrompt = historyPromptText;
+    }
+  }
   if (historyAiPayload) {
     message.historyAi = historyAiPayload;
   }

@@ -49,6 +49,41 @@ const BASE_TYPE_SCORES = {
 const MATCHED_TOKEN_BONUS = 4.5;
 const FULL_TOKEN_MATCH_BONUS = 5.5;
 const MISSING_TOKEN_PENALTY = 6;
+const HISTORY_TOPIC_MATCH_BONUS = 2.75;
+const HISTORY_TOPIC_MISS_PENALTY = 1.25;
+const HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD = 0.5;
+const HISTORY_PROMPT_STOPWORDS = new Set([
+  "show",
+  "me",
+  "the",
+  "a",
+  "an",
+  "and",
+  "please",
+  "could",
+  "you",
+  "your",
+  "my",
+  "find",
+  "open",
+  "list",
+  "look",
+  "looking",
+  "pull",
+  "bring",
+  "up",
+  "give",
+  "get",
+  "search",
+  "for",
+  "to",
+  "into",
+  "about",
+  "with",
+  "of",
+  "in",
+  "on",
+]);
 
 function getResultLimit(filterType) {
   if (filterType === "history") {
@@ -530,6 +565,65 @@ function normalizeHistoryDateRange(range) {
   };
 }
 
+function buildTopicMatchers(topics) {
+  if (!Array.isArray(topics) || !topics.length) {
+    return [];
+  }
+  const matchers = [];
+  for (const topic of topics) {
+    if (typeof topic !== "string") {
+      continue;
+    }
+    const trimmed = topic.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const tokens = Array.from(new Set(tokenize(trimmed)));
+    const required = tokens.length ? Math.max(1, Math.ceil(tokens.length * 0.6)) : 0;
+    const phrase = trimmed.toLowerCase();
+    matchers.push({ tokens, required, phrase });
+  }
+  return matchers;
+}
+
+function extractHistoryPromptKeywords(text) {
+  if (typeof text !== "string") {
+    return [];
+  }
+  const tokens = tokenize(text);
+  return tokens.filter((token) => token && !HISTORY_PROMPT_STOPWORDS.has(token));
+}
+
+function matchesHistoryPromptKeywords(item, keywords) {
+  if (!Array.isArray(keywords) || !keywords.length) {
+    return true;
+  }
+  if (!item) {
+    return false;
+  }
+  const textParts = [];
+  if (typeof item.title === "string") {
+    textParts.push(item.title);
+  }
+  if (typeof item.url === "string") {
+    textParts.push(item.url);
+  }
+  if (typeof item.description === "string") {
+    textParts.push(item.description);
+  }
+  const combined = textParts.join(" ").trim();
+  if (!combined) {
+    return false;
+  }
+  const itemTokens = new Set(tokenize(combined));
+  for (const keyword of keywords) {
+    if (itemTokens.has(keyword)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeHistoryAiOptions(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -550,6 +644,14 @@ function normalizeHistoryAiOptions(payload) {
     : 0;
   const confidence = Math.min(1, Math.max(0, confidenceRaw));
   const dateRange = normalizeHistoryDateRange(payload.dateRange);
+  const topicMatchers = buildTopicMatchers(topics);
+  const topicTokenSet = new Set();
+  for (const matcher of topicMatchers) {
+    for (const token of matcher.tokens) {
+      topicTokenSet.add(token);
+    }
+  }
+  const topicTokens = Array.from(topicTokenSet);
 
   const hasDirective = Boolean(topics.length || dateRange || rawMaxItems !== null || followUp);
   if (!hasDirective && confidence <= 0.3) {
@@ -563,6 +665,8 @@ function normalizeHistoryAiOptions(payload) {
     maxItems: rawMaxItems,
     followUp,
     confidence,
+    topicMatchers,
+    topicTokens,
   };
 }
 
@@ -571,18 +675,68 @@ function matchesHistoryAiConstraints(item, filterType, historyAi) {
     return true;
   }
   const range = historyAi.dateRange;
-  if (!range) {
-    return true;
+  if (range) {
+    const timestamp = typeof item?.lastVisitTime === "number" ? item.lastVisitTime : null;
+    if (timestamp === null) {
+      return false;
+    }
+    if (range.startTimestamp !== null && timestamp < range.startTimestamp) {
+      return false;
+    }
+    if (range.endTimestamp !== null && timestamp > range.endTimestamp) {
+      return false;
+    }
   }
-  const timestamp = typeof item?.lastVisitTime === "number" ? item.lastVisitTime : null;
-  if (timestamp === null) {
-    return false;
-  }
-  if (range.startTimestamp !== null && timestamp < range.startTimestamp) {
-    return false;
-  }
-  if (range.endTimestamp !== null && timestamp > range.endTimestamp) {
-    return false;
+  if (
+    historyAi.requireTopicMatch &&
+    Array.isArray(historyAi.topicMatchers) &&
+    historyAi.topicMatchers.length
+  ) {
+    const textParts = [];
+    if (item && typeof item.title === "string") {
+      textParts.push(item.title);
+    }
+    if (item && typeof item.url === "string") {
+      textParts.push(item.url);
+    }
+    if (item && typeof item.description === "string") {
+      textParts.push(item.description);
+    }
+    const combined = textParts.join(" ").trim();
+    if (!combined) {
+      return false;
+    }
+    const normalized = combined.toLowerCase();
+    const itemTokens = new Set(tokenize(combined));
+    let matched = false;
+    for (const matcher of historyAi.topicMatchers) {
+      if (!matcher) {
+        continue;
+      }
+      let tokenHits = 0;
+      if (Array.isArray(matcher.tokens) && matcher.tokens.length) {
+        for (const token of matcher.tokens) {
+          if (itemTokens.has(token)) {
+            tokenHits += 1;
+            if (tokenHits >= (matcher.required || matcher.tokens.length)) {
+              break;
+            }
+          }
+        }
+        if (tokenHits >= (matcher.required || matcher.tokens.length)) {
+          matched = true;
+        }
+      }
+      if (!matched && matcher.phrase && normalized.includes(matcher.phrase)) {
+        matched = true;
+      }
+      if (matched) {
+        break;
+      }
+    }
+    if (!matched) {
+      return false;
+    }
   }
   return true;
 }
@@ -1610,12 +1764,23 @@ export function runSearch(query, data, options = {}) {
   const initial = (query || "").trim();
   const { filterType, remainder } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
+  const historyPromptText =
+    typeof options?.historyPrompt === "string" ? options.historyPrompt.trim() : "";
+  const promptKeywords = historyPromptText ? extractHistoryPromptKeywords(historyPromptText) : [];
   const { index, termBuckets, items, metadata = {} } = data;
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
 
   const historyAi = filterType === "history" ? normalizeHistoryAiOptions(options?.historyAi) : null;
+  if (historyAi) {
+    historyAi.requireTopicMatch =
+      historyAi.topics.length > 0 &&
+      !trimmed &&
+      historyAi.confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD &&
+      Array.isArray(historyAi.topicMatchers) &&
+      historyAi.topicMatchers.length > 0;
+  }
   const navigationState = options.navigation || null;
 
   if (NAVIGATION_FILTERS.has(filterType)) {
@@ -1662,6 +1827,10 @@ export function runSearch(query, data, options = {}) {
         matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext) &&
         matchesHistoryAiConstraints(item, filterType, historyAi)
     );
+
+    if (filterType === "history" && promptKeywords.length) {
+      defaultItems = defaultItems.filter((item) => matchesHistoryPromptKeywords(item, promptKeywords));
+    }
 
     if (filterType === "tab" || !filterType) {
       defaultItems.sort((a, b) => {
@@ -1751,7 +1920,15 @@ export function runSearch(query, data, options = {}) {
   }
 
   const historyTopics = Array.isArray(historyAi?.topics) ? historyAi.topics : [];
-  const effectiveQuery = historyTopics.length ? `${trimmed} ${historyTopics.join(" ")}`.trim() : trimmed;
+  const fallbackPromptTokens =
+    !trimmed && historyTopics.length === 0 ? promptKeywords : [];
+  const effectiveQueryParts = [trimmed];
+  if (historyTopics.length) {
+    effectiveQueryParts.push(historyTopics.join(" "));
+  } else if (fallbackPromptTokens.length) {
+    effectiveQueryParts.push(fallbackPromptTokens.join(" "));
+  }
+  const effectiveQuery = effectiveQueryParts.filter(Boolean).join(" ").trim();
   const tokens = tokenize(effectiveQuery);
   const uniqueTokens = Array.from(new Set(tokens));
   const totalTokens = uniqueTokens.length;
@@ -1805,8 +1982,8 @@ export function runSearch(query, data, options = {}) {
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
     let matchedCount = 0;
+    const matchedSet = tokenMatches.get(itemId);
     if (totalTokens > 0) {
-      const matchedSet = tokenMatches.get(itemId);
       matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
       if (matchedCount > 0) {
         finalScore += matchedCount * MATCHED_TOKEN_BONUS;
@@ -1818,6 +1995,21 @@ export function runSearch(query, data, options = {}) {
         }
       } else {
         finalScore -= totalTokens * MISSING_TOKEN_PENALTY;
+      }
+    }
+    if (historyAi && Array.isArray(historyAi.topicTokens) && historyAi.topicTokens.length) {
+      let topicHits = 0;
+      if (matchedSet) {
+        for (const token of historyAi.topicTokens) {
+          if (matchedSet.has(token)) {
+            topicHits += 1;
+          }
+        }
+      }
+      if (topicHits > 0) {
+        finalScore += topicHits * HISTORY_TOPIC_MATCH_BONUS;
+      } else if (!historyAi.requireTopicMatch) {
+        finalScore -= HISTORY_TOPIC_MISS_PENALTY;
       }
     }
     if (shortQuery && item.type === "tab") {
