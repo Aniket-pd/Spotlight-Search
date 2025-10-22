@@ -86,6 +86,49 @@ const HISTORY_PROMPT_STOPWORDS = new Set([
   "on",
 ]);
 
+const HISTORY_TOPIC_OPTIONAL_TOKENS = new Set([
+  "video",
+  "videos",
+  "article",
+  "articles",
+  "page",
+  "pages",
+  "site",
+  "sites",
+  "website",
+  "websites",
+  "result",
+  "results",
+  "link",
+  "links",
+  "tab",
+  "tabs",
+  "history",
+  "record",
+  "records",
+  "entry",
+  "entries",
+  "item",
+  "items",
+  "document",
+  "documents",
+  "doc",
+  "docs",
+  "file",
+  "files",
+  "message",
+  "messages",
+  "email",
+  "emails",
+  "post",
+  "posts",
+  "thread",
+  "threads",
+  "note",
+  "notes",
+  "content",
+]);
+
 function getResultLimit(filterType) {
   if (filterType === "history") {
     return HISTORY_MAX_RESULTS;
@@ -580,9 +623,23 @@ function buildTopicMatchers(topics) {
       continue;
     }
     const tokens = Array.from(new Set(tokenize(trimmed)));
-    const required = tokens.length ? Math.max(1, Math.ceil(tokens.length * 0.6)) : 0;
+    if (!tokens.length) {
+      continue;
+    }
+    const optionalTokens = tokens.filter((token) => HISTORY_TOPIC_OPTIONAL_TOKENS.has(token));
+    const coreTokens = tokens.filter((token) => !HISTORY_TOPIC_OPTIONAL_TOKENS.has(token));
+    const tokensForRequirement = coreTokens.length ? coreTokens : tokens;
+    const required = tokensForRequirement.length
+      ? Math.max(1, Math.ceil(tokensForRequirement.length * 0.6))
+      : 0;
     const phrase = trimmed.toLowerCase();
-    matchers.push({ tokens, required, phrase });
+    matchers.push({
+      tokens,
+      coreTokens,
+      optionalTokens,
+      required,
+      phrase,
+    });
   }
   return matchers;
 }
@@ -678,8 +735,16 @@ function normalizeHistoryAiOptions(payload) {
   const topicMatchers = buildTopicMatchers(topics);
   const topicTokenSet = new Set();
   for (const matcher of topicMatchers) {
-    for (const token of matcher.tokens) {
-      topicTokenSet.add(token);
+    if (!matcher) continue;
+    const tokenList = Array.isArray(matcher.coreTokens) && matcher.coreTokens.length
+      ? matcher.coreTokens
+      : Array.isArray(matcher.tokens)
+      ? matcher.tokens
+      : [];
+    for (const token of tokenList) {
+      if (token) {
+        topicTokenSet.add(token);
+      }
     }
   }
   const topicTokens = Array.from(topicTokenSet);
@@ -689,8 +754,11 @@ function normalizeHistoryAiOptions(payload) {
     return null;
   }
 
+  const hasCoreTopic = topicMatchers.some(
+    (matcher) => Array.isArray(matcher.coreTokens) && matcher.coreTokens.length
+  );
   const requireTopicMatch =
-    topicMatchers.length > 0 && confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD;
+    hasCoreTopic && confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD;
 
   return {
     action,
@@ -748,17 +816,24 @@ function matchesHistoryAiConstraints(item, filterType, historyAi) {
       if (!matcher) {
         continue;
       }
-      let tokenHits = 0;
-      if (Array.isArray(matcher.tokens) && matcher.tokens.length) {
-        for (const token of matcher.tokens) {
+      const matchTokens = Array.isArray(matcher.coreTokens) && matcher.coreTokens.length
+        ? matcher.coreTokens
+        : Array.isArray(matcher.tokens)
+        ? matcher.tokens
+        : [];
+      if (matchTokens.length) {
+        let tokenHits = 0;
+        const threshold = matcher.required || matchTokens.length;
+        for (const token of matchTokens) {
           if (itemTokens.has(token)) {
             tokenHits += 1;
-            if (tokenHits >= (matcher.required || matcher.tokens.length)) {
+            if (tokenHits >= threshold) {
+              matched = true;
               break;
             }
           }
         }
-        if (tokenHits >= (matcher.required || matcher.tokens.length)) {
+        if (!matched && tokenHits >= threshold) {
           matched = true;
         }
       }
