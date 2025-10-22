@@ -51,6 +51,7 @@ const FULL_TOKEN_MATCH_BONUS = 5.5;
 const MISSING_TOKEN_PENALTY = 6;
 const HISTORY_TOPIC_MATCH_BONUS = 2.75;
 const HISTORY_TOPIC_MISS_PENALTY = 1.25;
+const HISTORY_PROMPT_KEYWORD_MATCH_BONUS = 1.15;
 const HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD = 0.5;
 const HISTORY_PROMPT_STOPWORDS = new Set([
   "show",
@@ -594,34 +595,64 @@ function extractHistoryPromptKeywords(text) {
   return tokens.filter((token) => token && !HISTORY_PROMPT_STOPWORDS.has(token));
 }
 
-function matchesHistoryPromptKeywords(item, keywords) {
+function buildItemTokenAccessor() {
+  const cache = new WeakMap();
+  return function getItemTokens(item) {
+    if (!item || typeof item !== "object") {
+      return new Set();
+    }
+    if (cache.has(item)) {
+      return cache.get(item);
+    }
+    const textParts = [];
+    if (typeof item.title === "string") {
+      textParts.push(item.title);
+    }
+    if (typeof item.url === "string") {
+      textParts.push(item.url);
+    }
+    if (typeof item.description === "string") {
+      textParts.push(item.description);
+    }
+    const combined = textParts.join(" ").trim();
+    const tokens = combined ? new Set(tokenize(combined)) : new Set();
+    cache.set(item, tokens);
+    return tokens;
+  };
+}
+
+function countKeywordMatches(item, keywords, getTokens) {
   if (!Array.isArray(keywords) || !keywords.length) {
-    return true;
+    return 0;
   }
-  if (!item) {
-    return false;
+  const tokens = getTokens(item);
+  if (!tokens.size) {
+    return 0;
   }
-  const textParts = [];
-  if (typeof item.title === "string") {
-    textParts.push(item.title);
-  }
-  if (typeof item.url === "string") {
-    textParts.push(item.url);
-  }
-  if (typeof item.description === "string") {
-    textParts.push(item.description);
-  }
-  const combined = textParts.join(" ").trim();
-  if (!combined) {
-    return false;
-  }
-  const itemTokens = new Set(tokenize(combined));
+  let hits = 0;
   for (const keyword of keywords) {
-    if (itemTokens.has(keyword)) {
-      return true;
+    if (tokens.has(keyword)) {
+      hits += 1;
     }
   }
-  return false;
+  return hits;
+}
+
+function countTopicTokenMatches(item, historyAi, getTokens) {
+  if (!historyAi || !Array.isArray(historyAi.topicTokens) || !historyAi.topicTokens.length) {
+    return 0;
+  }
+  const tokens = getTokens(item);
+  if (!tokens.size) {
+    return 0;
+  }
+  let hits = 0;
+  for (const topicToken of historyAi.topicTokens) {
+    if (tokens.has(topicToken)) {
+      hits += 1;
+    }
+  }
+  return hits;
 }
 
 function normalizeHistoryAiOptions(payload) {
@@ -1773,14 +1804,6 @@ export function runSearch(query, data, options = {}) {
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
 
   const historyAi = filterType === "history" ? normalizeHistoryAiOptions(options?.historyAi) : null;
-  if (historyAi) {
-    historyAi.requireTopicMatch =
-      historyAi.topics.length > 0 &&
-      !trimmed &&
-      historyAi.confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD &&
-      Array.isArray(historyAi.topicMatchers) &&
-      historyAi.topicMatchers.length > 0;
-  }
   const navigationState = options.navigation || null;
 
   if (NAVIGATION_FILTERS.has(filterType)) {
@@ -1815,7 +1838,7 @@ export function runSearch(query, data, options = {}) {
   const commandContext = { tabCount, tabs, audibleTabCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
-  if (!trimmed && (!historyAi || historyAi.topics.length === 0)) {
+  if (!trimmed) {
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()
@@ -1828,20 +1851,43 @@ export function runSearch(query, data, options = {}) {
         matchesHistoryAiConstraints(item, filterType, historyAi)
     );
 
-    if (filterType === "history" && promptKeywords.length) {
-      defaultItems = defaultItems.filter((item) => matchesHistoryPromptKeywords(item, promptKeywords));
-    }
-
-    if (filterType === "tab" || !filterType) {
+    if (filterType === "history") {
+      const getItemTokens = buildItemTokenAccessor();
+      const keywordMatchesCache = new WeakMap();
+      const topicMatchesCache = new WeakMap();
+      const getKeywordHits = (item) => {
+        if (!promptKeywords.length) {
+          return 0;
+        }
+        if (keywordMatchesCache.has(item)) {
+          return keywordMatchesCache.get(item);
+        }
+        const hits = countKeywordMatches(item, promptKeywords, getItemTokens);
+        keywordMatchesCache.set(item, hits);
+        return hits;
+      };
+      const getTopicHits = (item) => {
+        if (!historyAi || !Array.isArray(historyAi.topicTokens) || !historyAi.topicTokens.length) {
+          return 0;
+        }
+        if (topicMatchesCache.has(item)) {
+          return topicMatchesCache.get(item);
+        }
+        const hits = countTopicTokenMatches(item, historyAi, getItemTokens);
+        topicMatchesCache.set(item, hits);
+        return hits;
+      };
       defaultItems.sort((a, b) => {
-        if (a.active && !b.active) return -1;
-        if (!a.active && b.active) return 1;
-        const aTime = a.lastAccessed || 0;
-        const bTime = b.lastAccessed || 0;
-        return bTime - aTime;
-      });
-    } else if (filterType === "history") {
-      defaultItems.sort((a, b) => {
+        const aTopic = getTopicHits(a);
+        const bTopic = getTopicHits(b);
+        if (bTopic !== aTopic) {
+          return bTopic - aTopic;
+        }
+        const aKeywords = getKeywordHits(a);
+        const bKeywords = getKeywordHits(b);
+        if (bKeywords !== aKeywords) {
+          return bKeywords - aKeywords;
+        }
         const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
         const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
         if (bTime !== aTime) return bTime - aTime;
@@ -1851,6 +1897,14 @@ export function runSearch(query, data, options = {}) {
         const aTitle = a.title || "";
         const bTitle = b.title || "";
         return aTitle.localeCompare(bTitle);
+      });
+    } else if (filterType === "tab" || !filterType) {
+      defaultItems.sort((a, b) => {
+        if (a.active && !b.active) return -1;
+        if (!a.active && b.active) return 1;
+        const aTime = a.lastAccessed || 0;
+        const bTime = b.lastAccessed || 0;
+        return bTime - aTime;
       });
     } else if (filterType === "download") {
       defaultItems.sort((a, b) => compareDownloadItems(a, b));
@@ -1919,20 +1973,28 @@ export function runSearch(query, data, options = {}) {
     };
   }
 
-  const historyTopics = Array.isArray(historyAi?.topics) ? historyAi.topics : [];
-  const fallbackPromptTokens =
-    !trimmed && historyTopics.length === 0 ? promptKeywords : [];
-  const effectiveQueryParts = [trimmed];
-  if (historyTopics.length) {
-    effectiveQueryParts.push(historyTopics.join(" "));
-  } else if (fallbackPromptTokens.length) {
-    effectiveQueryParts.push(fallbackPromptTokens.join(" "));
+  const primaryTokens = Array.from(new Set(tokenize(trimmed)));
+  const primaryTokenSet = new Set(primaryTokens);
+  const historyTopicTokens = Array.isArray(historyAi?.topicTokens) ? historyAi.topicTokens : [];
+  const historyTopicTokenSet = historyTopicTokens.length ? new Set(historyTopicTokens) : null;
+  const promptOptionalTokens = promptKeywords.filter((token) => token && !primaryTokenSet.has(token));
+  const promptOptionalTokenSet = promptOptionalTokens.length ? new Set(promptOptionalTokens) : null;
+  const optionalTokenSet = new Set();
+  if (historyTopicTokenSet) {
+    for (const token of historyTopicTokenSet) {
+      if (!primaryTokenSet.has(token)) {
+        optionalTokenSet.add(token);
+      }
+    }
   }
-  const effectiveQuery = effectiveQueryParts.filter(Boolean).join(" ").trim();
-  const tokens = tokenize(effectiveQuery);
-  const uniqueTokens = Array.from(new Set(tokens));
-  const totalTokens = uniqueTokens.length;
-  if (tokens.length === 0) {
+  if (promptOptionalTokenSet) {
+    for (const token of promptOptionalTokenSet) {
+      optionalTokenSet.add(token);
+    }
+  }
+  const searchTokens = primaryTokens.concat(Array.from(optionalTokenSet));
+  const totalPrimaryTokens = primaryTokenSet.size;
+  if (!searchTokens.length) {
     return {
       results: [],
       ghost: null,
@@ -1945,7 +2007,7 @@ export function runSearch(query, data, options = {}) {
   const scores = new Map();
   const tokenMatches = new Map();
 
-  for (const token of tokens) {
+  for (const token of searchTokens) {
     const exactEntry = index.get(token);
     if (exactEntry) {
       applyMatches(exactEntry, EXACT_BOOST, scores, token, tokenMatches);
@@ -1966,7 +2028,7 @@ export function runSearch(query, data, options = {}) {
   }
 
   const results = [];
-  const shortQuery = effectiveQuery.replace(/\s+/g, "").length <= 3;
+  const shortQuery = trimmed.replace(/\s+/g, "").length <= 3;
 
   for (const [itemId, score] of scores.entries()) {
     const item = items[itemId];
@@ -1981,34 +2043,43 @@ export function runSearch(query, data, options = {}) {
       continue;
     }
     let finalScore = score + (BASE_TYPE_SCORES[item.type] || 0) + computeRecencyBoost(item);
-    let matchedCount = 0;
+    let matchedPrimary = 0;
+    let matchedPromptOptional = 0;
+    let matchedTopicTokens = 0;
     const matchedSet = tokenMatches.get(itemId);
-    if (totalTokens > 0) {
-      matchedCount = matchedSet ? Math.min(matchedSet.size, totalTokens) : 0;
-      if (matchedCount > 0) {
-        finalScore += matchedCount * MATCHED_TOKEN_BONUS;
-        if (matchedCount === totalTokens) {
+    if (matchedSet && matchedSet.size) {
+      for (const token of matchedSet) {
+        if (primaryTokenSet.has(token)) {
+          matchedPrimary += 1;
+        }
+        if (historyTopicTokenSet && historyTopicTokenSet.has(token)) {
+          matchedTopicTokens += 1;
+        }
+        if (promptOptionalTokenSet && promptOptionalTokenSet.has(token)) {
+          matchedPromptOptional += 1;
+        }
+      }
+    }
+    if (totalPrimaryTokens > 0) {
+      if (matchedPrimary > 0) {
+        finalScore += matchedPrimary * MATCHED_TOKEN_BONUS;
+        if (matchedPrimary === totalPrimaryTokens) {
           finalScore += FULL_TOKEN_MATCH_BONUS;
         } else {
-          const missingCount = totalTokens - matchedCount;
+          const missingCount = totalPrimaryTokens - matchedPrimary;
           finalScore -= missingCount * MISSING_TOKEN_PENALTY;
         }
       } else {
-        finalScore -= totalTokens * MISSING_TOKEN_PENALTY;
+        finalScore -= totalPrimaryTokens * MISSING_TOKEN_PENALTY;
       }
     }
-    if (historyAi && Array.isArray(historyAi.topicTokens) && historyAi.topicTokens.length) {
-      let topicHits = 0;
-      if (matchedSet) {
-        for (const token of historyAi.topicTokens) {
-          if (matchedSet.has(token)) {
-            topicHits += 1;
-          }
-        }
-      }
-      if (topicHits > 0) {
-        finalScore += topicHits * HISTORY_TOPIC_MATCH_BONUS;
-      } else if (!historyAi.requireTopicMatch) {
+    if (matchedPromptOptional > 0) {
+      finalScore += matchedPromptOptional * HISTORY_PROMPT_KEYWORD_MATCH_BONUS;
+    }
+    if (historyTopicTokenSet && historyTopicTokenSet.size) {
+      if (matchedTopicTokens > 0) {
+        finalScore += matchedTopicTokens * HISTORY_TOPIC_MATCH_BONUS;
+      } else if (historyAi && historyAi.confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD) {
         finalScore -= HISTORY_TOPIC_MISS_PENALTY;
       }
     }
@@ -2027,8 +2098,8 @@ export function runSearch(query, data, options = {}) {
     }
     const mapped = buildResultFromItem(item, finalScore);
     if (mapped) {
-      if (totalTokens > 0) {
-        mapped.matchedTokens = matchedCount;
+      if (totalPrimaryTokens > 0) {
+        mapped.matchedTokens = matchedPrimary;
       }
       results.push(mapped);
     }
@@ -2042,9 +2113,9 @@ export function runSearch(query, data, options = {}) {
 
   const limit = applyHistoryAiLimit(getResultLimit(filterType), filterType, historyAi);
   let finalResults = sliceResultsForLimit(results, limit);
-  const minRequiredMatches = totalTokens >= 3 ? 2 : totalTokens >= 1 ? 1 : 0;
+  const minRequiredMatches = totalPrimaryTokens >= 3 ? 2 : totalPrimaryTokens >= 1 ? 1 : 0;
   const hasMeaningfulLocalResults = finalResults.some((result) =>
-    isMeaningfulLocalResult(result, minRequiredMatches, totalTokens)
+    isMeaningfulLocalResult(result, minRequiredMatches, totalPrimaryTokens)
   );
   const { engine: requestedEngine } = resolveRequestedSearchEngine(options?.webSearch);
   let activeWebSearchEngine = requestedEngine;
