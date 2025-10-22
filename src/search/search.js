@@ -689,6 +689,9 @@ function normalizeHistoryAiOptions(payload) {
     return null;
   }
 
+  const requireTopicMatch =
+    topicMatchers.length > 0 && confidence >= HISTORY_AI_TOPIC_CONFIDENCE_THRESHOLD;
+
   return {
     action,
     topics,
@@ -698,6 +701,7 @@ function normalizeHistoryAiOptions(payload) {
     confidence,
     topicMatchers,
     topicTokens,
+    requireTopicMatch,
   };
 }
 
@@ -2105,7 +2109,7 @@ export function runSearch(query, data, options = {}) {
     }
   }
 
-  if (commandSuggestions.results.length) {
+  if (!historyAi && commandSuggestions.results.length) {
     results.push(...commandSuggestions.results);
   }
 
@@ -2124,6 +2128,7 @@ export function runSearch(query, data, options = {}) {
 
   const shouldOfferFallback =
     trimmed &&
+    !historyAi &&
     webSearchApi &&
     typeof webSearchApi.createWebSearchResult === "function" &&
     (!finalResults.length || !hasMeaningfulLocalResults);
