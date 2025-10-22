@@ -1301,6 +1301,37 @@ function setHistoryPromptBusy(busy) {
   }
 }
 
+function handleHistoryIntentAvailabilityState(state) {
+  if (!historyPromptBusy) {
+    return;
+  }
+  const normalized = typeof state === "string" ? state.toLowerCase() : "";
+  if (normalized && normalized.includes("download")) {
+    updateHistoryIntentDownloadProgress();
+    return;
+  }
+  if (normalized && normalized !== "available" && normalized !== "ready" && normalized !== "unknown") {
+    setHistoryPromptStatus("Preparing Chrome's on-device model…");
+  }
+}
+
+function updateHistoryIntentDownloadProgress(progress) {
+  if (!historyPromptBusy) {
+    return;
+  }
+  if (typeof progress === "number" && Number.isFinite(progress)) {
+    const clamped = Math.max(0, Math.min(1, progress));
+    const percent = Math.round(clamped * 100);
+    if (percent >= 100) {
+      setHistoryPromptStatus("Finishing setup for Chrome's on-device model…");
+    } else {
+      setHistoryPromptStatus(`Downloading Chrome's on-device model… ${percent}%`);
+    }
+    return;
+  }
+  setHistoryPromptStatus("Downloading Chrome's on-device model…");
+}
+
 function handleHistoryPromptKeydown(event) {
   if (!historyPromptInputEl) {
     return;
@@ -1325,7 +1356,9 @@ function handleHistoryPromptKeydown(event) {
   });
 }
 
-async function ensureHistoryIntentSession() {
+async function ensureHistoryIntentSession(statusHandlers) {
+  const handlers = statusHandlers && typeof statusHandlers === "object" ? statusHandlers : {};
+  const { onAvailabilityChange, onDownloadProgress } = handlers;
   const aiApi = typeof globalThis !== "undefined" ? globalThis.ai : null;
   const languageModel = aiApi && aiApi.languageModel ? aiApi.languageModel : null;
   if (!languageModel || typeof languageModel.create !== "function") {
@@ -1337,18 +1370,54 @@ async function ensureHistoryIntentSession() {
         const availability = typeof languageModel.availability === "function"
           ? await languageModel.availability()
           : "unknown";
+        if (typeof onAvailabilityChange === "function") {
+          try {
+            onAvailabilityChange(availability);
+          } catch (callbackError) {
+            console.warn("Spotlight: history availability callback failed", callbackError);
+          }
+        }
         if (availability === "unavailable") {
           return null;
         }
-        const session = await languageModel.create({
+        const options = {
           initialPrompts: [{ role: "system", content: HISTORY_INTENT_SYSTEM_PROMPT }],
-        });
+        };
+        if (typeof onDownloadProgress === "function") {
+          options.monitor = (monitor) => {
+            if (!monitor || typeof monitor.addEventListener !== "function") {
+              return;
+            }
+            monitor.addEventListener("downloadprogress", (event) => {
+              try {
+                const loaded = event && typeof event.loaded === "number" ? event.loaded : null;
+                onDownloadProgress(loaded);
+              } catch (callbackError) {
+                console.warn("Spotlight: history download callback failed", callbackError);
+              }
+            });
+          };
+        }
+        const session = await languageModel.create(options);
+        if (typeof onAvailabilityChange === "function") {
+          try {
+            onAvailabilityChange("available");
+          } catch (callbackError) {
+            console.warn("Spotlight: history availability callback failed", callbackError);
+          }
+        }
         return session || null;
       } catch (err) {
         console.warn("Spotlight: unable to create history intent session", err);
         return null;
       }
     })();
+  } else if (typeof onAvailabilityChange === "function") {
+    try {
+      onAvailabilityChange("available");
+    } catch (callbackError) {
+      console.warn("Spotlight: history availability callback failed", callbackError);
+    }
   }
   const session = await historyIntentSessionPromise;
   if (!session) {
@@ -1368,11 +1437,17 @@ async function submitHistoryPrompt(rawQuery) {
   pendingHistoryIntent = null;
   setHistoryPromptBusy(true);
   setHistoryPromptStatus("Interpreting request…");
-  const session = await ensureHistoryIntentSession();
+  const session = await ensureHistoryIntentSession({
+    onAvailabilityChange: handleHistoryIntentAvailabilityState,
+    onDownloadProgress: updateHistoryIntentDownloadProgress,
+  });
   if (!session) {
     setHistoryPromptBusy(false);
     setHistoryPromptStatus("Chrome's on-device model isn't available yet.", { variant: "error" });
     return;
+  }
+  if (historyPromptBusy) {
+    setHistoryPromptStatus("Interpreting request…");
   }
   const payload = {
     query: rawQuery,
@@ -1391,7 +1466,10 @@ async function submitHistoryPrompt(rawQuery) {
   try {
     responseText = await runner.prompt(
       [{ role: "user", content: JSON.stringify(payload) }],
-      { responseConstraint: HISTORY_INTENT_SCHEMA }
+      {
+        responseConstraint: HISTORY_INTENT_SCHEMA,
+        omitResponseConstraintInput: true,
+      }
     );
   } catch (err) {
     console.warn("Spotlight: history intent prompt failed", err);
