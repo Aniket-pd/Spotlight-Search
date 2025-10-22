@@ -3,6 +3,7 @@ const PAGE_CACHE_LIMIT = 24;
 const SUMMARY_TTL = 15 * 60 * 1000;
 const PAGE_CACHE_TTL = 6 * 60 * 1000;
 const MAX_CONTENT_LENGTH = 12000;
+const STREAMING_UPDATE_INTERVAL = 350;
 
 function pruneCache(map, limit) {
   if (!map || map.size <= limit) {
@@ -129,6 +130,17 @@ function toErrorMessage(error) {
     return error.message;
   }
   return "Unable to generate summary";
+}
+
+function safeNotify(callback, payload) {
+  if (typeof callback !== "function") {
+    return;
+  }
+  try {
+    callback(payload);
+  } catch (err) {
+    console.warn("Spotlight: summary progress notification failed", err);
+  }
 }
 
 async function queryTabText(tabId) {
@@ -289,47 +301,106 @@ export function createSummarizerService() {
     return null;
   }
 
-  async function generateSummary(url, tabId) {
+  async function generateSummary(url, tabId, options = {}) {
+    const { onProgress } = options;
     const pageData = await resolvePageContent(url, tabId);
     const cached = getCachedSummary(url, pageData);
     if (cached) {
+      safeNotify(onProgress, { ...cached, done: true });
       return cached;
     }
-    const summarizer = await ensureSummarizer();
-    let summaryText;
+    let summarizer;
     try {
-      const context = pageData.title ? `Title: ${pageData.title}` : undefined;
-      summaryText = await summarizer.summarize(pageData.text, context ? { context } : undefined);
+      summarizer = await ensureSummarizer();
     } catch (error) {
-      summarizerInstance = null;
       throw error;
     }
-    const normalizedSummary = typeof summaryText === "string" ? summaryText.trim() : "";
-    if (!normalizedSummary) {
+    const context = pageData.title ? `Title: ${pageData.title}` : undefined;
+    let summaryText = "";
+    const summarySource = pageData.source || "unknown";
+
+    if (summarizer && typeof summarizer.summarizeStreaming === "function") {
+      try {
+        const stream = await summarizer.summarizeStreaming(
+          pageData.text,
+          context ? { context } : undefined
+        );
+        let aggregate = "";
+        let lastEmitTime = 0;
+        let lastBulletCount = 0;
+        for await (const chunk of stream) {
+          if (typeof chunk !== "string" || !chunk) {
+            continue;
+          }
+          aggregate += chunk;
+          const trimmed = aggregate.trim();
+          if (!trimmed) {
+            continue;
+          }
+          const bullets = parseSummaryBullets(trimmed).slice(0, 3);
+          const now = Date.now();
+          const shouldEmit =
+            bullets.length > lastBulletCount || now - lastEmitTime > STREAMING_UPDATE_INTERVAL;
+          if (!shouldEmit) {
+            continue;
+          }
+          lastEmitTime = now;
+          lastBulletCount = bullets.length;
+          safeNotify(onProgress, {
+            bullets: bullets.slice(),
+            raw: trimmed,
+            cached: false,
+            source: summarySource,
+            done: false,
+          });
+        }
+        summaryText = aggregate.trim();
+      } catch (streamError) {
+        console.warn("Spotlight: streaming summary failed, falling back", streamError);
+      }
+    }
+
+    if (!summaryText) {
+      try {
+        const response = await summarizer.summarize(
+          pageData.text,
+          context ? { context } : undefined
+        );
+        summaryText = typeof response === "string" ? response.trim() : "";
+      } catch (error) {
+        summarizerInstance = null;
+        throw error;
+      }
+    }
+
+    if (!summaryText) {
       throw new Error("Summary returned empty response");
     }
-    const bullets = parseSummaryBullets(normalizedSummary).slice(0, 3);
+
+    const bullets = parseSummaryBullets(summaryText).slice(0, 3);
     const entry = {
       bullets,
-      raw: normalizedSummary,
+      raw: summaryText,
       fingerprint: pageData.fingerprint,
       etag: pageData.etag,
       lastModified: pageData.lastModified,
       timestamp: Date.now(),
       lastUsed: Date.now(),
-      source: pageData.source || "unknown",
+      source: summarySource,
     };
     summaryCache.set(url, entry);
     pruneCache(summaryCache, SUMMARY_CACHE_LIMIT);
-    return {
+    const result = {
       bullets: bullets.slice(),
-      raw: normalizedSummary,
+      raw: summaryText,
       cached: false,
       source: entry.source,
     };
+    safeNotify(onProgress, { ...result, done: true });
+    return result;
   }
 
-  async function requestSummary({ url, tabId }) {
+  async function requestSummary({ url, tabId, onProgress }) {
     if (!url || typeof url !== "string") {
       throw new Error("Invalid URL for summary");
     }
@@ -337,7 +408,7 @@ export function createSummarizerService() {
     if (pendingSummaries.has(key)) {
       return pendingSummaries.get(key);
     }
-    const task = generateSummary(url, tabId)
+    const task = generateSummary(url, tabId, { onProgress })
       .catch((error) => {
         throw new Error(toErrorMessage(error));
       })

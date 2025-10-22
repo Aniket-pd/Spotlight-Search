@@ -533,8 +533,16 @@
   line-height: 1.4;
 }
 
+.spotlight-ai-panel-list.loading {
+  color: rgba(224, 231, 255, 0.78);
+}
+
 .spotlight-ai-panel-list li {
   padding-left: 4px;
+}
+
+.spotlight-ai-panel-list.loading li {
+  opacity: 0.85;
 }
 
 .spotlight-ai-panel-status {
@@ -545,6 +553,12 @@
 
 .spotlight-ai-panel-status.loading {
   color: rgba(180, 198, 255, 0.82);
+}
+
+.spotlight-ai-panel-status.loading-preview {
+  color: rgba(224, 231, 255, 0.78);
+  margin-bottom: 4px;
+  word-break: break-word;
 }
 
 .spotlight-ai-panel-status.error {

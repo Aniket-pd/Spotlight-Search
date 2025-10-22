@@ -1844,6 +1844,21 @@ function renderSummaryPanelForElement(item, url, entry) {
   panel.appendChild(header);
 
   if (entry.status === "loading") {
+    if (Array.isArray(entry.bullets) && entry.bullets.length) {
+      const list = document.createElement("ul");
+      list.className = `${TAB_SUMMARY_LIST_CLASS} loading`;
+      entry.bullets.slice(0, 3).forEach((bullet) => {
+        const itemEl = document.createElement("li");
+        itemEl.textContent = bullet;
+        list.appendChild(itemEl);
+      });
+      panel.appendChild(list);
+    } else if (entry.raw) {
+      const preview = document.createElement("div");
+      preview.className = `${TAB_SUMMARY_STATUS_CLASS} loading-preview`;
+      preview.textContent = entry.raw;
+      panel.appendChild(preview);
+    }
     const status = document.createElement("div");
     status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
     status.textContent = "Summarizing…";
@@ -1956,6 +1971,49 @@ function handleSummaryCopy(url) {
   }
 }
 
+function handleSummaryProgress(message) {
+  if (!message || typeof message.url !== "string") {
+    return;
+  }
+  const url = message.url;
+  const entry = tabSummaryState.get(url);
+  if (!entry) {
+    return;
+  }
+  if (
+    typeof message.requestId === "number" &&
+    Number.isFinite(message.requestId) &&
+    typeof entry.requestId === "number" &&
+    entry.requestId !== message.requestId
+  ) {
+    return;
+  }
+  const now = Date.now();
+  if (Array.isArray(message.bullets)) {
+    entry.bullets = message.bullets.filter(Boolean).slice(0, 3);
+  }
+  if (typeof message.raw === "string") {
+    entry.raw = message.raw.trim();
+  }
+  if (typeof message.source === "string") {
+    entry.source = message.source;
+  }
+  if (typeof message.cached === "boolean") {
+    entry.cached = message.cached;
+  }
+  if (message.done) {
+    entry.status = "ready";
+    entry.error = "";
+  } else if (entry.status !== "error") {
+    entry.status = "loading";
+    entry.error = "";
+  }
+  entry.lastUsed = now;
+  tabSummaryState.set(url, entry);
+  pruneSummaryState();
+  updateSummaryUIForUrl(url);
+}
+
 function requestSummaryForResult(result, options = {}) {
   if (!shouldSummarizeResult(result)) {
     return;
@@ -1991,6 +2049,7 @@ function requestSummaryForResult(result, options = {}) {
   const payload = {
     type: "SPOTLIGHT_SUMMARIZE",
     url,
+    summaryRequestId: requestId,
   };
   if (typeof result.tabId === "number" && !Number.isNaN(result.tabId)) {
     payload.tabId = result.tabId;
@@ -2899,6 +2958,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else {
       void openOverlay();
     }
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_SUMMARY_PROGRESS") {
+    handleSummaryProgress(message);
     return undefined;
   }
   if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {
