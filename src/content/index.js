@@ -33,6 +33,7 @@ let lastHistoryFollowUp = "";
 let historyPromptHelperPreviousText = null;
 let historyPromptLoadingRequestId = 0;
 let historyPromptHelperWasFollowUp = false;
+let historyPromptLoadingStatusActive = false;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -298,13 +299,14 @@ function updateHistoryPromptUi(aiState = historyAiState) {
 }
 
 function setHistoryPromptLoading(isLoading, requestId = 0) {
-  if (!historyPromptContainerEl) {
-    historyPromptHelperPreviousText = null;
-    historyPromptLoadingRequestId = 0;
-    return;
-  }
   if (isLoading) {
     historyPromptLoadingRequestId = requestId || historyPromptLoadingRequestId || -1;
+    historyPromptLoadingStatusActive = true;
+    setStatus(HISTORY_PROMPT_LOADING_MESSAGE, { force: true });
+    if (!historyPromptContainerEl) {
+      historyPromptHelperPreviousText = null;
+      return;
+    }
     historyPromptContainerEl.classList.add("loading");
     if (historyPromptHelperEl) {
       if (historyPromptHelperPreviousText === null) {
@@ -315,13 +317,20 @@ function setHistoryPromptLoading(isLoading, requestId = 0) {
       historyPromptHelperEl.classList.remove("follow-up");
       historyPromptHelperEl.classList.add("loading");
     }
-    setStatus(HISTORY_PROMPT_LOADING_MESSAGE, { force: true });
     return;
   }
   if (requestId && requestId !== historyPromptLoadingRequestId) {
     return;
   }
   historyPromptLoadingRequestId = 0;
+  if (historyPromptLoadingStatusActive) {
+    setStatus("", { force: true });
+    historyPromptLoadingStatusActive = false;
+  }
+  if (!historyPromptContainerEl) {
+    historyPromptHelperPreviousText = null;
+    return;
+  }
   historyPromptContainerEl.classList.remove("loading");
   if (historyPromptHelperEl) {
     historyPromptHelperEl.classList.remove("loading");
@@ -1823,13 +1832,7 @@ function handleHistoryPromptInput() {
     return;
   }
   historyPromptValue = historyPromptInputEl.value || "";
-  if (!isHistoryFilterQueryActive() || !inputEl) {
-    updateHistoryPromptUi();
-    return;
-  }
-  prepareForQueryDispatch();
   updateHistoryPromptUi();
-  scheduleResultsRequest(inputEl.value);
 }
 
 function handleHistoryPromptKeydown(event) {
@@ -1851,7 +1854,8 @@ function handleHistoryPromptKeydown(event) {
   }
 
   if (event.key === "Enter") {
-    submitCurrentQuery(event);
+    event.preventDefault();
+    submitHistoryPrompt();
   }
 }
 
