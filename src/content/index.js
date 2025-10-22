@@ -385,7 +385,8 @@ async function maybeInterpretHistoryPrompt(query, promptOverride, requestId) {
     return null;
   }
   const promptText = typeof promptOverride === "string" ? promptOverride.trim() : "";
-  const historyQuery = promptText || context.remainder.trim();
+  const baseQuery = context.remainder.trim();
+  const historyQuery = [baseQuery, promptText].filter(Boolean).join(" ").trim();
   if (!historyQuery) {
     return null;
   }
