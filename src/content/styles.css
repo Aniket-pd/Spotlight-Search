@@ -63,6 +63,65 @@
   background: rgba(32, 32, 40, 0.9);
 }
 
+.spotlight-history-intent {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 16, 24, 0.78);
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotlight-history-intent.visible {
+  display: flex;
+}
+
+.spotlight-history-intent.busy {
+  border-color: rgba(118, 141, 255, 0.65);
+  box-shadow: 0 0 0 1px rgba(118, 141, 255, 0.32);
+}
+
+.spotlight-history-intent-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.spotlight-history-intent-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #f5f5f5;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.spotlight-history-intent-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.spotlight-history-intent-status {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  min-height: 1.2em;
+}
+
+.spotlight-history-intent-status.error {
+  color: #fda4af;
+}
+
+.spotlight-history-intent-status.followup {
+  color: #facc15;
+}
+
+.spotlight-history-intent-status.success {
+  color: #a7f3d0;
+}
+
 .spotlight-input-container {
   position: relative;
   display: flex;

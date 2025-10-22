@@ -49,6 +49,78 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+let historyPromptContainerEl = null;
+let historyPromptInputEl = null;
+let historyPromptStatusEl = null;
+let historyPromptBusy = false;
+let historyIntentSessionPromise = null;
+let pendingHistoryIntent = null;
+const HISTORY_INTENT_DEFAULT_MAX_ITEMS = 5;
+const HISTORY_INTENT_MAX_AUTO_OPEN = 10;
+const HISTORY_INTENT_MIN_CONFIDENCE = 0.25;
+const HISTORY_SUBFILTER_LABELS = {
+  today: "Today",
+  yesterday: "Yesterday",
+  last7: "Last 7 Days",
+  last30: "Last 30 Days",
+  older: "Older",
+};
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HISTORY_INTENT_SYSTEM_PROMPT = `You are the Smart History Search interpreter for the Spotlight launcher.
+- Input: a JSON object { "query": string, "now": ISO 8601 date-time, "historyFilterActive": boolean }.
+- Only return a result when historyFilterActive is true; otherwise reply with { "confidence": 0 }.
+- Extract:
+  • action: "open" when the user wants tabs opened automatically, "show" when they just want suggestions.
+  • topics: array of keywords or short phrases describing what to match in browsing history.
+  • dateRange: { "start": ISO 8601 date, "end": ISO 8601 date } when the user specifies a time window (e.g., “last week”, “yesterday”, “September 2024”). Leave null when no constraint is present.
+  • maxItems: integer (default 5) when the user specifies a quantity (e.g., “first three”, “all”, “the top result” → 1).
+  • followUp: string question to disambiguate when intent is unclear; empty string when confident.
+  • confidence: number from 0–1 summarizing how certain you are about the interpretation.
+
+Guidelines:
+- Map “open” / “launch” / “reopen” intents to action "open". Map “show”, “find”, “what were”, “list” to action "show".
+- Interpret relative dates relative to \`now\`.
+- When the request references parts of a browsing session (“the ones after Amazon”), include key terms in topics to help the search ranker.
+- If you cannot determine any topics, set topics to an empty array and confidence to ≤0.25.
+- Never fabricate URLs or tab IDs. Your job is only to translate the natural language into filters.
+Return JSON only, matching this schema:
+{
+  "action": "open" | "show",
+  "topics": string[],
+  "dateRange": { "start": string | null, "end": string | null },
+  "maxItems": number | null,
+  "followUp": string,
+  "confidence": number
+}`;
+const HISTORY_INTENT_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["open", "show"] },
+    topics: {
+      type: "array",
+      items: { type: "string" },
+    },
+    dateRange: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          properties: {
+            start: { anyOf: [{ type: "string" }, { type: "null" }] },
+            end: { anyOf: [{ type: "string" }, { type: "null" }] },
+          },
+          required: ["start", "end"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    maxItems: { anyOf: [{ type: "integer" }, { type: "null" }] },
+    followUp: { type: "string" },
+    confidence: { type: "number" },
+  },
+  required: ["action", "topics", "dateRange", "maxItems", "followUp", "confidence"],
+  additionalProperties: false,
+};
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -378,6 +450,33 @@ function createOverlay() {
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
 
+  historyPromptContainerEl = document.createElement("div");
+  historyPromptContainerEl.className = "spotlight-history-intent";
+  historyPromptContainerEl.setAttribute("aria-hidden", "true");
+
+  const historyPromptLabel = document.createElement("div");
+  historyPromptLabel.className = "spotlight-history-intent-label";
+  historyPromptLabel.textContent = "Smart history search";
+  historyPromptContainerEl.appendChild(historyPromptLabel);
+
+  historyPromptInputEl = document.createElement("input");
+  historyPromptInputEl.type = "text";
+  historyPromptInputEl.className = "spotlight-history-intent-input";
+  historyPromptInputEl.setAttribute("placeholder", "Describe what to find in your history…");
+  historyPromptInputEl.setAttribute("spellcheck", "false");
+  historyPromptInputEl.setAttribute("autocomplete", "off");
+  historyPromptInputEl.setAttribute("aria-label", "Describe the history you want to find");
+  historyPromptInputEl.tabIndex = -1;
+  historyPromptContainerEl.appendChild(historyPromptInputEl);
+
+  historyPromptStatusEl = document.createElement("div");
+  historyPromptStatusEl.className = "spotlight-history-intent-status";
+  historyPromptStatusEl.setAttribute("aria-live", "polite");
+  historyPromptStatusEl.textContent = "";
+  historyPromptContainerEl.appendChild(historyPromptStatusEl);
+
+  inputWrapper.appendChild(historyPromptContainerEl);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -432,6 +531,17 @@ function createOverlay() {
       inputContainerEl.classList.remove("focused");
     }
   });
+  if (historyPromptInputEl) {
+    historyPromptInputEl.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      handleHistoryPromptKeydown(event);
+    });
+    historyPromptInputEl.addEventListener("input", () => {
+      if (!historyPromptBusy) {
+        setHistoryPromptStatus("");
+      }
+    });
+  }
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
@@ -1127,6 +1237,405 @@ function handleSubfilterClick(option) {
   requestResults(inputEl.value);
 }
 
+function updateHistoryPromptVisibility() {
+  if (!historyPromptContainerEl) {
+    return;
+  }
+  const shouldShow = isOpen && activeFilter === "history";
+  historyPromptContainerEl.classList.toggle("visible", shouldShow);
+  historyPromptContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (historyPromptInputEl) {
+    historyPromptInputEl.tabIndex = shouldShow ? 0 : -1;
+    if (!shouldShow) {
+      historyPromptInputEl.disabled = false;
+      historyPromptInputEl.removeAttribute("aria-busy");
+    }
+  }
+  if (!shouldShow) {
+    if (historyPromptContainerEl) {
+      historyPromptContainerEl.classList.remove("busy");
+    }
+    historyPromptBusy = false;
+    setHistoryPromptStatus("");
+  }
+}
+
+function resetHistoryPrompt() {
+  if (historyPromptInputEl) {
+    historyPromptInputEl.value = "";
+    historyPromptInputEl.disabled = false;
+    historyPromptInputEl.removeAttribute("aria-busy");
+  }
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.remove("busy");
+  }
+  historyPromptBusy = false;
+  setHistoryPromptStatus("");
+}
+
+function setHistoryPromptStatus(message, options = {}) {
+  if (!historyPromptStatusEl) {
+    return;
+  }
+  const opts = typeof options === "string" ? { variant: options } : options || {};
+  const variant = typeof opts.variant === "string" ? opts.variant : "";
+  historyPromptStatusEl.textContent = message || "";
+  historyPromptStatusEl.classList.remove("error", "followup", "success");
+  if (variant === "error" || variant === "followup" || variant === "success") {
+    historyPromptStatusEl.classList.add(variant);
+  }
+}
+
+function setHistoryPromptBusy(busy) {
+  historyPromptBusy = Boolean(busy);
+  if (historyPromptContainerEl) {
+    historyPromptContainerEl.classList.toggle("busy", historyPromptBusy);
+  }
+  if (historyPromptInputEl) {
+    historyPromptInputEl.disabled = historyPromptBusy;
+    if (historyPromptBusy) {
+      historyPromptInputEl.setAttribute("aria-busy", "true");
+    } else {
+      historyPromptInputEl.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function handleHistoryPromptKeydown(event) {
+  if (!historyPromptInputEl) {
+    return;
+  }
+  if (event.key !== "Enter" || event.isComposing) {
+    return;
+  }
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return;
+  }
+  event.preventDefault();
+  const value = historyPromptInputEl.value.trim();
+  if (!value) {
+    setHistoryPromptStatus("Describe what you're looking for in your history.", { variant: "followup" });
+    return;
+  }
+  if (historyPromptBusy) {
+    return;
+  }
+  submitHistoryPrompt(value).catch((error) => {
+    console.warn("Spotlight: history prompt submission failed", error);
+  });
+}
+
+async function ensureHistoryIntentSession() {
+  const aiApi = typeof globalThis !== "undefined" ? globalThis.ai : null;
+  const languageModel = aiApi && aiApi.languageModel ? aiApi.languageModel : null;
+  if (!languageModel || typeof languageModel.create !== "function") {
+    return null;
+  }
+  if (!historyIntentSessionPromise) {
+    historyIntentSessionPromise = (async () => {
+      try {
+        const availability = typeof languageModel.availability === "function"
+          ? await languageModel.availability()
+          : "unknown";
+        if (availability === "unavailable") {
+          return null;
+        }
+        const session = await languageModel.create({
+          initialPrompts: [{ role: "system", content: HISTORY_INTENT_SYSTEM_PROMPT }],
+        });
+        return session || null;
+      } catch (err) {
+        console.warn("Spotlight: unable to create history intent session", err);
+        return null;
+      }
+    })();
+  }
+  const session = await historyIntentSessionPromise;
+  if (!session) {
+    historyIntentSessionPromise = null;
+  }
+  return session;
+}
+
+async function submitHistoryPrompt(rawQuery) {
+  if (!rawQuery) {
+    return;
+  }
+  if (activeFilter !== "history") {
+    setHistoryPromptStatus("Activate the history filter to use smart search.", { variant: "error" });
+    return;
+  }
+  pendingHistoryIntent = null;
+  setHistoryPromptBusy(true);
+  setHistoryPromptStatus("Interpreting request…");
+  const session = await ensureHistoryIntentSession();
+  if (!session) {
+    setHistoryPromptBusy(false);
+    setHistoryPromptStatus("Chrome's on-device model isn't available yet.", { variant: "error" });
+    return;
+  }
+  const payload = {
+    query: rawQuery,
+    now: new Date().toISOString(),
+    historyFilterActive: true,
+  };
+  let runner = session;
+  if (typeof session.clone === "function") {
+    try {
+      runner = await session.clone();
+    } catch (err) {
+      runner = session;
+    }
+  }
+  let responseText = "";
+  try {
+    responseText = await runner.prompt(
+      [{ role: "user", content: JSON.stringify(payload) }],
+      { responseConstraint: HISTORY_INTENT_SCHEMA }
+    );
+  } catch (err) {
+    console.warn("Spotlight: history intent prompt failed", err);
+    setHistoryPromptStatus("Couldn't interpret that request. Try again.", { variant: "error" });
+    if (runner && runner !== session && typeof runner.destroy === "function") {
+      try {
+        runner.destroy();
+      } catch (destroyError) {
+        // Ignore
+      }
+    }
+    setHistoryPromptBusy(false);
+    return;
+  }
+  if (runner && runner !== session && typeof runner.destroy === "function") {
+    try {
+      runner.destroy();
+    } catch (destroyError) {
+      // Ignore
+    }
+  }
+  setHistoryPromptBusy(false);
+  let parsed;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch (err) {
+    console.warn("Spotlight: invalid history intent response", err);
+    setHistoryPromptStatus("Model returned an unexpected response.", { variant: "error" });
+    return;
+  }
+  applyHistoryIntentResult(parsed, rawQuery);
+}
+
+function applyHistoryIntentResult(result, rawQuery) {
+  if (!result || typeof result !== "object") {
+    setHistoryPromptStatus("I couldn't interpret that request.", { variant: "error" });
+    return;
+  }
+  const followUp = typeof result.followUp === "string" ? result.followUp.trim() : "";
+  const rawTopics = Array.isArray(result.topics) ? result.topics : [];
+  const topics = rawTopics
+    .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
+    .filter(Boolean);
+  const confidence = typeof result.confidence === "number" && Number.isFinite(result.confidence)
+    ? Math.max(0, Math.min(1, result.confidence))
+    : null;
+
+  if (confidence === 0 && !topics.length && !followUp) {
+    setHistoryPromptStatus("Activate the history filter to use smart search.", { variant: "error" });
+    return;
+  }
+
+  if (followUp) {
+    setHistoryPromptStatus(followUp, { variant: "followup" });
+    return;
+  }
+
+  if (!topics.length) {
+    if (confidence !== null && confidence <= HISTORY_INTENT_MIN_CONFIDENCE) {
+      setHistoryPromptStatus("I need more details to search your history.", { variant: "error" });
+      return;
+    }
+    if (rawQuery) {
+      topics.push(rawQuery);
+    }
+  }
+
+  const query = buildHistoryQuery(topics);
+  const subfilterId = mapDateRangeToHistorySubfilter(result.dateRange, Date.now());
+  const requestId = applyHistoryQuery(query, subfilterId);
+  if (requestId === null) {
+    setHistoryPromptStatus("Couldn't run a history search just yet.", { variant: "error" });
+    return;
+  }
+
+  const action = typeof result.action === "string" && result.action.toLowerCase() === "open" ? "open" : "show";
+  const maxItems = sanitizeHistoryIntentMaxItems(result.maxItems);
+  pendingHistoryIntent = {
+    requestId,
+    action,
+    maxItems,
+    confidence,
+  };
+
+  const subfilterLabel = typeof subfilterId === "string" ? HISTORY_SUBFILTER_LABELS[subfilterId] : "";
+  const confidenceLabel = formatConfidenceLabel(confidence);
+  const parts = [];
+  parts.push(action === "open" ? "Searching history to reopen matches…" : "Searching history…");
+  if (subfilterLabel) {
+    parts.push(subfilterLabel);
+  }
+  if (confidenceLabel) {
+    parts.push(confidenceLabel);
+  }
+  setHistoryPromptStatus(parts.join(" · "));
+}
+
+function buildHistoryQuery(topics) {
+  const normalized = Array.isArray(topics)
+    ? topics.map((topic) => (typeof topic === "string" ? topic.trim() : "")).filter(Boolean)
+    : [];
+  if (!normalized.length) {
+    return "history:";
+  }
+  return `history: ${normalized.join(" ")}`.trim();
+}
+
+function sanitizeHistoryIntentMaxItems(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return HISTORY_INTENT_DEFAULT_MAX_ITEMS;
+  }
+  const rounded = Math.max(1, Math.floor(value));
+  return Math.min(rounded, HISTORY_INTENT_MAX_AUTO_OPEN);
+}
+
+function mapDateRangeToHistorySubfilter(range, referenceTime) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const startValue = typeof range.start === "string" ? Date.parse(range.start) : null;
+  const endValue = typeof range.end === "string" ? Date.parse(range.end) : null;
+  const startMs = Number.isFinite(startValue) ? startValue : null;
+  const endMs = Number.isFinite(endValue) ? endValue : null;
+  if (startMs === null && endMs === null) {
+    return null;
+  }
+  const nowMs = Number.isFinite(referenceTime) ? referenceTime : Date.now();
+  const startToday = startOfDay(nowMs);
+  const startYesterday = startToday - DAY_MS;
+  const sevenDaysAgo = nowMs - 7 * DAY_MS;
+  const thirtyDaysAgo = nowMs - 30 * DAY_MS;
+  const earliest = startMs !== null && endMs !== null ? Math.min(startMs, endMs) : startMs ?? endMs;
+  const latest = startMs !== null && endMs !== null ? Math.max(startMs, endMs) : startMs ?? endMs;
+
+  if (earliest !== null && earliest >= startToday) {
+    return "today";
+  }
+  if (earliest !== null && earliest >= startYesterday && (latest === null || latest < startToday)) {
+    return "yesterday";
+  }
+  if (earliest !== null && earliest >= sevenDaysAgo) {
+    return "last7";
+  }
+  if (earliest !== null && earliest >= thirtyDaysAgo) {
+    return "last30";
+  }
+  if (latest !== null && latest < thirtyDaysAgo) {
+    return "older";
+  }
+  return null;
+}
+
+function startOfDay(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function applyHistoryQuery(query, subfilterId) {
+  if (!inputEl) {
+    return null;
+  }
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+  if (typeof subfilterId === "string" && subfilterId) {
+    selectedSubfilter = { type: "history", id: subfilterId };
+    if (subfilterState.type === "history") {
+      subfilterState = { ...subfilterState, activeId: subfilterId };
+      renderSubfilters();
+    }
+  } else if (selectedSubfilter && selectedSubfilter.type === "history") {
+    selectedSubfilter = null;
+    if (subfilterState.type === "history") {
+      subfilterState = { ...subfilterState, activeId: "all" };
+      renderSubfilters();
+    }
+  }
+  inputEl.value = query;
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  updateSlashMenu();
+  updateEngineMenu();
+  setStatus("", { force: true });
+  setGhostText("");
+  activeIndex = -1;
+  updateActiveResult();
+  pointerNavigationSuspended = true;
+  return requestResults(inputEl.value);
+}
+
+function formatConfidenceLabel(confidence) {
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
+    return "";
+  }
+  const bounded = Math.max(0, Math.min(1, confidence));
+  return `confidence ${(bounded * 100).toFixed(0)}%`;
+}
+
+function handleHistoryIntentResponse(intentState) {
+  if (!intentState) {
+    return;
+  }
+  const { action, maxItems, confidence } = intentState;
+  const historyResults = resultsState.filter((result) => result && result.type === "history");
+  const confidenceLabel = formatConfidenceLabel(confidence);
+
+  if (action === "open") {
+    if (!historyResults.length) {
+      const message = confidenceLabel
+        ? `No matching history found · ${confidenceLabel}`
+        : "No matching history found.";
+      setHistoryPromptStatus(message, { variant: "error" });
+      return;
+    }
+    const limit = Math.max(1, Math.min(maxItems || HISTORY_INTENT_DEFAULT_MAX_ITEMS, HISTORY_INTENT_MAX_AUTO_OPEN));
+    const selection = historyResults.slice(0, limit);
+    selection.forEach((result, index) => {
+      openResult(result, { keepOpen: index < selection.length - 1 });
+    });
+    return;
+  }
+
+  if (!historyResults.length) {
+    const message = confidenceLabel
+      ? `No matching history found · ${confidenceLabel}`
+      : "No matching history found.";
+    setHistoryPromptStatus(message, { variant: "error" });
+    if (historyPromptInputEl) {
+      historyPromptInputEl.focus({ preventScroll: true });
+    }
+    return;
+  }
+
+  const countLabel = historyResults.length === 1
+    ? "Showing 1 history result"
+    : `Showing ${historyResults.length} history results`;
+  const statusMessage = confidenceLabel ? `${countLabel} · ${confidenceLabel}` : countLabel;
+  setHistoryPromptStatus(statusMessage, { variant: "success" });
+  if (historyPromptInputEl) {
+    historyPromptInputEl.focus({ preventScroll: true });
+  }
+}
+
 async function openOverlay() {
   if (isOpen) {
     inputEl.focus();
@@ -1148,6 +1657,8 @@ async function openOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  pendingHistoryIntent = null;
+  resetHistoryPrompt();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -1170,6 +1681,7 @@ async function openOverlay() {
     inputEl.focus({ preventScroll: true });
     inputEl.select();
   }, 10);
+  updateHistoryPromptVisibility();
 }
 
 function closeOverlay() {
@@ -1188,6 +1700,9 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  pendingHistoryIntent = null;
+  resetHistoryPrompt();
+  updateHistoryPromptVisibility();
   setGhostText("");
   resetSlashMenuState();
   resetEngineMenuState();
@@ -1398,6 +1913,11 @@ function requestResults(query) {
           setGhostText("");
           setStatus("", { force: true });
         }
+        if (pendingHistoryIntent && pendingHistoryIntent.requestId === message.requestId) {
+          setHistoryPromptStatus("History search unavailable.", { variant: "error" });
+          pendingHistoryIntent = null;
+        }
+        updateHistoryPromptVisibility();
         return;
       }
       if (!response || response.requestId !== lastRequestId) {
@@ -1412,6 +1932,7 @@ function requestResults(query) {
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
+      updateHistoryPromptVisibility();
 
       if (response.webSearch && typeof response.webSearch.engineId === "string") {
         const api = getWebSearchApi();
@@ -1461,8 +1982,14 @@ function requestResults(query) {
       } else if (!ghostSuggestionText) {
         setStatus("", { force: true });
       }
+
+      if (pendingHistoryIntent && pendingHistoryIntent.requestId === response.requestId) {
+        handleHistoryIntentResponse(pendingHistoryIntent);
+        pendingHistoryIntent = null;
+      }
     }
   );
+  return lastRequestId;
 }
 
 function setStatus(message, options = {}) {
@@ -1637,15 +2164,18 @@ function triggerWebSearch(engineIdOverride = null) {
   return true;
 }
 
-function openResult(result) {
+function openResult(result, options = {}) {
   if (!result) return;
+  const keepOpen = Boolean(options && options.keepOpen);
   if (result.type === "command") {
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
       payload.args = result.args;
     }
     chrome.runtime.sendMessage(payload);
-    closeOverlay();
+    if (!keepOpen) {
+      closeOverlay();
+    }
     return;
   }
   if (result.type === "navigation") {
@@ -1659,7 +2189,9 @@ function openResult(result) {
         }
       );
     }
-    closeOverlay();
+    if (!keepOpen) {
+      closeOverlay();
+    }
     return;
   }
   if (result.type === "webSearch") {
@@ -1683,11 +2215,15 @@ function openResult(result) {
         console.warn("Spotlight web search error", chrome.runtime.lastError);
       }
     });
-    closeOverlay();
+    if (!keepOpen) {
+      closeOverlay();
+    }
     return;
   }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
-  closeOverlay();
+  if (!keepOpen) {
+    closeOverlay();
+  }
 }
 
 function shouldSummarizeResult(result) {

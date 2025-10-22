@@ -11,7 +11,8 @@
     "scripting",
     "webNavigation",
     "downloads",
-    "topSites"
+    "topSites",
+    "languageModel"
   ],
   "host_permissions": ["file:///*"],
   "background": {
