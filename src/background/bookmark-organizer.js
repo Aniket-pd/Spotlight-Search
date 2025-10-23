@@ -125,6 +125,8 @@ const RESPONSE_SCHEMA = {
 const DEFAULT_LANGUAGE = "English";
 const DEFAULT_BOOKMARK_LIMIT = 60;
 const MAX_BOOKMARK_LIMIT = 200;
+const RECENTLY_ORGANIZED_TTL = 10 * 60 * 1000; // 10 minutes
+const RECENTLY_ORGANIZED_MAX = 600;
 
 function formatDate(timestamp) {
   if (!timestamp) {
@@ -322,19 +324,34 @@ function binarySearchInsertDescending(array, value, compare) {
   return low;
 }
 
-function selectMostRecentBookmarks(bookmarks, limit) {
+function selectMostRecentBookmarks(bookmarks, limit, excludeIds) {
   const total = Array.isArray(bookmarks) ? bookmarks : [];
   if (!total.length) {
     return [];
   }
   const max = clampLimit(limit);
-  if (total.length <= max) {
-    return [...total].sort(compareBookmarksByRecency);
+  const exclude = excludeIds instanceof Set && excludeIds.size ? excludeIds : null;
+
+  if (!exclude) {
+    if (total.length <= max) {
+      return [...total].sort(compareBookmarksByRecency);
+    }
+  } else {
+    const filtered = total.filter((entry) => entry && !exclude.has(String(entry.id)));
+    if (!filtered.length) {
+      return [];
+    }
+    if (filtered.length <= max) {
+      return filtered.sort(compareBookmarksByRecency);
+    }
   }
 
   const selected = [];
   for (const entry of total) {
     if (!entry) {
+      continue;
+    }
+    if (exclude && exclude.has(String(entry.id))) {
       continue;
     }
     const index = binarySearchInsertDescending(selected, entry, compareBookmarksByRecency);
@@ -554,14 +571,14 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
   return { renamed, moved, createdFolders: createdFolders.size };
 }
 
-async function collectRecentBookmarks(limit) {
+async function collectRecentBookmarks(limit, excludeIds) {
   const tree = await getBookmarkTree();
   const meta = flattenBookmarkTree(tree);
   const flattened = meta.bookmarks;
   if (!flattened.length) {
     return { bookmarks: [], folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
   }
-  const limited = selectMostRecentBookmarks(flattened, limit);
+  const limited = selectMostRecentBookmarks(flattened, limit, excludeIds);
   return { bookmarks: limited, folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
 }
 
@@ -570,6 +587,45 @@ export function createBookmarkOrganizerService(options = {}) {
   let sessionInstance = null;
   let sessionPromise = null;
   let activeRequest = null;
+  const recentlyOrganized = new Map();
+
+  function pruneRecentlyOrganized(now = Date.now()) {
+    for (const [id, timestamp] of recentlyOrganized) {
+      if (!Number.isFinite(timestamp) || now - timestamp > RECENTLY_ORGANIZED_TTL) {
+        recentlyOrganized.delete(id);
+      }
+    }
+  }
+
+  function buildExcludeSet(now = Date.now()) {
+    pruneRecentlyOrganized(now);
+    if (!recentlyOrganized.size) {
+      return null;
+    }
+    return new Set(recentlyOrganized.keys());
+  }
+
+  function rememberOrganized(ids, now = Date.now()) {
+    if (!Array.isArray(ids) || !ids.length) {
+      return;
+    }
+    pruneRecentlyOrganized(now);
+    for (const id of ids) {
+      if (!id && id !== "0") {
+        continue;
+      }
+      recentlyOrganized.set(String(id), now);
+    }
+    if (recentlyOrganized.size > RECENTLY_ORGANIZED_MAX) {
+      const entries = [...recentlyOrganized.entries()].sort((a, b) => a[1] - b[1]);
+      for (const [id] of entries) {
+        if (recentlyOrganized.size <= RECENTLY_ORGANIZED_MAX) {
+          break;
+        }
+        recentlyOrganized.delete(id);
+      }
+    }
+  }
 
   async function ensureSession() {
     if (sessionInstance) {
@@ -632,13 +688,19 @@ export function createBookmarkOrganizerService(options = {}) {
     const task = (async () => {
       const limit = clampLimit(options.limit);
       const language = typeof options.language === "string" && options.language ? options.language : DEFAULT_LANGUAGE;
-      const { bookmarks, folderLookup, nodeMap } = await collectRecentBookmarks(limit);
+      const startedAt = Date.now();
+      const excludeSet = buildExcludeSet(startedAt);
+      const { bookmarks, folderLookup, nodeMap } = await collectRecentBookmarks(limit, excludeSet);
       if (!bookmarks.length) {
-        throw new Error("No bookmarks available to organize");
+        throw new Error("No new bookmarks available to organize");
       }
       const payload = buildPromptPayload(bookmarks, language);
       const { raw, parsed } = await runPrompt(payload);
       const changes = await applyOrganizerChanges(bookmarks, parsed, { folderLookup, nodeMap });
+      rememberOrganized(
+        bookmarks.map((entry) => (entry && typeof entry.id !== "undefined" ? String(entry.id) : null)).filter(Boolean),
+        Date.now()
+      );
       if (
         typeof scheduleRebuild === "function" &&
         changes &&
