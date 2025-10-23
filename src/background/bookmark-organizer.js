@@ -297,6 +297,55 @@ function clampLimit(limit) {
   return Math.min(Math.floor(limit), MAX_BOOKMARK_LIMIT);
 }
 
+function compareBookmarksByRecency(a, b) {
+  const aTime = typeof a?.dateAdded === "number" ? a.dateAdded : 0;
+  const bTime = typeof b?.dateAdded === "number" ? b.dateAdded : 0;
+  if (bTime !== aTime) {
+    return bTime - aTime;
+  }
+  const aTitle = typeof a?.title === "string" ? a.title : "";
+  const bTitle = typeof b?.title === "string" ? b.title : "";
+  return aTitle.localeCompare(bTitle);
+}
+
+function binarySearchInsertDescending(array, value, compare) {
+  let low = 0;
+  let high = array.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (compare(value, array[mid]) < 0) {
+      high = mid;
+    } else {
+      low = mid + 1;
+    }
+  }
+  return low;
+}
+
+function selectMostRecentBookmarks(bookmarks, limit) {
+  const total = Array.isArray(bookmarks) ? bookmarks : [];
+  if (!total.length) {
+    return [];
+  }
+  const max = clampLimit(limit);
+  if (total.length <= max) {
+    return [...total].sort(compareBookmarksByRecency);
+  }
+
+  const selected = [];
+  for (const entry of total) {
+    if (!entry) {
+      continue;
+    }
+    const index = binarySearchInsertDescending(selected, entry, compareBookmarksByRecency);
+    selected.splice(index, 0, entry);
+    if (selected.length > max) {
+      selected.pop();
+    }
+  }
+  return selected;
+}
+
 function buildPromptPayload(bookmarks, language) {
   const payload = {
     language: language || DEFAULT_LANGUAGE,
@@ -503,15 +552,7 @@ async function collectRecentBookmarks(limit) {
   if (!flattened.length) {
     return { bookmarks: [], folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
   }
-  const sorted = flattened.sort((a, b) => {
-    const aTime = typeof a.dateAdded === "number" ? a.dateAdded : 0;
-    const bTime = typeof b.dateAdded === "number" ? b.dateAdded : 0;
-    if (bTime !== aTime) {
-      return bTime - aTime;
-    }
-    return (a.title || "").localeCompare(b.title || "");
-  });
-  const limited = sorted.slice(0, clampLimit(limit));
+  const limited = selectMostRecentBookmarks(flattened, limit);
   return { bookmarks: limited, folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
 }
 
