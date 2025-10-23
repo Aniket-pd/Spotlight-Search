@@ -7,6 +7,7 @@ import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
 import { createSummarizerService } from "./summarizer.js";
+import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -16,7 +17,12 @@ import {
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const executeCommand = createCommandExecutor({ tabActions, scheduleRebuild: context.scheduleRebuild });
+const organizer = createBookmarkOrganizerService({ scheduleRebuild: context.scheduleRebuild });
+const executeCommand = createCommandExecutor({
+  tabActions,
+  scheduleRebuild: context.scheduleRebuild,
+  bookmarkOrganizer: organizer,
+});
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
@@ -30,6 +36,7 @@ registerMessageHandlers({
   resolveFaviconForTarget,
   navigation,
   summaries,
+  organizer,
 });
 
 registerLifecycleEvents(context);

@@ -30,8 +30,11 @@ let statusSticky = false;
 let activeFilter = null;
 let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
-let subfilterState = { type: null, options: [], activeId: null };
+let subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
 let selectedSubfilter = null;
+let bookmarkOrganizerControl = null;
+let bookmarkOrganizerRequestPending = false;
+let bookmarkOrganizerPort = null;
 let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
@@ -377,6 +380,7 @@ function createOverlay() {
   subfilterScrollerEl.className = "spotlight-subfilters-scroll";
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
+  ensureBookmarkOrganizerControl();
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
@@ -980,7 +984,7 @@ function applySlashSelection(option) {
 }
 
 function resetSubfilterState() {
-  subfilterState = { type: null, options: [], activeId: null };
+  subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
   selectedSubfilter = null;
   renderSubfilters();
 }
@@ -1012,7 +1016,7 @@ function updateSubfilterState(payload) {
     .filter(Boolean);
 
   const hasNonAllOption = sanitizedOptions.some((option) => option.id !== "all");
-  if (!hasNonAllOption) {
+  if (!hasNonAllOption && type !== "bookmark") {
     resetSubfilterState();
     return;
   }
@@ -1022,8 +1026,8 @@ function updateSubfilterState(payload) {
     resolvedActiveId = sanitizedOptions.find((option) => option.id === "all") ? "all" : sanitizedOptions[0]?.id || null;
   }
 
-  subfilterState = { type, options: sanitizedOptions, activeId: resolvedActiveId };
-  if (resolvedActiveId && resolvedActiveId !== "all") {
+  subfilterState = { type, options: sanitizedOptions, activeId: resolvedActiveId, hasNonAllOption };
+  if (hasNonAllOption && resolvedActiveId && resolvedActiveId !== "all") {
     selectedSubfilter = { type, id: resolvedActiveId };
   } else {
     selectedSubfilter = null;
@@ -1048,15 +1052,30 @@ function renderSubfilters() {
     return;
   }
 
+  const control = ensureBookmarkOrganizerControl();
   const options = Array.isArray(subfilterState.options) ? subfilterState.options : [];
   const hasType = Boolean(subfilterState.type);
-  const hasNonAllOption = options.some((option) => option && option.id && option.id !== "all");
-  const shouldShow = hasType && hasNonAllOption;
+  const hasNonAllOption = Boolean(
+    subfilterState.hasNonAllOption || options.some((option) => option && option.id && option.id !== "all")
+  );
+  const showOrganizerButton = Boolean(control && subfilterState.type === "bookmark");
+  const shouldShow = hasType && (hasNonAllOption || showOrganizerButton);
+
   subfilterContainerEl.classList.toggle("visible", shouldShow);
+  subfilterContainerEl.classList.toggle("has-subfilters", hasNonAllOption);
+  subfilterContainerEl.classList.toggle("has-actions", showOrganizerButton && shouldShow);
   subfilterContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
 
+  if (control) {
+    control.setVisible(showOrganizerButton && shouldShow);
+    if (!showOrganizerButton && !bookmarkOrganizerRequestPending) {
+      control.reset();
+    }
+  }
+
   subfilterScrollerEl.innerHTML = "";
-  if (!shouldShow) {
+  refreshBookmarkOrganizerControlState();
+  if (!shouldShow || !hasNonAllOption) {
     return;
   }
 
@@ -1092,6 +1111,230 @@ function renderSubfilters() {
 
     subfilterScrollerEl.appendChild(button);
   });
+}
+
+function ensureBookmarkOrganizerControl() {
+  if (!subfilterContainerEl) {
+    return null;
+  }
+
+  const api = globalThis.SpotlightBookmarkOrganizerUI;
+  if (!api || typeof api.createControl !== "function") {
+    return bookmarkOrganizerControl;
+  }
+
+  const control = api.createControl({
+    container: subfilterContainerEl,
+    onRequestOrganize: handleBookmarkOrganizeRequest,
+  });
+
+  if (control) {
+    bookmarkOrganizerControl = control;
+  }
+
+  return bookmarkOrganizerControl;
+}
+
+function refreshBookmarkOrganizerControlState() {
+  if (!bookmarkOrganizerControl || typeof bookmarkOrganizerControl.setEnabled !== "function") {
+    return;
+  }
+  const containerVisible = Boolean(
+    subfilterContainerEl && subfilterContainerEl.classList.contains("visible")
+  );
+  const isBookmarkFilter = subfilterState.type === "bookmark";
+  bookmarkOrganizerControl.setEnabled(containerVisible && isBookmarkFilter && !bookmarkOrganizerRequestPending);
+}
+
+function formatBookmarkOrganizerChangeSummary(counts = {}) {
+  const renameCount = Number.isFinite(counts.renamed) ? counts.renamed : 0;
+  const movedCount = Number.isFinite(counts.moved) ? counts.moved : 0;
+  const folderCount = Number.isFinite(counts.createdFolders) ? counts.createdFolders : 0;
+  const parts = [];
+  if (movedCount > 0) {
+    parts.push(`${movedCount} moved`);
+  }
+  if (renameCount > 0) {
+    parts.push(`${renameCount} renamed`);
+  }
+  if (folderCount > 0) {
+    parts.push(`${folderCount} new folder${folderCount === 1 ? "" : "s"}`);
+  }
+  return parts.join(" · ");
+}
+
+function formatBookmarkOrganizerProgressPosition(counts = {}) {
+  const processed = Number.isFinite(counts.processed) ? counts.processed : null;
+  const total = Number.isFinite(counts.total) ? counts.total : null;
+  if (!processed || !total || total <= 0) {
+    return "";
+  }
+  return `${processed}/${total}`;
+}
+
+function handleBookmarkOrganizeRequest() {
+  const control = ensureBookmarkOrganizerControl();
+  if (!control || bookmarkOrganizerRequestPending) {
+    return;
+  }
+
+  bookmarkOrganizerRequestPending = true;
+  if (typeof control.setProgress === "function") {
+    control.setProgress("");
+  }
+  control.setRunning(true, "Preparing…");
+  refreshBookmarkOrganizerControlState();
+  setStatus("Organizing bookmarks…", { force: true, sticky: true });
+
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "spotlight-bookmark-organizer" });
+  } catch (error) {
+    console.error("Spotlight bookmark organizer connection failed", error);
+  }
+
+  if (!port) {
+    bookmarkOrganizerRequestPending = false;
+    control.showError("Retry");
+    if (typeof control.setProgress === "function") {
+      control.setProgress("");
+    }
+    refreshBookmarkOrganizerControlState();
+    setStatus("Bookmark organizer unavailable", { force: true });
+    return;
+  }
+
+  bookmarkOrganizerPort = port;
+
+  const cleanup = () => {
+    if (bookmarkOrganizerPort === port) {
+      bookmarkOrganizerPort = null;
+    }
+    try {
+      port.onMessage.removeListener(handleMessage);
+    } catch (err) {
+      // ignore
+    }
+    try {
+      port.onDisconnect.removeListener(handleDisconnect);
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  const finishWithError = (errorMessage) => {
+    bookmarkOrganizerRequestPending = false;
+    control.showError("Retry");
+    if (typeof control.setProgress === "function") {
+      control.setProgress("");
+    }
+    refreshBookmarkOrganizerControlState();
+    setStatus(errorMessage || "Unable to organize bookmarks", { force: true });
+  };
+
+  const handleProgressMessage = (message) => {
+    const label = typeof message.label === "string" && message.label ? message.label : null;
+    if (label) {
+      control.setRunning(true, label);
+    } else {
+      control.setRunning(true);
+    }
+    const changeSummary = formatBookmarkOrganizerChangeSummary(message.counts || {});
+    const progressPosition = formatBookmarkOrganizerProgressPosition(message.counts || {});
+    const parts = [];
+    if (typeof message.message === "string" && message.message) {
+      parts.push(message.message);
+    }
+    if (progressPosition && (!label || !label.includes(progressPosition))) {
+      parts.push(progressPosition);
+    }
+    if (changeSummary && (!parts.length || parts[parts.length - 1] !== changeSummary)) {
+      parts.push(changeSummary);
+    }
+    const progressText = parts.filter(Boolean).join(" · ");
+    if (typeof control.setProgress === "function") {
+      control.setProgress(progressText);
+    }
+    const statusMessage =
+      (typeof message.status === "string" && message.status) || progressText || label || "Organizing…";
+    setStatus(statusMessage, { force: true, sticky: true });
+  };
+
+  const handleCompleteMessage = (message) => {
+    bookmarkOrganizerRequestPending = false;
+    if (typeof control.setProgress === "function") {
+      control.setProgress("");
+    }
+    control.showSuccess("Organized");
+    refreshBookmarkOrganizerControlState();
+
+    const bookmarkCount = Number.isFinite(message.bookmarkCount) ? message.bookmarkCount : null;
+    const changes = message.changes || {};
+    const summary = formatBookmarkOrganizerChangeSummary(changes);
+    const statusMessage = bookmarkCount
+      ? summary
+        ? `Organized ${bookmarkCount} bookmark${bookmarkCount === 1 ? "" : "s"} · ${summary}`
+        : `Organized ${bookmarkCount} bookmark${bookmarkCount === 1 ? "" : "s"}`
+      : summary
+      ? `Bookmarks organized · ${summary}`
+      : "Bookmarks organized";
+    setStatus(statusMessage, { force: true });
+
+    cleanup();
+    try {
+      port.disconnect();
+    } catch (err) {
+      // ignore
+    }
+
+    setTimeout(() => {
+      requestResults(inputEl.value);
+    }, 350);
+  };
+
+  const handleErrorMessage = (message) => {
+    cleanup();
+    try {
+      port.disconnect();
+    } catch (err) {
+      // ignore
+    }
+    finishWithError((message && message.error) || "Unable to organize bookmarks");
+  };
+
+  const handleMessage = (message) => {
+    if (!message || typeof message !== "object") {
+      return;
+    }
+    if (message.type === "progress") {
+      handleProgressMessage(message);
+      return;
+    }
+    if (message.type === "complete" && message.success) {
+      handleCompleteMessage(message);
+      return;
+    }
+    if (message.type === "error") {
+      handleErrorMessage(message);
+    }
+  };
+
+  const handleDisconnect = () => {
+    cleanup();
+    if (bookmarkOrganizerRequestPending) {
+      finishWithError("Bookmark organizer unavailable");
+    }
+  };
+
+  port.onMessage.addListener(handleMessage);
+  port.onDisconnect.addListener(handleDisconnect);
+
+  try {
+    port.postMessage({ type: "run" });
+  } catch (error) {
+    console.error("Spotlight bookmark organizer request failed", error);
+    handleErrorMessage({ error: "Bookmark organizer unavailable" });
+  }
 }
 
 function handleSubfilterClick(option) {
