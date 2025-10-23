@@ -526,8 +526,17 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
       continue;
     }
 
+    const directParent = Array.isArray(source.ancestors) && source.ancestors.length
+      ? source.ancestors[source.ancestors.length - 1]
+      : null;
     const currentParentInfo = nodeMap.get(source.parentId);
-    const currentParentTitle = currentParentInfo?.title || "";
+    const fallbackParentTitle =
+      typeof source.parentTitle === "string" && source.parentTitle
+        ? source.parentTitle
+        : typeof directParent?.title === "string"
+        ? directParent.title
+        : "";
+    const currentParentTitle = currentParentInfo?.title || fallbackParentTitle || "";
     if (normalizeFolderName(currentParentTitle) === normalizedTarget) {
       continue;
     }
