@@ -36,8 +36,14 @@
     spinner.className = "spotlight-spinner";
     spinner.setAttribute("aria-hidden", "true");
 
+    const progressText = document.createElement("span");
+    progressText.className = "spotlight-subfilters-action-progress";
+    progressText.setAttribute("aria-live", "polite");
+    progressText.setAttribute("aria-atomic", "false");
+    progressText.setAttribute("hidden", "true");
+
     button.append(labelSpan, spinner);
-    actionsEl.appendChild(button);
+    actionsEl.append(button, progressText);
     container.appendChild(actionsEl);
 
     const state = {
@@ -47,6 +53,7 @@
       success: false,
       error: false,
       label: DEFAULT_LABEL,
+      progress: "",
     };
 
     let handler = null;
@@ -64,6 +71,13 @@
       button.classList.toggle("success", state.success);
       button.classList.toggle("error", state.error);
       labelSpan.textContent = state.label;
+      if (state.progress) {
+        progressText.textContent = state.progress;
+        progressText.removeAttribute("hidden");
+      } else {
+        progressText.textContent = "";
+        progressText.setAttribute("hidden", "true");
+      }
     }
 
     function cancelResetTimer() {
@@ -116,6 +130,7 @@
         state.success = true;
         state.error = false;
         state.label = label || SUCCESS_LABEL;
+        state.progress = "";
         applyState();
         const delay = typeof options.resetDelay === "number" ? options.resetDelay : RESET_DELAY;
         if (delay > 0) {
@@ -128,6 +143,7 @@
         state.success = false;
         state.error = true;
         state.label = label || ERROR_LABEL;
+        state.progress = "";
         applyState();
       },
       reset(label = DEFAULT_LABEL) {
@@ -136,6 +152,7 @@
         state.success = false;
         state.error = false;
         state.label = label;
+        state.progress = "";
         applyState();
       },
       isRunning() {
@@ -144,6 +161,10 @@
       setRequestHandler(callback) {
         handler = typeof callback === "function" ? callback : null;
         state.enabled = Boolean(handler);
+        applyState();
+      },
+      setProgress(value) {
+        state.progress = typeof value === "string" ? value : "";
         applyState();
       },
     };

@@ -262,6 +262,7 @@
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .spotlight-subfilters-actions[hidden] {
@@ -333,6 +334,21 @@
 
 .spotlight-subfilters-action-button.running .spotlight-spinner {
   display: inline-block;
+}
+
+.spotlight-subfilters-action-progress {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.25;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.2s ease;
+}
+
+.spotlight-subfilters-action-progress[hidden] {
+  display: none;
 }
 
 @keyframes spotlight-spinner-rotate {

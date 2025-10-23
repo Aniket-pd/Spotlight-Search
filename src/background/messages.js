@@ -226,4 +226,90 @@ export function registerMessageHandlers({
 
     return undefined;
   });
+
+  chrome.runtime.onConnect.addListener((port) => {
+    if (!port || port.name !== "spotlight-bookmark-organizer") {
+      return;
+    }
+
+    let disconnected = false;
+    let inFlight = false;
+
+    const safePost = (payload) => {
+      if (disconnected) {
+        return;
+      }
+      try {
+        port.postMessage(payload);
+      } catch (error) {
+        console.warn("Spotlight: failed to post organizer message", error);
+      }
+    };
+
+    port.onDisconnect.addListener(() => {
+      disconnected = true;
+    });
+
+    const runOrganizer = (options = {}) => {
+      if (disconnected) {
+        return;
+      }
+      if (!organizer || typeof organizer.organizeBookmarks !== "function") {
+        safePost({ type: "error", success: false, error: "Bookmark organizer unavailable" });
+        return;
+      }
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      organizer
+        .organizeBookmarks({
+          ...options,
+          onProgress: (update) => {
+            if (!update || disconnected) {
+              return;
+            }
+            safePost({ type: "progress", ...update });
+          },
+        })
+        .then((report) => {
+          inFlight = false;
+          if (!report) {
+            safePost({ type: "error", success: false, error: "Unable to organize bookmarks" });
+            return;
+          }
+          safePost({
+            type: "complete",
+            success: true,
+            generatedAt: report.generatedAt,
+            language: report.payload?.language,
+            bookmarkCount: report.payload?.bookmarks?.length || 0,
+            result: report.result,
+            changes: report.changes || { renamed: 0, moved: 0, createdFolders: 0 },
+          });
+        })
+        .catch((error) => {
+          inFlight = false;
+          const errorMessage = error?.message || "Unable to organize bookmarks";
+          safePost({ type: "error", success: false, error: errorMessage });
+        });
+    };
+
+    port.onMessage.addListener((message) => {
+      if (disconnected || !message || message.type !== "run") {
+        return;
+      }
+
+      const limit = Number.isFinite(message.limit) ? message.limit : undefined;
+      const language = typeof message.language === "string" ? message.language : undefined;
+      const options = {};
+      if (Number.isFinite(limit) && limit > 0) {
+        options.limit = limit;
+      }
+      if (language) {
+        options.language = language;
+      }
+      runOrganizer(options);
+    });
+  });
 }
