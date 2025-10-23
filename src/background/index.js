@@ -17,6 +17,7 @@ import {
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
+const organizer = createBookmarkOrganizerService();
 const executeCommand = createCommandExecutor({
   tabActions,
   scheduleRebuild: context.scheduleRebuild,
@@ -25,7 +26,6 @@ const executeCommand = createCommandExecutor({
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
-const organizer = createBookmarkOrganizerService();
 
 registerNavigationListeners(navigation);
 
