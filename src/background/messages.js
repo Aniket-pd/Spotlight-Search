@@ -7,6 +7,7 @@ export function registerMessageHandlers({
   resolveFaviconForTarget,
   navigation,
   summaries,
+  organizer,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -185,6 +186,54 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_BOOKMARK_ORGANIZE") {
+      if (!organizer || typeof organizer.organizeBookmarks !== "function") {
+        sendResponse({ success: false, error: "Bookmark organizer unavailable" });
+        return true;
+      }
+      const limit = Number.isFinite(message.limit) ? message.limit : undefined;
+      const language = typeof message.language === "string" ? message.language : undefined;
+      const shouldOpenTab = Boolean(message.openTab);
+      const options = {};
+      if (Number.isFinite(limit) && limit > 0) {
+        options.limit = limit;
+      }
+      if (language) {
+        options.language = language;
+      }
+      const request = shouldOpenTab
+        ? organizer.organizeAndOpen(options)
+        : organizer.organizeBookmarks(options);
+      request
+        .then((report) => {
+          const response = {
+            success: true,
+            generatedAt: report.generatedAt,
+            language: report.payload?.language,
+            bookmarkCount: report.payload?.bookmarks?.length || 0,
+            result: report.result,
+          };
+          if (!shouldOpenTab) {
+            response.rawText = report.rawText;
+            response.sourceBookmarks = Array.isArray(report.sourceBookmarks)
+              ? report.sourceBookmarks.map((entry) => ({
+                  id: entry.id,
+                  title: entry.title,
+                  url: entry.url,
+                  path: entry.path || "",
+                  userNotes: entry.userNotes || "",
+                }))
+              : [];
+          }
+          sendResponse(response);
+        })
+        .catch((error) => {
+          console.error("Spotlight: bookmark organizer failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
         });
       return true;
     }
