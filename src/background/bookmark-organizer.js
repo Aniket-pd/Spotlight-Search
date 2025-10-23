@@ -126,57 +126,6 @@ const DEFAULT_LANGUAGE = "English";
 const DEFAULT_BOOKMARK_LIMIT = 60;
 const MAX_BOOKMARK_LIMIT = 200;
 
-function createProgressEmitter(callback) {
-  if (typeof callback !== "function") {
-    return () => {};
-  }
-  return (update = {}) => {
-    if (!update || typeof update !== "object") {
-      return;
-    }
-    const payload = { ...update };
-    if (typeof payload.timestamp !== "number") {
-      payload.timestamp = Date.now();
-    }
-    try {
-      callback(payload);
-    } catch (error) {
-      console.warn("Spotlight bookmark organizer progress listener failed", error);
-    }
-  };
-}
-
-function formatProgressTitle(title, maxLength = 54) {
-  if (typeof title !== "string") {
-    return "";
-  }
-  const trimmed = title.trim();
-  if (!trimmed) {
-    return "";
-  }
-  if (trimmed.length <= maxLength) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, Math.max(1, maxLength - 1))}…`;
-}
-
-function formatChangeCountsSummary(counts = {}) {
-  const renameCount = Number.isFinite(counts.renamed) ? counts.renamed : 0;
-  const movedCount = Number.isFinite(counts.moved) ? counts.moved : 0;
-  const folderCount = Number.isFinite(counts.createdFolders) ? counts.createdFolders : 0;
-  const parts = [];
-  if (movedCount > 0) {
-    parts.push(`${movedCount} moved`);
-  }
-  if (renameCount > 0) {
-    parts.push(`${renameCount} renamed`);
-  }
-  if (folderCount > 0) {
-    parts.push(`${folderCount} new folder${folderCount === 1 ? "" : "s"}`);
-  }
-  return parts.join(" · ");
-}
-
 function formatDate(timestamp) {
   if (!timestamp) {
     return "";
@@ -390,7 +339,7 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   const sanitizedTitle = sanitizeFolderName(title);
   const normalized = normalizeFolderName(sanitizedTitle);
   if (!normalized) {
-    return { id: parentId, title: sanitizedTitle || "", created: false };
+    return parentId;
   }
   const cacheKey = `${parentId || "root"}::${normalized}`;
   if (createdFolders.has(cacheKey)) {
@@ -405,8 +354,7 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     const existing = folderMap.get(normalized);
     const folderId = existing?.id || existing;
     const folderTitle = typeof existing?.title === "string" ? existing.title : sanitizedTitle;
-    const record = { id: folderId, title: folderTitle, created: false };
-    createdFolders.set(cacheKey, record);
+    createdFolders.set(cacheKey, folderId);
     if (!nodeMap.has(folderId)) {
       nodeMap.set(folderId, {
         id: folderId,
@@ -416,7 +364,7 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
         children: [],
       });
     }
-    return record;
+    return folderId;
   }
 
   const folder = await chrome.bookmarks.create({ parentId, title: sanitizedTitle });
@@ -429,9 +377,8 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     folderMap = new Map();
     folderLookup.set(parentId, folderMap);
   }
-  const record = { id: folderId, title: sanitizedTitle, created: true };
   folderMap.set(normalized, { id: folderId, title: sanitizedTitle });
-  createdFolders.set(cacheKey, record);
+  createdFolders.set(cacheKey, folderId);
   nodeMap.set(folderId, {
     id: folderId,
     title: sanitizedTitle,
@@ -440,7 +387,7 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     children: [],
   });
 
-  return record;
+  return folderId;
 }
 
 async function refreshFolderLookup(parentId, folderLookup, nodeMap) {
@@ -497,22 +444,10 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
   const folderLookup = context.folderLookup instanceof Map ? context.folderLookup : new Map();
   const nodeMap = context.nodeMap instanceof Map ? context.nodeMap : new Map();
   const createdFolders = new Map();
-  const reportProgress = typeof context.reportProgress === "function" ? context.reportProgress : () => {};
   const sourceMap = new Map(sourceBookmarks.map((entry) => [String(entry.id), entry]));
 
-  const total = bookmarkResults.length;
-  let processed = 0;
   let renamed = 0;
   let moved = 0;
-  let createdFolderCount = 0;
-
-  const getCounts = () => ({
-    total,
-    processed,
-    renamed,
-    moved,
-    createdFolders: createdFolderCount,
-  });
 
   for (const resultEntry of bookmarkResults) {
     if (!resultEntry || typeof resultEntry.id === "undefined") {
@@ -524,133 +459,41 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
       continue;
     }
 
-    processed += 1;
-    let changed = false;
-
     const cleanTitle = typeof resultEntry.cleanTitle === "string" ? resultEntry.cleanTitle.trim() : "";
     if (cleanTitle && cleanTitle !== source.title) {
       await chrome.bookmarks.update(bookmarkId, { title: cleanTitle });
       source.title = cleanTitle;
       renamed += 1;
-      const counts = getCounts();
-      const summary = formatChangeCountsSummary(counts);
-      const progressTitle = formatProgressTitle(cleanTitle);
-      const message = summary ? `Renamed "${progressTitle}" · ${summary}` : `Renamed "${progressTitle}"`;
-      reportProgress({
-        stage: "rename",
-        label: `Organizing ${processed}/${total}`,
-        message,
-        status: message,
-        counts,
-      });
-      changed = true;
     }
 
     const parentId = source.parentId || (source.ancestors?.length ? source.ancestors[source.ancestors.length - 1].id : null);
     if (!parentId) {
-      if (!changed) {
-        const counts = getCounts();
-        const progressTitle = formatProgressTitle(source.title || cleanTitle || resultEntry.cleanTitle || "Bookmark");
-        const message = `Reviewed "${progressTitle}"`;
-        reportProgress({
-          stage: "review",
-          label: `Organizing ${processed}/${total}`,
-          message,
-          status: message,
-          counts,
-        });
-      }
       continue;
     }
 
     const targetFolderName = determineTargetFolderName(resultEntry);
     const normalizedTarget = normalizeFolderName(targetFolderName);
     if (!normalizedTarget) {
-      if (!changed) {
-        const counts = getCounts();
-        const progressTitle = formatProgressTitle(source.title || cleanTitle || resultEntry.cleanTitle || "Bookmark");
-        const message = `Reviewed "${progressTitle}"`;
-        reportProgress({
-          stage: "review",
-          label: `Organizing ${processed}/${total}`,
-          message,
-          status: message,
-          counts,
-        });
-      }
       continue;
     }
 
     const currentParentInfo = nodeMap.get(source.parentId);
     const currentParentTitle = currentParentInfo?.title || "";
     if (normalizeFolderName(currentParentTitle) === normalizedTarget) {
-      if (!changed) {
-        const counts = getCounts();
-        const progressTitle = formatProgressTitle(source.title || cleanTitle || resultEntry.cleanTitle || "Bookmark");
-        const message = `Reviewed "${progressTitle}"`;
-        reportProgress({
-          stage: "review",
-          label: `Organizing ${processed}/${total}`,
-          message,
-          status: message,
-          counts,
-        });
-      }
       continue;
     }
 
-    const folderResult = await ensureFolder(parentId, targetFolderName, folderLookup, createdFolders, nodeMap);
-    const folderId = folderResult?.id || folderResult;
+    const folderId = await ensureFolder(parentId, targetFolderName, folderLookup, createdFolders, nodeMap);
     if (!folderId || folderId === source.parentId) {
-      if (!changed) {
-        const counts = getCounts();
-        const progressTitle = formatProgressTitle(source.title || cleanTitle || resultEntry.cleanTitle || "Bookmark");
-        const message = `Reviewed "${progressTitle}"`;
-        reportProgress({
-          stage: "review",
-          label: `Organizing ${processed}/${total}`,
-          message,
-          status: message,
-          counts,
-        });
-      }
       continue;
-    }
-
-    if (folderResult?.created) {
-      createdFolderCount += 1;
-      const counts = getCounts();
-      const summary = formatChangeCountsSummary(counts);
-      const folderTitle = formatProgressTitle(folderResult.title || targetFolderName || "New folder");
-      const message = summary ? `Created folder "${folderTitle}" · ${summary}` : `Created folder "${folderTitle}"`;
-      reportProgress({
-        stage: "folder",
-        label: `Organizing ${processed}/${total}`,
-        message,
-        status: message,
-        counts,
-      });
-      changed = true;
     }
 
     await chrome.bookmarks.move(bookmarkId, { parentId: folderId });
     source.parentId = folderId;
     moved += 1;
-    const counts = getCounts();
-    const summary = formatChangeCountsSummary(counts);
-    const folderTitle = formatProgressTitle(folderResult?.title || targetFolderName || "Organized");
-    const message = summary ? `Moved to "${folderTitle}" · ${summary}` : `Moved to "${folderTitle}"`;
-    reportProgress({
-      stage: "move",
-      label: `Organizing ${processed}/${total}`,
-      message,
-      status: message,
-      counts,
-    });
-    changed = true;
   }
 
-  return { renamed, moved, createdFolders: createdFolderCount };
+  return { renamed, moved, createdFolders: createdFolders.size };
 }
 
 async function collectRecentBookmarks(limit) {
@@ -736,87 +579,31 @@ export function createBookmarkOrganizerService(options = {}) {
     if (activeRequest) {
       return activeRequest;
     }
-    const progress = createProgressEmitter(options.onProgress);
     const task = (async () => {
-      progress({ stage: "init", label: "Preparing…", message: "Preparing bookmark organizer" });
       const limit = clampLimit(options.limit);
-      const language =
-        typeof options.language === "string" && options.language ? options.language : DEFAULT_LANGUAGE;
-      try {
-        progress({ stage: "collect:start", label: "Collecting…", message: "Collecting recent bookmarks" });
-        const { bookmarks, folderLookup, nodeMap } = await collectRecentBookmarks(limit);
-        if (!bookmarks.length) {
-          throw new Error("No bookmarks available to organize");
-        }
-        const total = bookmarks.length;
-        progress({
-          stage: "collect:complete",
-          label: "Collecting…",
-          message: `Collected ${total} bookmark${total === 1 ? "" : "s"}`,
-          counts: { total },
-        });
-        const payload = buildPromptPayload(bookmarks, language);
-        progress({
-          stage: "prompt",
-          label: "Asking Gemini…",
-          message: "Generating organization plan",
-          counts: { total },
-        });
-        const { raw, parsed } = await runPrompt(payload);
-        progress({
-          stage: "apply:start",
-          label: "Organizing…",
-          message: `Applying plan to ${total} bookmark${total === 1 ? "" : "s"}`,
-          counts: { total },
-        });
-        const changes = await applyOrganizerChanges(bookmarks, parsed, {
-          folderLookup,
-          nodeMap,
-          reportProgress: progress,
-        });
-        const changeCounts = {
-          total,
-          renamed: Number.isFinite(changes?.renamed) ? changes.renamed : 0,
-          moved: Number.isFinite(changes?.moved) ? changes.moved : 0,
-          createdFolders: Number.isFinite(changes?.createdFolders) ? changes.createdFolders : 0,
-        };
-        const changeSummary = formatChangeCountsSummary(changeCounts);
-        progress({
-          stage: "finalizing",
-          label: "Finishing…",
-          message: changeSummary ? `Wrapping up · ${changeSummary}` : "Wrapping up",
-          counts: changeCounts,
-        });
-        if (
-          typeof scheduleRebuild === "function" &&
-          (changeCounts.renamed > 0 || changeCounts.moved > 0 || changeCounts.createdFolders > 0)
-        ) {
-          scheduleRebuild(200);
-        }
-        const completionMessage = changeSummary
-          ? `Organized ${total} bookmark${total === 1 ? "" : "s"} · ${changeSummary}`
-          : `Organized ${total} bookmark${total === 1 ? "" : "s"}`;
-        progress({
-          stage: "complete",
-          label: "Organized",
-          message: completionMessage,
-          status: completionMessage,
-          counts: changeCounts,
-          done: true,
-        });
-        return {
-          generatedAt: Date.now(),
-          payload,
-          sourceBookmarks: bookmarks,
-          result: parsed,
-          rawText: raw,
-          changes,
-        };
-      } catch (error) {
-        const errorMessage = error?.message || "Unable to organize bookmarks";
-        progress({ stage: "error", label: "Try Again", message: errorMessage, status: errorMessage, error: true });
-        throw error;
+      const language = typeof options.language === "string" && options.language ? options.language : DEFAULT_LANGUAGE;
+      const { bookmarks, folderLookup, nodeMap } = await collectRecentBookmarks(limit);
+      if (!bookmarks.length) {
+        throw new Error("No bookmarks available to organize");
       }
+      const payload = buildPromptPayload(bookmarks, language);
+      const { raw, parsed } = await runPrompt(payload);
+      const changes = await applyOrganizerChanges(bookmarks, parsed, { folderLookup, nodeMap });
+      if (
+        typeof scheduleRebuild === "function" &&
+        changes &&
+        (changes.renamed > 0 || changes.moved > 0 || changes.createdFolders > 0)
+      ) {
+        scheduleRebuild(200);
+      }
+      return {
+        generatedAt: Date.now(),
+        payload,
+        sourceBookmarks: bookmarks,
+        result: parsed,
+        rawText: raw,
+        changes,
+      };
     })();
     activeRequest = task
       .then((value) => {
