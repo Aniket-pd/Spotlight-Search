@@ -165,10 +165,102 @@ async function queryTabText(tabId) {
   }
 }
 
-async function fetchRemoteContent(url) {
-  if (!url || (typeof url === "string" && !/^https?:/i.test(url))) {
-    return null;
+function extractTitleFromHtml(html = "") {
+  if (!html) {
+    return "";
   }
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (match && match[1]) {
+    return sanitizeContent(match[1]);
+  }
+  return "";
+}
+
+function extractBodyFromHtml(html = "") {
+  if (!html) {
+    return "";
+  }
+  const match = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return html;
+}
+
+function extractCandidateSections(html = "") {
+  if (!html) {
+    return [];
+  }
+  const candidates = [];
+  const tagPatterns = [
+    /<main[^>]*>[\s\S]*?<\/main>/gi,
+    /<article[^>]*>[\s\S]*?<\/article>/gi,
+    /<(section|div)[^>]*(id|class)="[^"]*(content|article|main|body|post|entry|read)[^"]*"[^>]*>[\s\S]*?<\/\1>/gi,
+  ];
+  for (const pattern of tagPatterns) {
+    let match;
+    while ((match = pattern.exec(html))) {
+      if (match && match[0]) {
+        candidates.push(match[0]);
+      }
+    }
+  }
+  if (!candidates.length) {
+    const body = extractBodyFromHtml(html);
+    if (body) {
+      candidates.push(body);
+    }
+  }
+  return candidates;
+}
+
+function evaluateContentQuality(text = "") {
+  if (!text) {
+    return 0;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+  if (!wordCount) {
+    return 0;
+  }
+  const uniqueWords = new Set(words.map((word) => word.toLowerCase()));
+  const uniqueCount = uniqueWords.size;
+  const sentences = trimmed.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim().length >= 40);
+  const sentenceCount = sentences.length;
+  const longParagraphs = trimmed.split(/\n{2,}/).filter((paragraph) => paragraph.trim().length >= 160).length;
+  let score = 0;
+  if (wordCount >= 180) {
+    score += 3;
+  } else if (wordCount >= 100) {
+    score += 2;
+  } else if (wordCount >= 60) {
+    score += 1;
+  }
+  if (uniqueCount >= 90) {
+    score += 3;
+  } else if (uniqueCount >= 50) {
+    score += 2;
+  } else if (uniqueCount >= 25) {
+    score += 1;
+  }
+  if (sentenceCount >= 4) {
+    score += 2;
+  } else if (sentenceCount >= 2) {
+    score += 1;
+  }
+  if (longParagraphs >= 2) {
+    score += 2;
+  } else if (longParagraphs >= 1) {
+    score += 1;
+  }
+  return score;
+}
+
+async function fetchDirectPageContent(url) {
   try {
     const response = await fetch(url, { method: "GET", mode: "cors", credentials: "omit" });
     if (!response.ok) {
@@ -179,21 +271,100 @@ async function fetchRemoteContent(url) {
       return null;
     }
     const body = await response.text();
-    const text = htmlToText(body);
-    if (!text) {
+    const title = extractTitleFromHtml(body);
+    const candidates = extractCandidateSections(body);
+    let bestText = "";
+    let bestScore = -1;
+    for (const candidate of candidates) {
+      const text = htmlToText(candidate);
+      if (!text) {
+        continue;
+      }
+      const score = evaluateContentQuality(text);
+      if (score > bestScore) {
+        bestScore = score;
+        bestText = text;
+      }
+    }
+    if (!bestText) {
       return null;
     }
     return {
-      text,
-      title: "",
+      text: bestText,
+      title,
       lastModified: response.headers.get("last-modified"),
       etag: response.headers.get("etag"),
       source: "network",
+      quality: bestScore,
     };
   } catch (err) {
     console.warn("Spotlight: remote fetch for summary failed", err);
     return null;
   }
+}
+
+async function fetchReadableProxyContent(url) {
+  let proxyUrl = "";
+  try {
+    const parsed = new URL(url);
+    proxyUrl = `https://r.jina.ai/${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search || ""}`;
+  } catch (err) {
+    return null;
+  }
+  try {
+    const response = await fetch(proxyUrl, { method: "GET", mode: "cors", credentials: "omit" });
+    if (!response.ok) {
+      return null;
+    }
+    const body = await response.text();
+    const sanitized = sanitizeContent(body);
+    if (!sanitized) {
+      return null;
+    }
+    return {
+      text: sanitized,
+      title: "",
+      lastModified: null,
+      etag: null,
+      source: "readability-proxy",
+      quality: evaluateContentQuality(sanitized),
+    };
+  } catch (err) {
+    console.warn("Spotlight: readability proxy fetch failed", err);
+    return null;
+  }
+}
+
+async function fetchRemoteContent(url) {
+  if (!url || (typeof url === "string" && !/^https?:/i.test(url))) {
+    return null;
+  }
+  const direct = await fetchDirectPageContent(url);
+  const directQuality = typeof direct?.quality === "number" ? direct.quality : -1;
+  if (directQuality >= 5 && direct) {
+    const { quality, ...rest } = direct;
+    return rest;
+  }
+  const fallback = await fetchReadableProxyContent(url);
+  const fallbackQuality = typeof fallback?.quality === "number" ? fallback.quality : -1;
+  if (fallbackQuality > directQuality && fallback) {
+    return {
+      text: fallback.text,
+      title: fallback.title || direct?.title || "",
+      lastModified: fallback.lastModified,
+      etag: fallback.etag,
+      source: fallback.source,
+    };
+  }
+  if (direct) {
+    const { quality, ...rest } = direct;
+    return rest;
+  }
+  if (fallback) {
+    const { quality, ...rest } = fallback;
+    return rest;
+  }
+  return null;
 }
 
 export function createSummarizerService() {
