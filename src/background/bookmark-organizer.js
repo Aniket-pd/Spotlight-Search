@@ -270,6 +270,26 @@ function getBookmarkTree() {
   });
 }
 
+function getBookmarkChildren(parentId) {
+  return new Promise((resolve, reject) => {
+    if (!parentId && parentId !== "0") {
+      resolve([]);
+      return;
+    }
+    try {
+      chrome.bookmarks.getChildren(parentId, (nodes) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(Array.isArray(nodes) ? nodes : []);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 function clampLimit(limit) {
   if (!Number.isFinite(limit) || limit <= 0) {
     return DEFAULT_BOOKMARK_LIMIT;
@@ -327,10 +347,23 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   }
 
   let folderMap = folderLookup.get(parentId);
+  if (!folderMap || !folderMap.has(normalized)) {
+    folderMap = await refreshFolderLookup(parentId, folderLookup, nodeMap);
+  }
   if (folderMap && folderMap.has(normalized)) {
     const existing = folderMap.get(normalized);
     const folderId = existing?.id || existing;
+    const folderTitle = typeof existing?.title === "string" ? existing.title : sanitizedTitle;
     createdFolders.set(cacheKey, folderId);
+    if (!nodeMap.has(folderId)) {
+      nodeMap.set(folderId, {
+        id: folderId,
+        title: folderTitle,
+        parentId,
+        isFolder: true,
+        children: [],
+      });
+    }
     return folderId;
   }
 
@@ -355,6 +388,51 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   });
 
   return folderId;
+}
+
+async function refreshFolderLookup(parentId, folderLookup, nodeMap) {
+  if (!parentId && parentId !== "0") {
+    return folderLookup.get(parentId) || new Map();
+  }
+
+  let children = [];
+  try {
+    children = await getBookmarkChildren(parentId);
+  } catch (error) {
+    console.warn("Failed to load bookmark children for organizer", error);
+  }
+
+  let folderMap = folderLookup.get(parentId);
+  if (!folderMap) {
+    folderMap = new Map();
+    folderLookup.set(parentId, folderMap);
+  }
+
+  for (const child of children) {
+    if (!child || child.url) {
+      continue;
+    }
+    const childId = normalizeId(child.id);
+    const childTitle = typeof child.title === "string" ? child.title.trim() : "";
+    const normalized = normalizeFolderName(childTitle);
+    if (!childId || !normalized) {
+      continue;
+    }
+    folderMap.set(normalized, { id: childId, title: childTitle });
+    if (!nodeMap.has(childId)) {
+      nodeMap.set(childId, {
+        id: childId,
+        title: childTitle,
+        parentId,
+        isFolder: true,
+        children: Array.isArray(child.children)
+          ? child.children.map((entry) => normalizeId(entry.id))
+          : [],
+      });
+    }
+  }
+
+  return folderMap;
 }
 
 async function applyOrganizerChanges(sourceBookmarks, organizerResult, context = {}) {
