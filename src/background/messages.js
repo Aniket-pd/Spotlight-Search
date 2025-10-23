@@ -7,6 +7,7 @@ export function registerMessageHandlers({
   resolveFaviconForTarget,
   navigation,
   summaries,
+  organizer,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -185,6 +186,40 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_BOOKMARK_ORGANIZE") {
+      if (!organizer || typeof organizer.organizeBookmarks !== "function") {
+        sendResponse({ success: false, error: "Bookmark organizer unavailable" });
+        return true;
+      }
+      const limit = Number.isFinite(message.limit) ? message.limit : undefined;
+      const language = typeof message.language === "string" ? message.language : undefined;
+      const options = {};
+      if (Number.isFinite(limit) && limit > 0) {
+        options.limit = limit;
+      }
+      if (language) {
+        options.language = language;
+      }
+      organizer
+        .organizeBookmarks(options)
+        .then((report) => {
+          const response = {
+            success: true,
+            generatedAt: report.generatedAt,
+            language: report.payload?.language,
+            bookmarkCount: report.payload?.bookmarks?.length || 0,
+            result: report.result,
+            changes: report.changes || { renamed: 0, moved: 0, createdFolders: 0 },
+          };
+          sendResponse(response);
+        })
+        .catch((error) => {
+          console.error("Spotlight: bookmark organizer failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
         });
       return true;
     }

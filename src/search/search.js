@@ -533,6 +533,34 @@ const STATIC_COMMANDS = [
       return (context?.audibleTabCount || 0) > 0;
     },
   },
+  {
+    id: "command:bookmark-organize",
+    title: "Organize bookmarks with AI",
+    aliases: [
+      "organize bookmarks",
+      "bookmark organizer",
+      "smart bookmark organizer",
+      "ai bookmark cleanup",
+      "bookmark cleanup",
+    ],
+    action: "bookmark-organize",
+    answer(context) {
+      const count = context?.bookmarkCount || 0;
+      if (count <= 0) {
+        return "No bookmarks available to organize.";
+      }
+      const countLabel = formatBookmarkCount(count);
+      return `Analyzes ${countLabel} to suggest folders, tags, and duplicates.`;
+    },
+    description(context) {
+      const count = context?.bookmarkCount || 0;
+      const countLabel = formatBookmarkCount(count || 0);
+      return `${countLabel} · AI organization`;
+    },
+    isAvailable(context) {
+      return (context?.bookmarkCount || 0) > 0;
+    },
+  },
 ];
 
 function formatTabCount(count) {
@@ -540,6 +568,16 @@ function formatTabCount(count) {
     return "1 tab";
   }
   return `${count} tabs`;
+}
+
+function formatBookmarkCount(count) {
+  if (count === 1) {
+    return "1 bookmark";
+  }
+  if (!Number.isFinite(count) || count <= 0) {
+    return "0 bookmarks";
+  }
+  return `${count} bookmarks`;
 }
 
 function buildCloseAudioTabsCommandResult(audibleCount) {
@@ -1433,6 +1471,9 @@ export function runSearch(query, data, options = {}) {
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
+  const bookmarkCount = typeof metadata.bookmarkCount === "number"
+    ? metadata.bookmarkCount
+    : items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0);
 
   const navigationState = options.navigation || null;
 
@@ -1464,7 +1505,7 @@ export function runSearch(query, data, options = {}) {
       : null;
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
-  const commandContext = { tabCount, tabs, audibleTabCount };
+  const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {

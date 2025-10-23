@@ -7,7 +7,7 @@ const REBUILD_DELAYS = {
   "tab-close-audio": 400,
 };
 
-export function createCommandExecutor({ tabActions, scheduleRebuild }) {
+export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer }) {
   const {
     sortAllTabsByDomainAndTitle,
     shuffleTabs,
@@ -42,6 +42,12 @@ export function createCommandExecutor({ tabActions, scheduleRebuild }) {
       case "tab-close-audio":
         await closeAudibleTabs();
         scheduleRebuild(REBUILD_DELAYS[commandId]);
+        return;
+      case "bookmark-organize":
+        if (!bookmarkOrganizer || typeof bookmarkOrganizer.organizeBookmarks !== "function") {
+          throw new Error("Bookmark organizer unavailable");
+        }
+        await bookmarkOrganizer.organizeBookmarks();
         return;
       default:
         throw new Error(`Unknown command: ${commandId}`);
