@@ -126,15 +126,6 @@ const DEFAULT_LANGUAGE = "English";
 const DEFAULT_BOOKMARK_LIMIT = 60;
 const MAX_BOOKMARK_LIMIT = 200;
 
-function escapeHtml(text = "") {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function formatDate(timestamp) {
   if (!timestamp) {
     return "";
@@ -162,31 +153,105 @@ function formatBookmarkNotes(entry) {
   return parts.join(" · ");
 }
 
-function flattenBookmarkTree(nodes, path = [], results = []) {
-  if (!Array.isArray(nodes)) {
-    return results;
+function createTraversalMeta() {
+  return {
+    bookmarks: [],
+    folderLookup: new Map(),
+    nodeMap: new Map(),
+  };
+}
+
+function normalizeId(value) {
+  if (value === null || value === undefined) {
+    return null;
   }
+  return String(value);
+}
+
+function sanitizeFolderName(name = "") {
+  return name.replace(/[\\/]+/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+function normalizeFolderName(name = "") {
+  return sanitizeFolderName(name).toLowerCase();
+}
+
+function flattenBookmarkTree(nodes, ancestry = [], meta = createTraversalMeta()) {
+  if (!Array.isArray(nodes)) {
+    return meta;
+  }
+
   for (const node of nodes) {
     if (!node) {
       continue;
     }
-    const nextPath = node.title ? [...path, node.title] : path.slice();
+
+    const id = normalizeId(node.id);
+    const parentId = normalizeId(
+      node.parentId !== undefined ? node.parentId : ancestry.length ? ancestry[ancestry.length - 1].id : null
+    );
+    const title = typeof node.title === "string" ? node.title : "";
+    const isFolder = !node.url;
+
+    if (!meta.nodeMap.has(id)) {
+      meta.nodeMap.set(id, {
+        id,
+        title,
+        parentId,
+        isFolder,
+        children: Array.isArray(node.children) ? node.children.map((child) => normalizeId(child.id)) : [],
+      });
+    }
+
+    if (Array.isArray(node.children) && node.children.length) {
+      let folderMap = meta.folderLookup.get(id);
+      if (!folderMap) {
+        folderMap = new Map();
+        meta.folderLookup.set(id, folderMap);
+      }
+      for (const child of node.children) {
+        if (!child || child.url) {
+          continue;
+        }
+        const childId = normalizeId(child.id);
+        const childTitle = typeof child.title === "string" ? child.title.trim() : "";
+        const normalized = normalizeFolderName(childTitle);
+        if (normalized) {
+          folderMap.set(normalized, { id: childId, title: childTitle });
+        }
+      }
+    }
+
+    const nextAncestry = isFolder
+      ? [...ancestry, { id, title, parentId }]
+      : ancestry;
+
     if (node.url) {
+      const folders = ancestry.filter((ancestor) => ancestor && ancestor.title).map((ancestor) => ancestor.title);
       const entry = {
-        id: String(node.id),
-        title: node.title || node.url || "Untitled bookmark",
+        id,
+        title: title || node.url || "Untitled bookmark",
         url: node.url,
         dateAdded: typeof node.dateAdded === "number" ? node.dateAdded : null,
-        path: path.filter(Boolean).join(" / "),
+        parentId,
+        parentTitle: ancestry.length ? ancestry[ancestry.length - 1].title || "" : "",
+        path: folders.join(" / "),
+        ancestors: ancestry.map((ancestor) => ({
+          id: ancestor.id,
+          title: ancestor.title,
+          parentId: ancestor.parentId,
+        })),
       };
       entry.userNotes = formatBookmarkNotes(entry);
-      results.push(entry);
+      meta.bookmarks.push(entry);
     }
+
     if (Array.isArray(node.children) && node.children.length) {
-      flattenBookmarkTree(node.children, nextPath, results);
+      flattenBookmarkTree(node.children, nextAncestry, meta);
     }
   }
-  return results;
+
+  return meta;
 }
 
 function getBookmarkTree() {
@@ -235,295 +300,130 @@ function buildPromptText(payload) {
   return `${PROMPT_TEMPLATE}\n\nInput payload:\n${payloadJson}`;
 }
 
-function buildBookmarkSummaryHtml(report) {
-  const { result, sourceBookmarks = [], payload, generatedAt } = report;
-  const summary = result?.collectionSummary || {};
-  const bookmarks = Array.isArray(result?.bookmarks) ? result.bookmarks : [];
+function determineTargetFolderName(resultEntry) {
+  const action = typeof resultEntry?.action === "string" ? resultEntry.action : "keep";
+  if (action === "archive") {
+    return "Archive";
+  }
+  if (action === "reviewDuplicate") {
+    return "Duplicates";
+  }
+  const category = typeof resultEntry?.primaryCategory === "string" ? resultEntry.primaryCategory.trim() : "";
+  if (category) {
+    return category;
+  }
+  return "Organized";
+}
+
+async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeMap) {
+  const sanitizedTitle = sanitizeFolderName(title);
+  const normalized = normalizeFolderName(sanitizedTitle);
+  if (!normalized) {
+    return parentId;
+  }
+  const cacheKey = `${parentId || "root"}::${normalized}`;
+  if (createdFolders.has(cacheKey)) {
+    return createdFolders.get(cacheKey);
+  }
+
+  let folderMap = folderLookup.get(parentId);
+  if (folderMap && folderMap.has(normalized)) {
+    const existing = folderMap.get(normalized);
+    const folderId = existing?.id || existing;
+    createdFolders.set(cacheKey, folderId);
+    return folderId;
+  }
+
+  const folder = await chrome.bookmarks.create({ parentId, title: sanitizedTitle });
+  if (!folder || !folder.id) {
+    throw new Error(`Failed to create folder "${sanitizedTitle}"`);
+  }
+  const folderId = String(folder.id);
+
+  if (!folderMap) {
+    folderMap = new Map();
+    folderLookup.set(parentId, folderMap);
+  }
+  folderMap.set(normalized, { id: folderId, title: sanitizedTitle });
+  createdFolders.set(cacheKey, folderId);
+  nodeMap.set(folderId, {
+    id: folderId,
+    title: sanitizedTitle,
+    parentId,
+    isFolder: true,
+    children: [],
+  });
+
+  return folderId;
+}
+
+async function applyOrganizerChanges(sourceBookmarks, organizerResult, context = {}) {
+  const bookmarkResults = Array.isArray(organizerResult?.bookmarks) ? organizerResult.bookmarks : [];
+  if (!bookmarkResults.length || !Array.isArray(sourceBookmarks) || !sourceBookmarks.length) {
+    return { renamed: 0, moved: 0, createdFolders: 0 };
+  }
+
+  const folderLookup = context.folderLookup instanceof Map ? context.folderLookup : new Map();
+  const nodeMap = context.nodeMap instanceof Map ? context.nodeMap : new Map();
+  const createdFolders = new Map();
   const sourceMap = new Map(sourceBookmarks.map((entry) => [String(entry.id), entry]));
-  const resultMap = new Map(bookmarks.map((entry) => [String(entry.id), entry]));
 
-  const dominantCategories = Array.isArray(summary.dominantCategories)
-    ? summary.dominantCategories
-    : [];
-  const bookmarksNeedingAttention = Array.isArray(summary.bookmarksNeedingAttention)
-    ? summary.bookmarksNeedingAttention
-    : [];
-  const suggestedFolders = summary?.suggestedFolders && typeof summary.suggestedFolders === "object"
-    ? summary.suggestedFolders
-    : {};
+  let renamed = 0;
+  let moved = 0;
 
-  const attentionItems = bookmarksNeedingAttention
-    .map((id) => {
-      const entry = resultMap.get(String(id));
-      if (!entry) {
-        return `<li><code>${escapeHtml(String(id))}</code></li>`;
-      }
-      return `<li><strong>${escapeHtml(entry.cleanTitle || entry.id)}</strong> <span class="badge">${escapeHtml(
-        entry.action || "review"
-      )}</span></li>`;
-    })
-    .join("");
+  for (const resultEntry of bookmarkResults) {
+    if (!resultEntry || typeof resultEntry.id === "undefined") {
+      continue;
+    }
+    const bookmarkId = String(resultEntry.id);
+    const source = sourceMap.get(bookmarkId);
+    if (!source) {
+      continue;
+    }
 
-  const folderEntries = Object.entries(suggestedFolders)
-    .map(([folder, info]) => {
-      const count = typeof info?.count === "number" ? info.count : 0;
-      const sample = Array.isArray(info?.sampleIds) ? info.sampleIds.slice(0, 3) : [];
-      const sampleLabels = sample
-        .map((id) => {
-          const entry = resultMap.get(String(id));
-          if (entry) {
-            return escapeHtml(entry.cleanTitle || entry.id);
-          }
-          return escapeHtml(String(id));
-        })
-        .join(", ");
-      return `<li><strong>${escapeHtml(folder)}</strong> <span class="count">(${count})</span>${
-        sampleLabels ? ` — ${sampleLabels}` : ""
-      }</li>`;
-    })
-    .join("");
+    const cleanTitle = typeof resultEntry.cleanTitle === "string" ? resultEntry.cleanTitle.trim() : "";
+    if (cleanTitle && cleanTitle !== source.title) {
+      await chrome.bookmarks.update(bookmarkId, { title: cleanTitle });
+      source.title = cleanTitle;
+      renamed += 1;
+    }
 
-  const bookmarkSections = bookmarks
-    .map((entry) => {
-      const source = sourceMap.get(String(entry.id));
-      const url = source?.url || "";
-      const tags = Array.isArray(entry.secondaryTags) ? entry.secondaryTags : [];
-      const keywords = Array.isArray(entry.keywords) ? entry.keywords : [];
-      const notes = typeof entry.notes === "string" ? entry.notes : "";
-      const duplicate = typeof entry.duplicateOf === "string" ? entry.duplicateOf : "";
-      const path = source?.path ? `<div class="path">Folder: ${escapeHtml(source.path)}</div>` : "";
-      const originalTitle = source?.title && source.title !== entry.cleanTitle
-        ? `<div class="original">Original: ${escapeHtml(source.title)}</div>`
-        : "";
-      const urlLine = url ? `<div class="url"><a href="${escapeHtml(url)}">${escapeHtml(url)}</a></div>` : "";
-      const tagsLine = tags.length
-        ? `<div class="chips">${tags
-            .map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`)
-            .join(" ")}</div>`
-        : "";
-      const keywordsLine = keywords.length
-        ? `<div class="keywords">Keywords: ${keywords.map((kw) => `<code>${escapeHtml(kw)}</code>`).join(" ")}</div>`
-        : "";
-      const duplicateLine = duplicate
-        ? `<div class="duplicate">Duplicate of: <code>${escapeHtml(duplicate)}</code></div>`
-        : "";
-      const notesLine = notes
-        ? `<div class="notes">Notes: ${escapeHtml(notes)}</div>`
-        : "";
-      const summaryLine = entry.summary
-        ? `<p class="summary">${escapeHtml(entry.summary)}</p>`
-        : "";
-      return `<section class="bookmark-entry action-${escapeHtml(entry.action || "keep")}">
-  <header>
-    <h2>${escapeHtml(entry.cleanTitle || entry.id)}</h2>
-    <span class="category">${escapeHtml(entry.primaryCategory || "Unsorted")}</span>
-    <span class="action">${escapeHtml((entry.action || "keep").toUpperCase())}</span>
-  </header>
-  ${summaryLine}
-  ${urlLine}
-  ${path}
-  ${originalTitle}
-  ${tagsLine}
-  ${keywordsLine}
-  ${duplicateLine}
-  ${notesLine}
-</section>`;
-    })
-    .join("\n");
+    const parentId = source.parentId || (source.ancestors?.length ? source.ancestors[source.ancestors.length - 1].id : null);
+    if (!parentId) {
+      continue;
+    }
 
-  const dominantList = dominantCategories.length
-    ? dominantCategories.map((category) => `<li>${escapeHtml(category)}</li>`).join("")
-    : "<li>No dominant categories detected.</li>";
+    const targetFolderName = determineTargetFolderName(resultEntry);
+    const normalizedTarget = normalizeFolderName(targetFolderName);
+    if (!normalizedTarget) {
+      continue;
+    }
 
-  const generatedLabel = formatDate(generatedAt);
-  const language = payload?.language || DEFAULT_LANGUAGE;
-  const bookmarkCount = Array.isArray(payload?.bookmarks) ? payload.bookmarks.length : bookmarks.length;
+    const currentParentInfo = nodeMap.get(source.parentId);
+    const currentParentTitle = currentParentInfo?.title || "";
+    if (normalizeFolderName(currentParentTitle) === normalizedTarget) {
+      continue;
+    }
 
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Smart Bookmark Organizer Report</title>
-    <style>
-      :root {
-        color-scheme: light dark;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #111827;
-        color: #e5e7eb;
-      }
-      body {
-        max-width: 960px;
-        margin: 0 auto;
-        padding: 32px 24px 80px;
-        line-height: 1.6;
-      }
-      h1 {
-        font-size: 2rem;
-        margin-bottom: 0.25rem;
-      }
-      h2 {
-        font-size: 1.25rem;
-        margin: 0;
-      }
-      a {
-        color: #60a5fa;
-      }
-      .summary-card {
-        background: rgba(59, 130, 246, 0.12);
-        border: 1px solid rgba(96, 165, 250, 0.4);
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 32px;
-      }
-      .summary-grid {
-        display: grid;
-        gap: 24px;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      }
-      .summary-grid section {
-        background: rgba(17, 24, 39, 0.85);
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        border-radius: 12px;
-        padding: 16px;
-      }
-      ul {
-        margin: 0.5rem 0 0 1.25rem;
-        padding: 0;
-      }
-      .bookmark-entry {
-        border-radius: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        padding: 20px;
-        margin-bottom: 20px;
-        background: rgba(30, 41, 59, 0.6);
-      }
-      .bookmark-entry header {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: baseline;
-        margin-bottom: 12px;
-      }
-      .bookmark-entry .category {
-        background: rgba(16, 185, 129, 0.2);
-        color: #6ee7b7;
-        padding: 2px 10px;
-        border-radius: 999px;
-        font-size: 0.8rem;
-      }
-      .bookmark-entry .action {
-        font-size: 0.75rem;
-        letter-spacing: 0.08em;
-        padding: 2px 8px;
-        border-radius: 6px;
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        color: rgba(148, 163, 184, 0.9);
-      }
-      .bookmark-entry.action-reviewDuplicate .action {
-        background: rgba(251, 191, 36, 0.2);
-        color: #facc15;
-        border-color: rgba(251, 191, 36, 0.35);
-      }
-      .bookmark-entry.action-archive .action {
-        background: rgba(239, 68, 68, 0.15);
-        color: #fca5a5;
-        border-color: rgba(239, 68, 68, 0.3);
-      }
-      .bookmark-entry .chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 8px;
-      }
-      .chip {
-        background: rgba(129, 140, 248, 0.2);
-        color: #a5b4fc;
-        padding: 2px 10px;
-        border-radius: 999px;
-        font-size: 0.75rem;
-      }
-      .keywords code {
-        background: rgba(255, 255, 255, 0.08);
-        padding: 2px 6px;
-        border-radius: 6px;
-        margin-right: 4px;
-        font-size: 0.75rem;
-      }
-      .summary {
-        margin: 0 0 8px;
-        color: rgba(226, 232, 240, 0.9);
-      }
-      .notes {
-        margin-top: 8px;
-        color: rgba(226, 232, 240, 0.72);
-      }
-      .duplicate {
-        margin-top: 8px;
-        color: rgba(249, 115, 22, 0.8);
-      }
-      .generated-info {
-        font-size: 0.85rem;
-        color: rgba(148, 163, 184, 0.75);
-      }
-      .badge {
-        background: rgba(249, 115, 22, 0.2);
-        color: #fb923c;
-        padding: 2px 8px;
-        border-radius: 999px;
-        font-size: 0.75rem;
-      }
-      details {
-        margin-top: 32px;
-        background: rgba(15, 23, 42, 0.6);
-        border-radius: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        padding: 16px;
-      }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        font-size: 0.8rem;
-      }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Smart Bookmark Organizer</h1>
-      <p class="generated-info">Language: ${escapeHtml(language)} · Bookmarks analyzed: ${bookmarkCount} · Generated: ${escapeHtml(
-        generatedLabel || "just now"
-      )}</p>
-    </header>
-    <section class="summary-card">
-      <h2>Collection summary</h2>
-      <div class="summary-grid">
-        <section>
-          <h3>Dominant categories</h3>
-          <ul>${dominantList}</ul>
-        </section>
-        <section>
-          <h3>Needs attention</h3>
-          <ul>${attentionItems || "<li>No urgent follow-ups.</li>"}</ul>
-        </section>
-        <section>
-          <h3>Suggested folders</h3>
-          <ul>${folderEntries || "<li>No folder suggestions.</li>"}</ul>
-        </section>
-      </div>
-    </section>
-    ${bookmarkSections || "<p>No bookmark recommendations returned.</p>"}
-    <details>
-      <summary>Raw response JSON</summary>
-      <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
-    </details>
-  </body>
-</html>`;
+    const folderId = await ensureFolder(parentId, targetFolderName, folderLookup, createdFolders, nodeMap);
+    if (!folderId || folderId === source.parentId) {
+      continue;
+    }
+
+    await chrome.bookmarks.move(bookmarkId, { parentId: folderId });
+    source.parentId = folderId;
+    moved += 1;
+  }
+
+  return { renamed, moved, createdFolders: createdFolders.size };
 }
 
 async function collectRecentBookmarks(limit) {
   const tree = await getBookmarkTree();
-  const flattened = flattenBookmarkTree(tree);
+  const meta = flattenBookmarkTree(tree);
+  const flattened = meta.bookmarks;
   if (!flattened.length) {
-    return [];
+    return { bookmarks: [], folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
   }
   const sorted = flattened.sort((a, b) => {
     const aTime = typeof a.dateAdded === "number" ? a.dateAdded : 0;
@@ -533,10 +433,12 @@ async function collectRecentBookmarks(limit) {
     }
     return (a.title || "").localeCompare(b.title || "");
   });
-  return sorted.slice(0, clampLimit(limit));
+  const limited = sorted.slice(0, clampLimit(limit));
+  return { bookmarks: limited, folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
 }
 
-export function createBookmarkOrganizerService() {
+export function createBookmarkOrganizerService(options = {}) {
+  const { scheduleRebuild } = options;
   let sessionInstance = null;
   let sessionPromise = null;
   let activeRequest = null;
@@ -602,18 +504,27 @@ export function createBookmarkOrganizerService() {
     const task = (async () => {
       const limit = clampLimit(options.limit);
       const language = typeof options.language === "string" && options.language ? options.language : DEFAULT_LANGUAGE;
-      const bookmarks = await collectRecentBookmarks(limit);
+      const { bookmarks, folderLookup, nodeMap } = await collectRecentBookmarks(limit);
       if (!bookmarks.length) {
         throw new Error("No bookmarks available to organize");
       }
       const payload = buildPromptPayload(bookmarks, language);
       const { raw, parsed } = await runPrompt(payload);
+      const changes = await applyOrganizerChanges(bookmarks, parsed, { folderLookup, nodeMap });
+      if (
+        typeof scheduleRebuild === "function" &&
+        changes &&
+        (changes.renamed > 0 || changes.moved > 0 || changes.createdFolders > 0)
+      ) {
+        scheduleRebuild(200);
+      }
       return {
         generatedAt: Date.now(),
         payload,
         sourceBookmarks: bookmarks,
         result: parsed,
         rawText: raw,
+        changes,
       };
     })();
     activeRequest = task
@@ -628,25 +539,7 @@ export function createBookmarkOrganizerService() {
     return activeRequest;
   }
 
-  async function openResultsTab(report) {
-    if (!report || !report.result) {
-      throw new Error("Invalid organizer report");
-    }
-    const html = buildBookmarkSummaryHtml(report);
-    const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-    await chrome.tabs.create({ url });
-    return url;
-  }
-
-  async function organizeAndOpen(options = {}) {
-    const report = await organizeBookmarks(options);
-    await openResultsTab(report);
-    return report;
-  }
-
   return {
     organizeBookmarks,
-    openResultsTab,
-    organizeAndOpen,
   };
 }

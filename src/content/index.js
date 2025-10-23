@@ -1157,7 +1157,7 @@ function handleBookmarkOrganizeRequest() {
   setStatus("Organizing bookmarks…", { force: true, sticky: true });
 
   chrome.runtime.sendMessage(
-    { type: "SPOTLIGHT_BOOKMARK_ORGANIZE", openTab: true },
+    { type: "SPOTLIGHT_BOOKMARK_ORGANIZE" },
     (response) => {
       bookmarkOrganizerRequestPending = false;
 
@@ -1181,10 +1181,30 @@ function handleBookmarkOrganizeRequest() {
       refreshBookmarkOrganizerControlState();
 
       const bookmarkCount = Number.isFinite(response.bookmarkCount) ? response.bookmarkCount : null;
+      const renameCount = Number.isFinite(response?.changes?.renamed) ? response.changes.renamed : 0;
+      const movedCount = Number.isFinite(response?.changes?.moved) ? response.changes.moved : 0;
+      const folderCount = Number.isFinite(response?.changes?.createdFolders)
+        ? response.changes.createdFolders
+        : 0;
+      const changeDetails = [];
+      if (movedCount > 0) {
+        changeDetails.push(`${movedCount} moved`);
+      }
+      if (renameCount > 0) {
+        changeDetails.push(`${renameCount} renamed`);
+      }
+      if (folderCount > 0) {
+        changeDetails.push(`${folderCount} new folder${folderCount === 1 ? "" : "s"}`);
+      }
+      const summary = changeDetails.length ? ` · ${changeDetails.join(" · ")}` : "";
       const statusMessage = bookmarkCount
-        ? `Organized ${bookmarkCount} bookmark${bookmarkCount === 1 ? "" : "s"} · Report opened in a new tab`
-        : "Bookmarks organized · Report opened in a new tab";
+        ? `Organized ${bookmarkCount} bookmark${bookmarkCount === 1 ? "" : "s"}${summary}`
+        : `Bookmarks organized${summary}`;
       setStatus(statusMessage, { force: true });
+
+      setTimeout(() => {
+        requestResults(inputEl.value);
+      }, 350);
     }
   );
 }

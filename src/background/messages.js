@@ -197,7 +197,6 @@ export function registerMessageHandlers({
       }
       const limit = Number.isFinite(message.limit) ? message.limit : undefined;
       const language = typeof message.language === "string" ? message.language : undefined;
-      const shouldOpenTab = Boolean(message.openTab);
       const options = {};
       if (Number.isFinite(limit) && limit > 0) {
         options.limit = limit;
@@ -205,10 +204,8 @@ export function registerMessageHandlers({
       if (language) {
         options.language = language;
       }
-      const request = shouldOpenTab
-        ? organizer.organizeAndOpen(options)
-        : organizer.organizeBookmarks(options);
-      request
+      organizer
+        .organizeBookmarks(options)
         .then((report) => {
           const response = {
             success: true,
@@ -216,19 +213,8 @@ export function registerMessageHandlers({
             language: report.payload?.language,
             bookmarkCount: report.payload?.bookmarks?.length || 0,
             result: report.result,
+            changes: report.changes || { renamed: 0, moved: 0, createdFolders: 0 },
           };
-          if (!shouldOpenTab) {
-            response.rawText = report.rawText;
-            response.sourceBookmarks = Array.isArray(report.sourceBookmarks)
-              ? report.sourceBookmarks.map((entry) => ({
-                  id: entry.id,
-                  title: entry.title,
-                  url: entry.url,
-                  path: entry.path || "",
-                  userNotes: entry.userNotes || "",
-                }))
-              : [];
-          }
           sendResponse(response);
         })
         .catch((error) => {

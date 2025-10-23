@@ -44,10 +44,10 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
         scheduleRebuild(REBUILD_DELAYS[commandId]);
         return;
       case "bookmark-organize":
-        if (!bookmarkOrganizer || typeof bookmarkOrganizer.organizeAndOpen !== "function") {
+        if (!bookmarkOrganizer || typeof bookmarkOrganizer.organizeBookmarks !== "function") {
           throw new Error("Bookmark organizer unavailable");
         }
-        await bookmarkOrganizer.organizeAndOpen();
+        await bookmarkOrganizer.organizeBookmarks();
         return;
       default:
         throw new Error(`Unknown command: ${commandId}`);

@@ -17,7 +17,7 @@ import {
 
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
-const organizer = createBookmarkOrganizerService();
+const organizer = createBookmarkOrganizerService({ scheduleRebuild: context.scheduleRebuild });
 const executeCommand = createCommandExecutor({
   tabActions,
   scheduleRebuild: context.scheduleRebuild,
