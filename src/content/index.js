@@ -30,8 +30,10 @@ let statusSticky = false;
 let activeFilter = null;
 let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
-let subfilterState = { type: null, options: [], activeId: null };
+let subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
 let selectedSubfilter = null;
+let bookmarkOrganizerControl = null;
+let bookmarkOrganizerRequestPending = false;
 let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
@@ -377,6 +379,7 @@ function createOverlay() {
   subfilterScrollerEl.className = "spotlight-subfilters-scroll";
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
+  ensureBookmarkOrganizerControl();
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
@@ -980,7 +983,7 @@ function applySlashSelection(option) {
 }
 
 function resetSubfilterState() {
-  subfilterState = { type: null, options: [], activeId: null };
+  subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
   selectedSubfilter = null;
   renderSubfilters();
 }
@@ -1012,7 +1015,7 @@ function updateSubfilterState(payload) {
     .filter(Boolean);
 
   const hasNonAllOption = sanitizedOptions.some((option) => option.id !== "all");
-  if (!hasNonAllOption) {
+  if (!hasNonAllOption && type !== "bookmark") {
     resetSubfilterState();
     return;
   }
@@ -1022,8 +1025,8 @@ function updateSubfilterState(payload) {
     resolvedActiveId = sanitizedOptions.find((option) => option.id === "all") ? "all" : sanitizedOptions[0]?.id || null;
   }
 
-  subfilterState = { type, options: sanitizedOptions, activeId: resolvedActiveId };
-  if (resolvedActiveId && resolvedActiveId !== "all") {
+  subfilterState = { type, options: sanitizedOptions, activeId: resolvedActiveId, hasNonAllOption };
+  if (hasNonAllOption && resolvedActiveId && resolvedActiveId !== "all") {
     selectedSubfilter = { type, id: resolvedActiveId };
   } else {
     selectedSubfilter = null;
@@ -1048,15 +1051,30 @@ function renderSubfilters() {
     return;
   }
 
+  const control = ensureBookmarkOrganizerControl();
   const options = Array.isArray(subfilterState.options) ? subfilterState.options : [];
   const hasType = Boolean(subfilterState.type);
-  const hasNonAllOption = options.some((option) => option && option.id && option.id !== "all");
-  const shouldShow = hasType && hasNonAllOption;
+  const hasNonAllOption = Boolean(
+    subfilterState.hasNonAllOption || options.some((option) => option && option.id && option.id !== "all")
+  );
+  const showOrganizerButton = Boolean(control && subfilterState.type === "bookmark");
+  const shouldShow = hasType && (hasNonAllOption || showOrganizerButton);
+
   subfilterContainerEl.classList.toggle("visible", shouldShow);
+  subfilterContainerEl.classList.toggle("has-subfilters", hasNonAllOption);
+  subfilterContainerEl.classList.toggle("has-actions", showOrganizerButton && shouldShow);
   subfilterContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
 
+  if (control) {
+    control.setVisible(showOrganizerButton && shouldShow);
+    if (!showOrganizerButton && !bookmarkOrganizerRequestPending) {
+      control.reset();
+    }
+  }
+
   subfilterScrollerEl.innerHTML = "";
-  if (!shouldShow) {
+  refreshBookmarkOrganizerControlState();
+  if (!shouldShow || !hasNonAllOption) {
     return;
   }
 
@@ -1092,6 +1110,83 @@ function renderSubfilters() {
 
     subfilterScrollerEl.appendChild(button);
   });
+}
+
+function ensureBookmarkOrganizerControl() {
+  if (!subfilterContainerEl) {
+    return null;
+  }
+
+  const api = globalThis.SpotlightBookmarkOrganizerUI;
+  if (!api || typeof api.createControl !== "function") {
+    return bookmarkOrganizerControl;
+  }
+
+  const control = api.createControl({
+    container: subfilterContainerEl,
+    onRequestOrganize: handleBookmarkOrganizeRequest,
+  });
+
+  if (control) {
+    bookmarkOrganizerControl = control;
+  }
+
+  return bookmarkOrganizerControl;
+}
+
+function refreshBookmarkOrganizerControlState() {
+  if (!bookmarkOrganizerControl || typeof bookmarkOrganizerControl.setEnabled !== "function") {
+    return;
+  }
+  const containerVisible = Boolean(
+    subfilterContainerEl && subfilterContainerEl.classList.contains("visible")
+  );
+  const isBookmarkFilter = subfilterState.type === "bookmark";
+  bookmarkOrganizerControl.setEnabled(containerVisible && isBookmarkFilter && !bookmarkOrganizerRequestPending);
+}
+
+function handleBookmarkOrganizeRequest() {
+  const control = ensureBookmarkOrganizerControl();
+  if (!control || bookmarkOrganizerRequestPending) {
+    return;
+  }
+
+  bookmarkOrganizerRequestPending = true;
+  control.setRunning(true);
+  refreshBookmarkOrganizerControlState();
+  setStatus("Organizing bookmarks…", { force: true, sticky: true });
+
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_BOOKMARK_ORGANIZE", openTab: true },
+    (response) => {
+      bookmarkOrganizerRequestPending = false;
+
+      if (chrome.runtime.lastError) {
+        console.error("Spotlight bookmark organizer request failed", chrome.runtime.lastError);
+        control.showError("Retry");
+        refreshBookmarkOrganizerControlState();
+        setStatus("Bookmark organizer unavailable", { force: true });
+        return;
+      }
+
+      if (!response || !response.success) {
+        const errorMessage = (response && response.error) || "Unable to organize bookmarks";
+        control.showError("Retry");
+        refreshBookmarkOrganizerControlState();
+        setStatus(errorMessage, { force: true });
+        return;
+      }
+
+      control.showSuccess("Organized");
+      refreshBookmarkOrganizerControlState();
+
+      const bookmarkCount = Number.isFinite(response.bookmarkCount) ? response.bookmarkCount : null;
+      const statusMessage = bookmarkCount
+        ? `Organized ${bookmarkCount} bookmark${bookmarkCount === 1 ? "" : "s"} · Report opened in a new tab`
+        : "Bookmarks organized · Report opened in a new tab";
+      setStatus(statusMessage, { force: true });
+    }
+  );
 }
 
 function handleSubfilterClick(option) {
