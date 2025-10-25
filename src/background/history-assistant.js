@@ -110,6 +110,19 @@ const TIME_KEYWORD_PATTERNS = [
   { pattern: /\bpast\s+30\s+days\b/i, label: "last 30 days" },
 ];
 
+const HELP_QUERY_PATTERNS = [
+  /\bhow\s+can\s+you\s+help\b/i,
+  /\bhow\s+do\s+you\s+help\b/i,
+  /\bwhat\s+can\s+you\s+do\b/i,
+  /\bwhat\s+do\s+you\s+do\b/i,
+  /\bwhat\s+can\s+this\s+do\b/i,
+  /\bhelp\s+me\b/i,
+  /^help\b/i,
+  /\btell\s+me\s+what\s+you\s+do\b/i,
+];
+
+const HELP_SOFT_SIGNAL_TOKENS = new Set(["how", "can", "what", "you", "me", "this", "do", "able"]);
+
 function normalizeKeywordList(list) {
   if (!Array.isArray(list)) {
     return [];
@@ -268,6 +281,44 @@ function buildQueryTokenData(query) {
     timeTokens: detectTimeTokens(query),
     actionTokens: detectActionTokens(query),
   };
+}
+
+function detectHelpRequest(query, tokenData) {
+  const text = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (!text) {
+    return false;
+  }
+  for (const pattern of HELP_QUERY_PATTERNS) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  const rawTokens = Array.isArray(tokenData?.tokens) ? tokenData.tokens : [];
+  const lowerTokens = rawTokens
+    .map((token) => (typeof token === "string" ? token.toLowerCase() : ""))
+    .filter(Boolean);
+  if (!lowerTokens.includes("help")) {
+    return false;
+  }
+  const actionHints = Array.isArray(tokenData?.actionTokens)
+    ? tokenData.actionTokens.map((token) => (typeof token === "string" ? token.toLowerCase() : ""))
+    : [];
+  if (actionHints.length) {
+    return false;
+  }
+  const otherTokens = lowerTokens.filter((token) => token !== "help");
+  if (!otherTokens.length) {
+    return true;
+  }
+  return otherTokens.every((token) => HELP_SOFT_SIGNAL_TOKENS.has(token));
+}
+
+function buildHelpAcknowledgement() {
+  return (
+    "I can look through your browsing history, reopen recent tabs, or delete entries you choose. " +
+    'Try asking for things like "show the YouTube videos I watched yesterday," ' +
+    '"open my GitHub tabs from last week," or "delete Saturday\'s shopping history."'
+  );
 }
 
 function buildDateRangeFromTokens(tokenData) {
@@ -1561,6 +1612,20 @@ export function createHistoryAssistantService() {
     response.topics = interpretation.topics;
     response.maxItems = interpretation.maxItems || null;
     if (!interpretation.action || interpretation.confidence < 0.35) {
+      const tokenData = buildQueryTokenData(query);
+      if (detectHelpRequest(query, tokenData)) {
+        const ack = buildHelpAcknowledgement();
+        logAssistantAction(actionLog, {
+          timestamp: Date.now(),
+          action: "info",
+          summary: ack,
+        });
+        response.action = "clarify";
+        response.followUpQuestion = "";
+        response.ack = ack;
+        response.log = actionLog.slice();
+        return response;
+      }
       response.action = "clarify";
       response.followUpQuestion = "I didn't catch a history request. Could you rephrase it?";
       response.ack = response.followUpQuestion;
