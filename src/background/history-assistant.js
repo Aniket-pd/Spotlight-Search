@@ -457,12 +457,42 @@ function sanitizeInterpretation(parsed, now = Date.now()) {
   };
 }
 
-function buildPrompt(query) {
+function formatTimezoneOffset(date) {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
+  const minutes = String(absolute % 60).padStart(2, "0");
+  return `${sign}${hours}:${minutes}`;
+}
+
+function formatLocalIso(date) {
+  const offset = date.getTimezoneOffset();
+  const adjusted = new Date(date.getTime() - offset * 60 * 1000);
+  const iso = adjusted.toISOString().replace("Z", "");
+  const timezoneOffset = formatTimezoneOffset(date);
+  return `${iso}${timezoneOffset}`;
+}
+
+function buildPrompt(query, now = new Date()) {
   const trimmed = typeof query === "string" ? query.trim() : "";
+  const weekdays = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const weekdayLabel = weekdays[now.getDay()] || "";
+  const timezoneOffset = formatTimezoneOffset(now);
+  const localIso = formatLocalIso(now);
   return `You are a Chrome history assistant that interprets natural language requests.\n\n` +
+    `Current local date and time: ${weekdayLabel}, ${localIso} (UTC${timezoneOffset}). Use this to resolve relative time expressions.\n` +
     `Decide whether the user wants to search, open, or delete browsing history, or if you need to clarify first.\n` +
     `Only use these actions: search, open, delete, clarify.\n` +
-    `Use the time range presets when possible and provide ISO-8601 dates for start and end when you can.\n` +
+    `Prefer time range presets when they fit. Always provide ISO-8601 strings (with timezone offsets) for start and end when available.\n` +
     `Topics should be short keywords extracted from the request.\n` +
     `If the request is ambiguous, set action to \\"clarify\\" and provide a followUpQuestion.\n` +
     `Always respond with JSON that matches the provided schema.\n\n` +
