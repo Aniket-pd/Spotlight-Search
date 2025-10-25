@@ -440,24 +440,47 @@ function logAssistantAction(log, entry) {
 
 async function collectHistoryEntries(topics, range) {
   const keywords = extractKeywords(topics);
-  const queryText = keywords.length ? keywords.join(" ") : topics.join(" ");
-  const params = {
-    text: queryText,
-    maxResults: MAX_HISTORY_RESULTS,
-  };
-  if (Number.isFinite(range.startTime) && range.startTime > 0) {
-    params.startTime = range.startTime;
+  const rawQuery = keywords.length ? keywords.join(" ") : topics.join(" ");
+  const queryText = typeof rawQuery === "string" ? rawQuery.trim() : "";
+  const hasStart = Number.isFinite(range.startTime) && range.startTime > 0;
+  const hasEnd = Number.isFinite(range.endTime) && range.endTime > 0;
+
+  async function runSearch(text, includeTimeBounds) {
+    const params = {
+      text: typeof text === "string" ? text : "",
+      maxResults: MAX_HISTORY_RESULTS,
+    };
+    if (includeTimeBounds && hasStart) {
+      params.startTime = range.startTime;
+    }
+    if (includeTimeBounds && hasEnd) {
+      params.endTime = range.endTime;
+    }
+    try {
+      return await chrome.history.search(params);
+    } catch (err) {
+      console.warn("Spotlight: history assistant search failed", err);
+      return [];
+    }
   }
-  if (Number.isFinite(range.endTime) && range.endTime > 0) {
-    params.endTime = range.endTime;
+
+  const attempts = [];
+  if (queryText) {
+    attempts.push(() => runSearch(queryText, true));
   }
+  attempts.push(() => runSearch("", true));
+  if (hasStart || hasEnd) {
+    attempts.push(() => runSearch("", false));
+  }
+
   let entries = [];
-  try {
-    entries = await chrome.history.search(params);
-  } catch (err) {
-    console.warn("Spotlight: history assistant search failed", err);
-    return [];
+  for (const attempt of attempts) {
+    entries = await attempt();
+    if (Array.isArray(entries) && entries.length) {
+      break;
+    }
   }
+
   return filterEntriesByTopics(entries || [], topics);
 }
 
