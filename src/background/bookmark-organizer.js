@@ -368,12 +368,13 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   }
 
   let folderMap = folderLookup.get(parentId);
-  if (!folderMap || !folderMap.has(normalized)) {
-    folderMap = await refreshFolderLookup(parentId, folderLookup, nodeMap);
-  }
+  folderMap = await refreshFolderLookup(parentId, folderLookup, nodeMap);
   if (folderMap && folderMap.has(normalized)) {
     const existing = folderMap.get(normalized);
-    const folderId = existing?.id || existing;
+    const folderId = normalizeId(existing?.id ?? existing);
+    if (!folderId && folderId !== "0") {
+      return parentId;
+    }
     const folderTitle = typeof existing?.title === "string" ? existing.title : sanitizedTitle;
     createdFolders.set(cacheKey, folderId);
     if (!nodeMap.has(folderId)) {
@@ -393,6 +394,22 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     throw new Error(`Failed to create folder "${sanitizedTitle}"`);
   }
   const folderId = String(folder.id);
+
+  folderMap = await refreshFolderLookup(parentId, folderLookup, nodeMap);
+  if (folderMap && folderMap.has(normalized)) {
+    const refreshed = folderMap.get(normalized);
+    const refreshedId = normalizeId(refreshed?.id ?? refreshed) || folderId;
+    const refreshedTitle = typeof refreshed?.title === "string" ? refreshed.title : sanitizedTitle;
+    createdFolders.set(cacheKey, refreshedId);
+    nodeMap.set(refreshedId, {
+      id: refreshedId,
+      title: refreshedTitle,
+      parentId,
+      isFolder: true,
+      children: [],
+    });
+    return refreshedId;
+  }
 
   if (!folderMap) {
     folderMap = new Map();
@@ -509,7 +526,16 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
         ? directParent.title
         : "";
     const currentParentTitle = currentParentInfo?.title || fallbackParentTitle || "";
-    if (normalizeFolderName(currentParentTitle) === normalizedTarget) {
+    const normalizedCurrentParent = normalizeFolderName(currentParentTitle);
+    if (normalizedCurrentParent === normalizedTarget) {
+      continue;
+    }
+
+    if (
+      !normalizedCurrentParent &&
+      Array.isArray(source.ancestors) &&
+      source.ancestors.some((ancestor) => normalizeFolderName(ancestor?.title) === normalizedTarget)
+    ) {
       continue;
     }
 
