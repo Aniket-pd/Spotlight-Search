@@ -762,3 +762,381 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.8);
 }
+
+.spotlight-history-assistant {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(18, 20, 32, 0.82);
+}
+
+.spotlight-history-assistant.visible {
+  display: flex;
+}
+
+.spotlight-history-assistant.loading .spotlight-history-assistant-loading::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 255, 0.4);
+  border-top-color: rgba(118, 141, 255, 0.95);
+  animation: spotlight-spin 0.75s linear infinite;
+  display: inline-block;
+}
+
+.spotlight-history-assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spotlight-history-assistant-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #f6f6ff;
+}
+
+.spotlight-history-assistant-pause {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 255, 0.4);
+  background: rgba(118, 141, 255, 0.14);
+  color: #e1e7ff;
+  cursor: pointer;
+  transition: background 0.18s ease, border 0.18s ease;
+}
+
+.spotlight-history-assistant-pause:hover,
+.spotlight-history-assistant-pause:focus-visible {
+  background: rgba(118, 141, 255, 0.28);
+  border-color: rgba(148, 163, 255, 0.65);
+  outline: none;
+}
+
+.spotlight-history-assistant-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  position: relative;
+}
+
+.spotlight-history-assistant-input {
+  flex: 1;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 26, 0.75);
+  padding: 10px 14px;
+  font-size: 15px;
+  color: #f7f8ff;
+  transition: border 0.2s ease;
+}
+
+.spotlight-history-assistant-input:focus-visible {
+  outline: none;
+  border-color: rgba(118, 141, 255, 0.75);
+  box-shadow: 0 0 0 2px rgba(118, 141, 255, 0.3);
+}
+
+.spotlight-history-assistant-submit {
+  border-radius: 10px;
+  border: 1px solid rgba(118, 141, 255, 0.6);
+  background: linear-gradient(135deg, rgba(118, 141, 255, 0.85), rgba(96, 204, 255, 0.78));
+  color: #fff;
+  padding: 9px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.spotlight-history-assistant-submit:hover,
+.spotlight-history-assistant-submit:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(99, 137, 255, 0.28);
+}
+
+.spotlight-history-assistant-loading {
+  position: absolute;
+  right: 98px;
+  height: 16px;
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spotlight-history-assistant-status {
+  font-size: 14px;
+  color: rgba(235, 241, 255, 0.78);
+  min-height: 18px;
+}
+
+.spotlight-history-assistant.paused .spotlight-history-assistant-status {
+  color: rgba(255, 198, 124, 0.95);
+}
+
+.spotlight-history-assistant-feedback {
+  font-size: 13px;
+  color: rgba(160, 174, 255, 0.85);
+  display: none;
+}
+
+.spotlight-history-assistant-feedback.visible {
+  display: block;
+}
+
+.spotlight-history-assistant-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spotlight-history-session {
+  border-radius: 12px;
+  background: rgba(20, 24, 40, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-history-session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.spotlight-history-session-label {
+  font-weight: 600;
+  font-size: 15px;
+  color: #f7f8ff;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.spotlight-history-session-range {
+  font-size: 12px;
+  color: rgba(198, 203, 255, 0.68);
+}
+
+.spotlight-history-session-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.spotlight-history-session-button {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 141, 255, 0.45);
+  background: rgba(118, 141, 255, 0.18);
+  color: #eef2ff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, border 0.18s ease;
+}
+
+.spotlight-history-session-button.subtle {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 242, 255, 0.82);
+}
+
+.spotlight-history-session-button:hover,
+.spotlight-history-session-button:focus-visible {
+  outline: none;
+  background: rgba(118, 141, 255, 0.32);
+  border-color: rgba(118, 141, 255, 0.65);
+}
+
+.spotlight-history-session-button.subtle:hover,
+.spotlight-history-session-button.subtle:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.36);
+}
+
+.spotlight-history-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spotlight-history-session-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(14, 18, 32, 0.45);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.spotlight-history-item-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(240, 243, 255, 0.92);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.spotlight-history-item-time {
+  font-size: 11px;
+  color: rgba(177, 186, 255, 0.7);
+}
+
+.spotlight-history-item-button {
+  border-radius: 999px;
+  border: 1px solid rgba(118, 141, 255, 0.4);
+  background: rgba(118, 141, 255, 0.14);
+  color: #e4e9ff;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.spotlight-history-item-button.subtle {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 242, 255, 0.72);
+}
+
+.spotlight-history-item-button:hover,
+.spotlight-history-item-button:focus-visible {
+  outline: none;
+  background: rgba(118, 141, 255, 0.32);
+  border-color: rgba(118, 141, 255, 0.65);
+}
+
+.spotlight-history-item-button.subtle:hover,
+.spotlight-history-item-button.subtle:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.spotlight-history-assistant-actions {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spotlight-history-assistant-actions.visible {
+  display: flex;
+}
+
+.spotlight-history-delete-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-history-delete-item {
+  background: rgba(18, 22, 36, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.spotlight-history-delete-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: rgba(240, 243, 255, 0.9);
+}
+
+.spotlight-history-delete-label input[type="checkbox"] {
+  accent-color: rgba(118, 141, 255, 0.9);
+}
+
+.spotlight-history-delete-time {
+  font-size: 11px;
+  color: rgba(177, 186, 255, 0.7);
+}
+
+.spotlight-history-delete-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.spotlight-history-delete-confirm {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.9), rgba(249, 115, 22, 0.85));
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(239, 68, 68, 0.25);
+}
+
+.spotlight-history-delete-confirm:hover,
+.spotlight-history-delete-confirm:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.spotlight-history-delete-cancel {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 242, 255, 0.85);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.spotlight-history-delete-cancel:hover,
+.spotlight-history-delete-cancel:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.spotlight-history-undo {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.spotlight-history-undo button {
+  border-radius: 999px;
+  border: 1px solid rgba(96, 204, 255, 0.55);
+  background: rgba(96, 204, 255, 0.2);
+  color: #e8fbff;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.spotlight-history-undo button:hover,
+.spotlight-history-undo button:focus-visible {
+  outline: none;
+  background: rgba(96, 204, 255, 0.35);
+}
+
+@keyframes spotlight-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

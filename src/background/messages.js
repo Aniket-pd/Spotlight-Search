@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -221,6 +222,89 @@ export function registerMessageHandlers({
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
         });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST") {
+      if (!historyAssistant || typeof historyAssistant.handleQuery !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .handleQuery(message.query || "")
+        .then((result) => sendResponse(result))
+        .catch((err) => {
+          console.error("Spotlight: history assistant failed", err);
+          sendResponse({ success: false, error: err?.message || "History assistant error" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST_DELETE") {
+      if (!historyAssistant || typeof historyAssistant.confirmDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const operationId = typeof message.operationId === "string" ? message.operationId : "";
+      const itemIds = Array.isArray(message.itemIds)
+        ? message.itemIds.map((id) => (typeof id === "string" ? id : ""))
+        : [];
+      historyAssistant
+        .confirmDeletion(operationId, itemIds.filter(Boolean))
+        .then((result) => sendResponse(result))
+        .catch((err) => {
+          console.error("Spotlight: history delete confirmation failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to delete history" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST_UNDO") {
+      if (!historyAssistant || typeof historyAssistant.undoLastDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const token = typeof message.undoToken === "string" ? message.undoToken : "";
+      historyAssistant
+        .undoLastDeletion(token)
+        .then((result) => sendResponse(result))
+        .catch((err) => {
+          console.error("Spotlight: history undo failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to undo" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST_OPEN") {
+      if (!historyAssistant || typeof historyAssistant.openUrls !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const urls = Array.isArray(message.urls)
+        ? message.urls.map((url) => (typeof url === "string" ? url : "")).filter(Boolean)
+        : [];
+      historyAssistant
+        .openUrls(urls)
+        .then((result) => sendResponse({ success: true, opened: result.opened, message: result.ack, log: result.log }))
+        .catch((err) => {
+          console.error("Spotlight: history open request failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to open history" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST_LOG") {
+      if (!historyAssistant || typeof historyAssistant.getLog !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      try {
+        const log = historyAssistant.getLog();
+        sendResponse({ success: true, log: Array.isArray(log) ? log : [] });
+      } catch (err) {
+        console.error("Spotlight: history log retrieval failed", err);
+        sendResponse({ success: false, error: err?.message || "Unable to load history log" });
+      }
       return true;
     }
 
