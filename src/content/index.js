@@ -473,9 +473,16 @@ function renderHistoryAssistantLog() {
     historyAssistantFeedbackEl.textContent = "";
     return;
   }
-  const latest = log[0];
-  if (latest && latest.summary) {
-    historyAssistantFeedbackEl.textContent = latest.summary;
+  const currentAck = typeof historyAssistantState.ack === "string" ? historyAssistantState.ack.trim() : "";
+  const previousEntry = log.find((entry) => {
+    if (!entry || typeof entry.summary !== "string") {
+      return false;
+    }
+    const summary = entry.summary.trim();
+    return summary && summary !== currentAck;
+  });
+  if (previousEntry) {
+    historyAssistantFeedbackEl.textContent = previousEntry.summary;
     historyAssistantFeedbackEl.classList.add("visible");
   } else {
     historyAssistantFeedbackEl.textContent = "";

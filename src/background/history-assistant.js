@@ -848,30 +848,60 @@ function buildTopicLabel(topics, fallbackKeywords = []) {
   return fallback.length ? fallback.join(", ") : "everything";
 }
 
-function buildAckMessage(action, interpretation, resultCount, timeLabel) {
+function buildAckMessage(action, interpretation, details = {}) {
+  const {
+    count = 0,
+    totalMatches = count,
+    timeLabel,
+    cap,
+    limit,
+  } = typeof details === "object" && details !== null ? details : {};
   const topicLabel = buildTopicLabel(interpretation.topics, interpretation.queryKeywords);
   const rangeLabel = timeLabel || describeTimeRange(interpretation.timeRange);
+
   if (action === "search" || action === "show") {
-    if (!resultCount) {
+    if (!count) {
       return `I couldn't find history for ${topicLabel} in ${rangeLabel}.`;
     }
-    const plural = resultCount === 1 ? "entry" : "entries";
-    return `I found ${resultCount} ${plural} for ${topicLabel} in ${rangeLabel}.`;
+    const plural = count === 1 ? "entry" : "entries";
+    const limitNotice =
+      Number.isFinite(limit) && totalMatches > limit
+        ? ` (showing up to ${limit})`
+        : "";
+    return `I found ${count} ${plural} for ${topicLabel} in ${rangeLabel}${limitNotice}.`;
   }
+
   if (action === "open") {
-    if (!resultCount) {
+    if (!count) {
+      if (totalMatches > 0) {
+        return `I matched ${totalMatches} history entries for ${topicLabel}, but couldn't reopen any tabs.`;
+      }
       return `I couldn't find anything to reopen for ${topicLabel}.`;
     }
-    const plural = resultCount === 1 ? "tab" : "tabs";
-    return `Reopening ${resultCount} ${plural} from ${rangeLabel}.`;
+    const plural = count === 1 ? "tab" : "tabs";
+    let matchDetails = "";
+    if (Number.isFinite(cap) && totalMatches > cap) {
+      matchDetails = ` (matched ${totalMatches}, capped at ${cap} unique tabs)`;
+    } else if (totalMatches > count) {
+      matchDetails = ` (matched ${totalMatches} entries)`;
+    } else if (Number.isFinite(cap) && cap < count) {
+      matchDetails = ` (capped at ${cap} unique tabs)`;
+    }
+    return `Reopening ${count} ${plural} from ${rangeLabel}${matchDetails}.`;
   }
+
   if (action === "delete") {
-    if (!resultCount) {
+    if (!count) {
       return `I didn't find history to delete for ${topicLabel} in ${rangeLabel}.`;
     }
-    const plural = resultCount === 1 ? "entry" : "entries";
-    return `Ready to remove ${resultCount} ${plural} from ${rangeLabel}.`;
+    const plural = count === 1 ? "entry" : "entries";
+    const limitNotice =
+      Number.isFinite(limit) && totalMatches > limit
+        ? ` (showing up to ${limit})`
+        : "";
+    return `Ready to remove ${count} ${plural} from ${rangeLabel}${limitNotice}.`;
   }
+
   return "Let me know what you need with your history.";
 }
 
@@ -1263,7 +1293,11 @@ export function createHistoryAssistantService() {
       fallbackKeywords: interpretation.queryKeywords,
     });
     const sessions = groupHistorySessions(entries);
-    const ack = buildAckMessage("show", interpretation, entries.length);
+    const ack = buildAckMessage("show", interpretation, {
+      count: entries.length,
+      totalMatches: entries.length,
+      limit,
+    });
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
       action: "show",
@@ -1321,7 +1355,12 @@ export function createHistoryAssistantService() {
         console.warn("Spotlight: failed to open history tab", err);
       }
     }
-    const ack = buildAckMessage("open", interpretation, openedCount);
+    const ack = buildAckMessage("open", interpretation, {
+      count: openedCount,
+      totalMatches: entries.length,
+      cap: openCap,
+      limit,
+    });
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
       action: "open",
@@ -1383,7 +1422,11 @@ export function createHistoryAssistantService() {
         sessionId: session.id,
       }))
     );
-    const ack = buildAckMessage("delete", interpretation, items.length);
+    const ack = buildAckMessage("delete", interpretation, {
+      count: items.length,
+      totalMatches: items.length,
+      limit,
+    });
     if (!items.length) {
       logAssistantAction(actionLog, {
         timestamp: Date.now(),
