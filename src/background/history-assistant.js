@@ -46,6 +46,17 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
 const MAX_ITEMS_PER_SESSION = 12;
 const MAX_LOG_ENTRIES = 25;
+const IMPLICIT_TIME_PRESETS = new Set([
+  "any",
+  "today",
+  "yesterday",
+  "last7days",
+  "last30days",
+  "thisWeek",
+  "lastWeek",
+  "thisMonth",
+  "lastMonth",
+]);
 const TOPIC_STOP_WORDS = new Set([
   "a",
   "about",
@@ -208,22 +219,34 @@ function normalizeTimeRange(rawRange, now = Date.now()) {
   if (!rawRange || typeof rawRange !== "object") {
     return { startTime: 0, endTime: now, preset: "any" };
   }
-  const preset = typeof rawRange.preset === "string" ? rawRange.preset : "any";
+  const rawPresetValue = typeof rawRange.preset === "string" ? rawRange.preset.trim() : "any";
+  const presetKey = (rawPresetValue || "any").toLowerCase();
+  const preset = IMPLICIT_TIME_PRESETS.has(presetKey) || presetKey === "custom" || presetKey === "specific"
+    ? presetKey
+    : "custom";
   const presetRange = computePresetRange(preset, now);
-  const startCandidate = parseIsoTimestamp(rawRange.start);
-  const endCandidate = parseIsoTimestamp(rawRange.end);
   let startTime = presetRange.startTime;
   let endTime = presetRange.endTime;
-  if (startCandidate !== null) {
-    startTime = startCandidate;
-  }
-  if (endCandidate !== null) {
-    endTime = endCandidate;
+  const shouldUseExplicitRange = preset === "custom" || preset === "specific";
+  if (shouldUseExplicitRange) {
+    const startCandidate = parseIsoTimestamp(rawRange.start);
+    const endCandidate = parseIsoTimestamp(rawRange.end);
+    if (startCandidate !== null) {
+      startTime = startCandidate;
+    }
+    if (endCandidate !== null) {
+      endTime = endCandidate;
+    }
   }
   if (!Number.isFinite(startTime) || startTime < 0) {
     startTime = 0;
   }
   if (!Number.isFinite(endTime) || endTime <= 0) {
+    endTime = now;
+  }
+  endTime = Math.min(endTime, now);
+  if (!shouldUseExplicitRange && preset === "any") {
+    startTime = 0;
     endTime = now;
   }
   if (startTime > endTime) {
