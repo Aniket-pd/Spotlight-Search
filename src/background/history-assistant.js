@@ -46,6 +46,8 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
 const MAX_ITEMS_PER_SESSION = 12;
 const MAX_LOG_ENTRIES = 25;
+const PROMPT_HISTORY_SAMPLE_LIMIT = 40;
+const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 220;
 const IMPLICIT_TIME_PRESETS = new Set([
   "any",
   "today",
@@ -520,7 +522,43 @@ function formatLocalIso(date) {
   return `${iso}${timezoneOffset}`;
 }
 
-function buildPrompt(query, now = new Date()) {
+async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
+  if (!chrome?.history?.search) {
+    return "History API unavailable.";
+  }
+  try {
+    const results = await chrome.history.search({
+      text: "",
+      maxResults: limit,
+      startTime: 0,
+    });
+    if (!Array.isArray(results) || results.length === 0) {
+      return "No recent history entries available.";
+    }
+    const lines = [];
+    for (let index = 0; index < results.length; index += 1) {
+      const entry = results[index];
+      if (!entry) continue;
+      const timestamp =
+        typeof entry.lastVisitTime === "number"
+          ? new Date(entry.lastVisitTime).toISOString()
+          : "unknown";
+      const title =
+        typeof entry.title === "string" && entry.title.trim()
+          ? entry.title.trim()
+          : entry.url || "(untitled)";
+      const safeTitle = title.replace(/\s+/g, " ").slice(0, PROMPT_HISTORY_ENTRY_MAX_LENGTH);
+      const url = typeof entry.url === "string" ? entry.url : "";
+      lines.push(`${index + 1}. [${timestamp}] ${safeTitle}${url ? ` <${url}>` : ""}`);
+    }
+    return lines.join("\n");
+  } catch (error) {
+    console.warn("Spotlight history assistant failed to collect prompt sample", error);
+    return "Failed to collect history sample.";
+  }
+}
+
+function buildPrompt(query, historySample, now = new Date()) {
   const trimmed = typeof query === "string" ? query.trim() : "";
   const weekdays = [
     "Sunday",
@@ -534,6 +572,7 @@ function buildPrompt(query, now = new Date()) {
   const weekdayLabel = weekdays[now.getDay()] || "";
   const timezoneOffset = formatTimezoneOffset(now);
   const localIso = formatLocalIso(now);
+  const historySection = historySample ? historySample : "No recent history entries available.";
   return `You are a Chrome history assistant that interprets natural language requests.\n\n` +
     `Current local date and time: ${weekdayLabel}, ${localIso} (UTC${timezoneOffset}). Use this to resolve relative time expressions.\n` +
     `Decide whether the user wants to search, open, or delete browsing history, or if you need to clarify first.\n` +
@@ -542,6 +581,7 @@ function buildPrompt(query, now = new Date()) {
     `Topics should be short keywords extracted from the request.\n` +
     `If the request is ambiguous, set action to \\"clarify\\" and provide a followUpQuestion.\n` +
     `Always respond with JSON that matches the provided schema.\n\n` +
+    `Recent history entries (most recent first):\n${historySection}\n\n` +
     `User request: ${trimmed}`;
 }
 
@@ -594,7 +634,8 @@ export function createHistoryAssistantService() {
 
   async function runPrompt(query) {
     const session = await ensureSession();
-    const promptText = buildPrompt(query);
+    const historySample = await buildPromptHistorySample();
+    const promptText = buildPrompt(query, historySample);
     const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
     let parsed;
     try {
