@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -185,6 +186,71 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_QUERY") {
+      if (!historyAssistant || typeof historyAssistant.analyze !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const query = typeof message.query === "string" ? message.query.trim() : "";
+      if (!query) {
+        sendResponse({ success: false, error: "Empty request" });
+        return true;
+      }
+      const contextPayload = message.context && typeof message.context === "object" ? message.context : {};
+      historyAssistant
+        .analyze({ query, context: contextPayload })
+        .then((result) => {
+          sendResponse(result);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant query failed", error);
+          const errorMessage = error?.message || "History assistant unavailable";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_EXECUTE") {
+      if (!historyAssistant || typeof historyAssistant.execute !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .execute({
+          requestToken: typeof message.requestToken === "string" ? message.requestToken : "",
+          action: typeof message.action === "string" ? message.action : "",
+          groupId: typeof message.groupId === "string" ? message.groupId : "",
+          entryIds: Array.isArray(message.entryIds) ? message.entryIds : [],
+        })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant action failed", error);
+          const errorMessage = error?.message || "Unable to complete action";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_UNDO") {
+      if (!historyAssistant || typeof historyAssistant.undoDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .undoDeletion()
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant undo failed", error);
+          const errorMessage = error?.message || "Nothing to undo";
           sendResponse({ success: false, error: errorMessage });
         });
       return true;

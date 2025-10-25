@@ -15,6 +15,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
 - Close-all-audio command to instantly silence every tab that's currently playing sound.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
+- Smart History Search assistant that interprets natural language requests to find, reopen, or delete history entries with confirmation and undo controls.
 - Web search fallback that offers Google results when no local matches remain, with a "-" engine picker for Google, Bing, DuckDuckGo, Brave, Yahoo, and YouTube (all rendered with favicons).
 
 

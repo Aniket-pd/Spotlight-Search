@@ -762,3 +762,297 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.8);
 }
+
+.spotlight-history-assistant-host {
+  display: none;
+  padding: 0 20px 18px;
+  background: rgba(24, 24, 32, 0.88);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.spotlight-history-assistant-host.visible {
+  display: block;
+}
+
+.spotlight-history-assistant {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(16, 16, 24, 0.92);
+  padding: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.spotlight-history-assistant.visible {
+  display: flex;
+}
+
+.spotlight-history-assistant.loading {
+  opacity: 0.88;
+}
+
+.spotlight-history-assistant.paused .spotlight-history-assistant-input {
+  opacity: 0.6;
+}
+
+.spotlight-history-assistant.needs-followup .spotlight-history-assistant-feedback {
+  color: #fde68a;
+}
+
+.spotlight-history-assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spotlight-history-assistant-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.spotlight-history-assistant-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spotlight-history-assistant-button {
+  background: rgba(96, 133, 255, 0.18);
+  border: 1px solid rgba(96, 133, 255, 0.38);
+  color: #dbe4ff;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.16s ease, border 0.16s ease, color 0.16s ease;
+}
+
+.spotlight-history-assistant-button.clear {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.spotlight-history-assistant-button.undo {
+  background: rgba(118, 204, 255, 0.18);
+  border-color: rgba(118, 204, 255, 0.38);
+  color: #e0f7ff;
+}
+
+.spotlight-history-assistant-button.delete {
+  background: rgba(255, 82, 124, 0.22);
+  border-color: rgba(255, 82, 124, 0.42);
+  color: #ffbac9;
+}
+
+.spotlight-history-assistant-button:hover:not(:disabled) {
+  background: rgba(96, 133, 255, 0.32);
+  border-color: rgba(96, 133, 255, 0.55);
+}
+
+.spotlight-history-assistant-button.clear:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.spotlight-history-assistant-button.undo:hover:not(:disabled) {
+  background: rgba(118, 204, 255, 0.32);
+  border-color: rgba(118, 204, 255, 0.55);
+}
+
+.spotlight-history-assistant-button.delete:hover:not(:disabled) {
+  background: rgba(255, 82, 124, 0.36);
+  border-color: rgba(255, 82, 124, 0.58);
+}
+
+.spotlight-history-assistant-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.spotlight-history-assistant-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spotlight-history-assistant-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 10, 16, 0.92);
+  padding: 10px 12px;
+  font-size: 15px;
+  outline: none;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.spotlight-history-assistant-input:focus {
+  border-color: rgba(118, 141, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(118, 141, 255, 0.18);
+}
+
+.spotlight-history-assistant-feedback {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  min-height: 18px;
+}
+
+.spotlight-history-assistant-empty {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
+  padding: 18px 0 4px;
+  display: none;
+}
+
+.spotlight-history-assistant-empty.visible {
+  display: block;
+}
+
+.spotlight-history-assistant-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-group {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(12, 12, 20, 0.92);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-group-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f5f5f7;
+}
+
+.spotlight-history-assistant-group-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.spotlight-history-assistant-group-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.spotlight-history-assistant-action {
+  background: rgba(118, 141, 255, 0.18);
+  border: 1px solid rgba(118, 141, 255, 0.4);
+  border-radius: 9px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #e2e6ff;
+  transition: background 0.16s ease, border 0.16s ease;
+}
+
+.spotlight-history-assistant-action:hover:not(:disabled) {
+  background: rgba(118, 141, 255, 0.32);
+  border-color: rgba(118, 141, 255, 0.55);
+}
+
+.spotlight-history-assistant-action.delete {
+  background: rgba(255, 82, 124, 0.24);
+  border-color: rgba(255, 82, 124, 0.45);
+  color: #ffc5d2;
+}
+
+.spotlight-history-assistant-action.cancel {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.spotlight-history-assistant-action.confirm:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.spotlight-history-assistant-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-history-assistant-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-entry-checkbox {
+  padding-top: 3px;
+}
+
+.spotlight-history-assistant-entry-checkbox input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.spotlight-history-assistant-entry-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.spotlight-history-assistant-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.spotlight-history-assistant-entry-meta .time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.spotlight-history-assistant-entry-meta .url {
+  color: rgba(173, 205, 255, 0.8);
+}
+
+.spotlight-history-assistant-confirm {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spotlight-history-assistant-confirm-summary {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.spotlight-history-assistant-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
