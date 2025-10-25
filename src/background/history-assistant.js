@@ -1,43 +1,30 @@
 const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
-    action: { type: "string", enum: ["search", "open", "delete", "clarify"] },
-    confidence: { type: "number" },
+    action: { type: ["string", "null"], enum: ["show", "open", "delete", null] },
     topics: {
       type: "array",
       items: { type: "string" },
       default: [],
     },
-    timeRange: {
-      type: "object",
-      properties: {
-        preset: {
-          type: "string",
-          enum: [
-            "any",
-            "today",
-            "yesterday",
-            "last7days",
-            "last30days",
-            "thisWeek",
-            "lastWeek",
-            "thisMonth",
-            "lastMonth",
-            "custom",
-            "specific",
-          ],
+    dateRange: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          properties: {
+            start: { type: ["string", "null"] },
+            end: { type: ["string", "null"] },
+          },
+          additionalProperties: false,
         },
-        start: { type: ["string", "null"] },
-        end: { type: ["string", "null"] },
-      },
-      required: ["preset", "start", "end"],
-      additionalProperties: false,
+      ],
+      default: null,
     },
-    followUpQuestion: { type: ["string", "null"] },
-    needsConfirmation: { type: "boolean" },
-    summary: { type: ["string", "null"] },
+    maxItems: { type: ["number", "null"] },
+    confidence: { type: "number" },
   },
-  required: ["action", "confidence", "topics", "timeRange", "followUpQuestion", "needsConfirmation"],
+  required: ["confidence"],
   additionalProperties: false,
 };
 
@@ -49,17 +36,6 @@ const MAX_LOG_ENTRIES = 25;
 const PROMPT_HISTORY_SAMPLE_LIMIT = 60;
 const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 160;
 const PROMPT_HISTORY_HOST_LIMIT = 12;
-const IMPLICIT_TIME_PRESETS = new Set([
-  "any",
-  "today",
-  "yesterday",
-  "last7days",
-  "last30days",
-  "thisWeek",
-  "lastWeek",
-  "thisMonth",
-  "lastMonth",
-]);
 const TOPIC_STOP_WORDS = new Set([
   "a",
   "about",
@@ -157,54 +133,33 @@ function normalizeTopics(input) {
     .slice(0, 8);
 }
 
+function normalizeAction(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "show" || normalized === "open" || normalized === "delete") {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeMaxItems(value) {
+  const numeric =
+    typeof value === "string" && value.trim()
+      ? Number.parseFloat(value.trim())
+      : value;
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  const rounded = Math.max(1, Math.floor(numeric));
+  return Math.min(rounded, 50);
+}
+
 function toStartOfDay(timestamp) {
   const date = new Date(timestamp);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
-}
-
-function computePresetRange(preset, now = Date.now()) {
-  const todayStart = toStartOfDay(now);
-  switch (preset) {
-    case "today":
-      return { startTime: todayStart, endTime: now };
-    case "yesterday": {
-      const start = todayStart - DAY_MS;
-      return { startTime: start, endTime: todayStart };
-    }
-    case "last7days":
-      return { startTime: now - 7 * DAY_MS, endTime: now };
-    case "last30days":
-      return { startTime: now - 30 * DAY_MS, endTime: now };
-    case "thisWeek": {
-      const date = new Date(now);
-      const day = date.getDay();
-      const diff = day === 0 ? 6 : day - 1; // Monday as start
-      const start = todayStart - diff * DAY_MS;
-      return { startTime: start, endTime: now };
-    }
-    case "lastWeek": {
-      const date = new Date(now);
-      const day = date.getDay();
-      const diff = day === 0 ? 6 : day - 1;
-      const currentWeekStart = toStartOfDay(now) - diff * DAY_MS;
-      const start = currentWeekStart - 7 * DAY_MS;
-      return { startTime: start, endTime: currentWeekStart };
-    }
-    case "thisMonth": {
-      const date = new Date(now);
-      const start = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-      return { startTime: start, endTime: now };
-    }
-    case "lastMonth": {
-      const date = new Date(now);
-      const start = new Date(date.getFullYear(), date.getMonth() - 1, 1).getTime();
-      const end = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-      return { startTime: start, endTime: end };
-    }
-    default:
-      return { startTime: 0, endTime: now };
-  }
 }
 
 function parseIsoTimestamp(value) {
@@ -218,38 +173,71 @@ function parseIsoTimestamp(value) {
   return parsed;
 }
 
+function parseDateBoundary(value, type, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    const parsed = parseIsoTimestamp(trimmed);
+    if (parsed === null) {
+      return null;
+    }
+    return parsed;
+  }
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number.parseInt(yearStr, 10);
+  const monthIndex = Number.parseInt(monthStr, 10) - 1;
+  const day = Number.parseInt(dayStr, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || !Number.isFinite(day)) {
+    return null;
+  }
+  const date = new Date(year, monthIndex, day);
+  if (type === "end") {
+    date.setHours(23, 59, 59, 999);
+  } else {
+    date.setHours(0, 0, 0, 0);
+  }
+  return date.getTime();
+}
+
+function detectPresetFromRange(startTime, endTime, now = Date.now()) {
+  const todayStart = toStartOfDay(now);
+  const todayEnd = todayStart + DAY_MS - 1;
+  if (startTime <= 0 && endTime >= now) {
+    return "any";
+  }
+  if (startTime === todayStart && endTime >= todayStart && endTime <= todayEnd) {
+    return "today";
+  }
+  const yesterdayStart = todayStart - DAY_MS;
+  const yesterdayEnd = todayStart - 1;
+  if (startTime === yesterdayStart && endTime >= yesterdayStart && endTime <= yesterdayEnd) {
+    return "yesterday";
+  }
+  if (startTime === todayStart - 6 * DAY_MS && endTime >= now - DAY_MS) {
+    return "last7days";
+  }
+  if (startTime === todayStart - 29 * DAY_MS && endTime >= now - DAY_MS) {
+    return "last30days";
+  }
+  return "custom";
+}
+
 function normalizeTimeRange(rawRange, now = Date.now()) {
+  const defaultRange = { startTime: 0, endTime: now, preset: "any" };
   if (!rawRange || typeof rawRange !== "object") {
-    return { startTime: 0, endTime: now, preset: "any" };
+    return defaultRange;
   }
-  const rawPresetValue = typeof rawRange.preset === "string" ? rawRange.preset.trim() : "any";
-  const presetKey = (rawPresetValue || "any").toLowerCase();
-  const preset = IMPLICIT_TIME_PRESETS.has(presetKey) || presetKey === "custom" || presetKey === "specific"
-    ? presetKey
-    : "custom";
-  const presetRange = computePresetRange(preset, now);
-  let startTime = presetRange.startTime;
-  let endTime = presetRange.endTime;
-  const shouldUseExplicitRange = preset === "custom" || preset === "specific";
-  if (shouldUseExplicitRange) {
-    const startCandidate = parseIsoTimestamp(rawRange.start);
-    const endCandidate = parseIsoTimestamp(rawRange.end);
-    if (startCandidate !== null) {
-      startTime = startCandidate;
-    }
-    if (endCandidate !== null) {
-      endTime = endCandidate;
-    }
-  }
+  const startCandidate = parseDateBoundary(rawRange.start, "start", now);
+  const endCandidate = parseDateBoundary(rawRange.end, "end", now);
+  let startTime = Number.isFinite(startCandidate) ? startCandidate : defaultRange.startTime;
+  let endTime = Number.isFinite(endCandidate) ? endCandidate : defaultRange.endTime;
   if (!Number.isFinite(startTime) || startTime < 0) {
     startTime = 0;
   }
   if (!Number.isFinite(endTime) || endTime <= 0) {
-    endTime = now;
-  }
-  endTime = Math.min(endTime, now);
-  if (!shouldUseExplicitRange && preset === "any") {
-    startTime = 0;
     endTime = now;
   }
   if (startTime > endTime) {
@@ -257,6 +245,8 @@ function normalizeTimeRange(rawRange, now = Date.now()) {
     startTime = endTime;
     endTime = temp;
   }
+  endTime = Math.min(endTime, now);
+  const preset = detectPresetFromRange(startTime, endTime, now);
   return { startTime, endTime, preset };
 }
 
@@ -410,7 +400,7 @@ function buildTopicLabel(topics) {
 function buildAckMessage(action, interpretation, resultCount, timeLabel) {
   const topicLabel = buildTopicLabel(interpretation.topics);
   const rangeLabel = timeLabel || describeTimeRange(interpretation.timeRange);
-  if (action === "search") {
+  if (action === "search" || action === "show") {
     if (!resultCount) {
       return `I couldn't find history for ${topicLabel} in ${rangeLabel}.`;
     }
@@ -441,7 +431,8 @@ function logAssistantAction(log, entry) {
   }
 }
 
-async function collectHistoryEntries(topics, range) {
+async function collectHistoryEntries(topics, range, options = {}) {
+  const limit = Number.isFinite(options.maxItems) ? Math.max(1, Math.floor(options.maxItems)) : null;
   const keywords = extractKeywords(topics);
   const rawQuery = keywords.length ? keywords.join(" ") : topics.join(" ");
   const queryText = typeof rawQuery === "string" ? rawQuery.trim() : "";
@@ -449,9 +440,10 @@ async function collectHistoryEntries(topics, range) {
   const hasEnd = Number.isFinite(range.endTime) && range.endTime > 0;
 
   async function runSearch(text, includeTimeBounds) {
+    const desired = limit ? Math.min(MAX_HISTORY_RESULTS, Math.max(limit * 3, limit)) : MAX_HISTORY_RESULTS;
     const params = {
       text: typeof text === "string" ? text : "",
-      maxResults: MAX_HISTORY_RESULTS,
+      maxResults: desired,
     };
     if (includeTimeBounds && hasStart) {
       params.startTime = range.startTime;
@@ -484,25 +476,25 @@ async function collectHistoryEntries(topics, range) {
     }
   }
 
-  return filterEntriesByTopics(entries || [], topics);
+  const filtered = filterEntriesByTopics(entries || [], topics);
+  if (limit) {
+    return filtered.slice(0, limit);
+  }
+  return filtered;
 }
 
 function sanitizeInterpretation(parsed, now = Date.now()) {
-  const action = typeof parsed?.action === "string" ? parsed.action : "clarify";
   const confidence = clampConfidence(parsed?.confidence);
+  const action = normalizeAction(parsed?.action);
   const topics = normalizeTopics(parsed?.topics);
-  const timeRange = normalizeTimeRange(parsed?.timeRange, now);
-  const followUpQuestion = typeof parsed?.followUpQuestion === "string" ? parsed.followUpQuestion.trim() : "";
-  const needsConfirmation = Boolean(parsed?.needsConfirmation);
-  const summary = typeof parsed?.summary === "string" ? parsed.summary.trim() : "";
+  const maxItems = normalizeMaxItems(parsed?.maxItems);
+  const timeRange = normalizeTimeRange(parsed?.dateRange, now);
   return {
-    action,
     confidence,
+    action,
     topics,
+    maxItems,
     timeRange,
-    followUpQuestion,
-    needsConfirmation,
-    summary,
   };
 }
 
@@ -604,33 +596,25 @@ async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
 
 function buildPrompt(query, historySample, now = new Date()) {
   const trimmed = typeof query === "string" ? query.trim() : "";
-  const weekdays = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const weekdayLabel = weekdays[now.getDay()] || "";
-  const timezoneOffset = formatTimezoneOffset(now);
   const localIso = formatLocalIso(now);
   const historySection = historySample ? historySample : "No recent history entries available.";
-  return (
-    `You are a Chrome history assistant that interprets natural language requests.\n\n` +
-    `Current local date and time: ${weekdayLabel}, ${localIso} (UTC${timezoneOffset}). Use this to resolve relative time expressions.\n` +
-    `Decide whether the user wants to search, open, or delete browsing history, or if you need to clarify first.\n` +
-    `Only use these actions: search, open, delete, clarify.\n` +
-    `Prefer time range presets when they fit. Always provide ISO-8601 strings (with timezone offsets) for start and end when available.\n` +
-    `Topics should be short keywords extracted from the request.\n` +
-    `If the request is ambiguous, set action to \"clarify\" and provide a followUpQuestion.\n` +
-    `Base your interpretation on the user request and the following browsing history data. Reference the provided titles, URLs, timestamps, or domains when determining topics or time ranges, and avoid inventing entries.\n` +
-    `Always respond with JSON that matches the provided schema.\n\n` +
-    `${historySection}\n\n` +
-    `User request: ${trimmed}`
-  );
-
+  const inputPayload = JSON.stringify({ query: trimmed, now: localIso });
+  return [
+    "You are the Smart History Search interpreter for a Chrome extension similar to macOS Spotlight.",
+    "### GOAL\nTurn a user's natural-language query about their browsing history into a **structured JSON command** that the extension can execute.",
+    "---",
+    "### INPUT FORMAT\nThe model receives this JSON input:\n{\n  \"query\": string,              // what the user typed\n  \"now\": ISO_8601_datetime      // current date-time, used for relative time phrases\n}",
+    "---",
+    "### REQUIRED OUTPUT FORMAT\nReturn ONLY one JSON object, with no explanations:\n{\n  \"action\": \"show\" | \"open\" | \"delete\",\n  \"topics\": string[],\n  \"dateRange\": {\n     \"start\": \"YYYY-MM-DD\",\n     \"end\": \"YYYY-MM-DD\"\n  },\n  \"maxItems\": number,\n  \"confidence\": 0–1\n}",
+    "---",
+    "### EXTRACTION RULES\n1. **Action detection**\n   - Words like “show”, “list”, “find” → \"show\"\n   - Words like “open”, “reopen” → \"open\"\n   - Words like “delete”, “clear”, “remove” → \"delete\"\n\n2. **Topic extraction**\n   - Collect keywords, brand names, or phrases.\n   - Do NOT include stop words.\n\n3. **Date range parsing**\n   - “today” → start = end = current date\n   - “yesterday” → start = now-1 day, end = now-1 day\n   - “last week” → start = now-7 days, end = now\n   - “last 3 days” → start = now-3 days, end = now\n   - “September 2024” → first and last day of that month\n\n4. **Quantity handling**\n   - If the query includes a number (“top 5”, “last 20”), set maxItems accordingly.\n\n5. **Output control**\n   - If query has no history-related intent, return { \"confidence\": 0 }.",
+    "---",
+    "### IMPLEMENTATION TIP\nAfter receiving this JSON from the Prompt API:\n\nPass topics and dateRange into chrome.history.search().\n\nFilter and display results grouped by date.\n\nHandle action: \"open\" or \"delete\" with chrome.tabs.create() or chrome.history.deleteUrl() respectively.",
+    "OUTPUT REQUIREMENTS\nRespond only with valid JSON\nDo not include any extra text or explanations\nMust always include \"confidence\" key",
+    `Recent history sample (most recent first):\n${historySection}`,
+    `Input JSON:\n${inputPayload}`,
+    "Return just the JSON command described above."
+  ].join("\n\n");
 }
 
 function isPromptInputTooLargeError(error) {
@@ -770,36 +754,42 @@ export function createHistoryAssistantService() {
       operationId: null,
       undoToken: null,
       log: actionLog.slice(),
+      maxItems: null,
+      timeRange: null,
+      topics: [],
     };
   }
 
-  async function handleSearch(interpretation) {
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange);
+  async function handleShow(interpretation) {
+    const limit = interpretation.maxItems || 10;
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
     const sessions = groupHistorySessions(entries);
-    const ack = buildAckMessage("search", interpretation, entries.length);
+    const ack = buildAckMessage("show", interpretation, entries.length);
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
-      action: "search",
+      action: "show",
       summary: ack,
     });
     return {
       success: true,
-      action: "search",
+      action: "show",
       ack,
-      followUpQuestion: interpretation.followUpQuestion,
+      followUpQuestion: "",
       sessions,
       pendingDeletion: null,
       operationId: null,
       undoToken: null,
       log: actionLog.slice(),
+      maxItems: limit,
     };
   }
 
   async function handleOpen(interpretation) {
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange);
+    const limit = interpretation.maxItems || 10;
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
     const sessions = groupHistorySessions(entries);
     const topSession = sessions[0];
-    const urlsToOpen = topSession ? topSession.items.map((item) => item.url).slice(0, 8) : [];
+    const urlsToOpen = topSession ? topSession.items.map((item) => item.url).slice(0, Math.min(limit, 8)) : [];
     for (const url of urlsToOpen) {
       if (!url) continue;
       try {
@@ -818,12 +808,13 @@ export function createHistoryAssistantService() {
       success: true,
       action: "open",
       ack,
-      followUpQuestion: interpretation.followUpQuestion,
+      followUpQuestion: "",
       sessions,
       pendingDeletion: null,
       operationId: null,
       undoToken: null,
       log: actionLog.slice(),
+      maxItems: limit,
     };
   }
 
@@ -852,7 +843,8 @@ export function createHistoryAssistantService() {
   }
 
   async function handleDelete(interpretation) {
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange);
+    const limit = interpretation.maxItems || 10;
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
     const sessions = groupHistorySessions(entries);
     const items = sessions.flatMap((session) =>
       session.items.map((item) => ({
@@ -875,12 +867,13 @@ export function createHistoryAssistantService() {
         success: true,
         action: "delete",
         ack,
-        followUpQuestion: interpretation.followUpQuestion,
+        followUpQuestion: "",
         sessions,
         pendingDeletion: null,
         operationId: null,
         undoToken: null,
         log: actionLog.slice(),
+        maxItems: limit,
       };
     }
     const operationId = createOperationId();
@@ -897,7 +890,7 @@ export function createHistoryAssistantService() {
       success: true,
       action: "delete",
       ack,
-      followUpQuestion: interpretation.followUpQuestion,
+      followUpQuestion: "",
       sessions,
       pendingDeletion: {
         operationId,
@@ -906,6 +899,7 @@ export function createHistoryAssistantService() {
       operationId,
       undoToken: null,
       log: actionLog.slice(),
+      maxItems: limit,
     };
   }
 
@@ -993,33 +987,26 @@ export function createHistoryAssistantService() {
   async function handleQuery(query) {
     const interpretation = await runPrompt(query);
     const response = buildBaseResponse();
-    response.action = interpretation.action;
-    response.followUpQuestion = interpretation.followUpQuestion;
-    response.ack = interpretation.summary || "";
     response.timeRange = interpretation.timeRange;
     response.topics = interpretation.topics;
-    if (!response.ack) {
-      response.ack = buildAckMessage("search", interpretation, 0);
-    }
-    if (interpretation.action === "clarify" || interpretation.confidence < 0.4) {
-      if (!interpretation.followUpQuestion) {
-        response.followUpQuestion = "Could you clarify what part of your history you need?";
-      }
+    response.maxItems = interpretation.maxItems || null;
+    if (!interpretation.action || interpretation.confidence < 0.35) {
+      response.action = "clarify";
+      response.followUpQuestion = "I didn't catch a history request. Could you rephrase it?";
       response.ack = response.followUpQuestion;
       return response;
     }
     switch (interpretation.action) {
-      case "search":
-        return handleSearch(interpretation);
+      case "show":
+        return handleShow(interpretation);
       case "open":
         return handleOpen(interpretation);
       case "delete":
-        if (!interpretation.needsConfirmation && interpretation.confidence > 0.8) {
-          const deletion = await handleDelete(interpretation);
-          return deletion;
-        }
         return handleDelete(interpretation);
       default:
+        response.action = "clarify";
+        response.followUpQuestion = "Could you clarify what part of your history you need?";
+        response.ack = response.followUpQuestion;
         return response;
     }
   }
