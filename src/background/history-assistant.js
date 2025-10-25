@@ -88,6 +88,24 @@ const TOPIC_STOP_WORDS = new Set([
   "yesterday",
 ]);
 
+function normalizeKeywordList(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const normalized = [];
+  for (const value of list) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    normalized.push(trimmed.toLowerCase());
+  }
+  return Array.from(new Set(normalized));
+}
+
 function extractKeywords(topics) {
   if (!Array.isArray(topics) || topics.length === 0) {
     return [];
@@ -107,11 +125,38 @@ function extractKeywords(topics) {
       .map((part) => part.trim())
       .filter(Boolean);
     for (const part of parts) {
-      if (part.length < 3 || TOPIC_STOP_WORDS.has(part)) {
+      if (part.length < 2 || TOPIC_STOP_WORDS.has(part)) {
         continue;
       }
       keywords.push(part);
     }
+  }
+  return Array.from(new Set(keywords));
+}
+
+function extractQueryKeywords(query) {
+  if (typeof query !== "string" || !query.trim()) {
+    return [];
+  }
+  const keywords = [];
+  const tokens = query
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^A-Za-z0-9.]+|[^A-Za-z0-9.]+$/g, ""))
+    .filter(Boolean);
+  for (const token of tokens) {
+    const lower = token.toLowerCase();
+    if (TOPIC_STOP_WORDS.has(lower)) {
+      continue;
+    }
+    if (/[a-z0-9]+\.[a-z0-9]/i.test(token)) {
+      keywords.push(lower);
+      continue;
+    }
+    const stripped = lower.replace(/[^a-z0-9]+/g, "");
+    if (stripped.length < 2) {
+      continue;
+    }
+    keywords.push(stripped);
   }
   return Array.from(new Set(keywords));
 }
@@ -367,29 +412,39 @@ function groupHistorySessions(entries) {
   });
 }
 
-function filterEntriesByTopics(entries, topics) {
+function filterEntriesByTopics(entries, topics, fallbackKeywords = []) {
   if (!Array.isArray(entries) || entries.length === 0) {
     return entries || [];
   }
-  const uniqueKeywords = extractKeywords(topics);
+  const fallback = normalizeKeywordList(fallbackKeywords);
+  const uniqueKeywords = Array.from(new Set([...extractKeywords(topics), ...fallback]));
   if (!uniqueKeywords.length) {
     return entries;
   }
   const filtered = entries.filter((entry) => {
     const title = (entry.title || "").toLowerCase();
     const url = (entry.url || "").toLowerCase();
-    return uniqueKeywords.some((keyword) => title.includes(keyword) || url.includes(keyword));
+    const host = (entry.url ? extractHostname(entry.url) : "").toLowerCase();
+    return uniqueKeywords.some(
+      (keyword) => title.includes(keyword) || url.includes(keyword) || (host && host.includes(keyword))
+    );
   });
   return filtered.length ? filtered : entries;
 }
 
-function buildTopicLabel(topics) {
+function buildTopicLabel(topics, fallbackKeywords = []) {
   if (!Array.isArray(topics) || topics.length === 0) {
+    if (Array.isArray(fallbackKeywords) && fallbackKeywords.length) {
+      return fallbackKeywords.slice(0, 4).join(", ");
+    }
     return "everything";
   }
   const uniqueKeywords = extractKeywords(topics);
   if (uniqueKeywords.length) {
     return uniqueKeywords.slice(0, 4).join(", ");
+  }
+  if (Array.isArray(fallbackKeywords) && fallbackKeywords.length) {
+    return fallbackKeywords.slice(0, 4).join(", ");
   }
   const fallback = topics
     .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
@@ -398,7 +453,7 @@ function buildTopicLabel(topics) {
 }
 
 function buildAckMessage(action, interpretation, resultCount, timeLabel) {
-  const topicLabel = buildTopicLabel(interpretation.topics);
+  const topicLabel = buildTopicLabel(interpretation.topics, interpretation.queryKeywords);
   const rangeLabel = timeLabel || describeTimeRange(interpretation.timeRange);
   if (action === "search" || action === "show") {
     if (!resultCount) {
@@ -433,8 +488,11 @@ function logAssistantAction(log, entry) {
 
 async function collectHistoryEntries(topics, range, options = {}) {
   const limit = Number.isFinite(options.maxItems) ? Math.max(1, Math.floor(options.maxItems)) : null;
-  const keywords = extractKeywords(topics);
-  const rawQuery = keywords.length ? keywords.join(" ") : topics.join(" ");
+  const fallbackKeywords = Array.isArray(options.fallbackKeywords) ? options.fallbackKeywords : [];
+  const normalizedFallback = normalizeKeywordList(fallbackKeywords);
+  const combinedKeywords = Array.from(new Set([...extractKeywords(topics), ...normalizedFallback]));
+  const fallbackQueryText = typeof options.fallbackQuery === "string" ? options.fallbackQuery.trim() : "";
+  const rawQuery = combinedKeywords.length ? combinedKeywords.join(" ") : fallbackQueryText;
   const queryText = typeof rawQuery === "string" ? rawQuery.trim() : "";
   const hasStart = Number.isFinite(range.startTime) && range.startTime > 0;
   const hasEnd = Number.isFinite(range.endTime) && range.endTime > 0;
@@ -476,25 +534,29 @@ async function collectHistoryEntries(topics, range, options = {}) {
     }
   }
 
-  const filtered = filterEntriesByTopics(entries || [], topics);
+  const filtered = filterEntriesByTopics(entries || [], topics, normalizedFallback);
   if (limit) {
     return filtered.slice(0, limit);
   }
   return filtered;
 }
 
-function sanitizeInterpretation(parsed, now = Date.now()) {
+function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "") {
   const confidence = clampConfidence(parsed?.confidence);
   const action = normalizeAction(parsed?.action);
   const topics = normalizeTopics(parsed?.topics);
   const maxItems = normalizeMaxItems(parsed?.maxItems);
   const timeRange = normalizeTimeRange(parsed?.dateRange, now);
+  const queryText = typeof originalQuery === "string" ? originalQuery.trim() : "";
+  const queryKeywords = extractQueryKeywords(queryText);
   return {
     confidence,
     action,
     topics,
     maxItems,
     timeRange,
+    rawQuery: queryText,
+    queryKeywords,
   };
 }
 
@@ -718,7 +780,8 @@ export function createHistoryAssistantService() {
       } else {
         historySample = "History sample omitted to satisfy Prompt API input limits.";
       }
-      const promptText = buildPrompt(query, historySample);
+      const attemptNow = new Date();
+      const promptText = buildPrompt(query, historySample, attemptNow);
       try {
         const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
         let parsed;
@@ -727,7 +790,7 @@ export function createHistoryAssistantService() {
         } catch (error) {
           throw new Error("History assistant returned invalid JSON");
         }
-        return sanitizeInterpretation(parsed);
+        return sanitizeInterpretation(parsed, attemptNow.getTime(), query);
       } catch (error) {
         lastError = error;
         if (isPromptInputTooLargeError(error) && limit !== limits[limits.length - 1]) {
@@ -762,7 +825,11 @@ export function createHistoryAssistantService() {
 
   async function handleShow(interpretation) {
     const limit = interpretation.maxItems || 10;
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
+      maxItems: limit,
+      fallbackQuery: interpretation.rawQuery,
+      fallbackKeywords: interpretation.queryKeywords,
+    });
     const sessions = groupHistorySessions(entries);
     const ack = buildAckMessage("show", interpretation, entries.length);
     logAssistantAction(actionLog, {
@@ -786,7 +853,11 @@ export function createHistoryAssistantService() {
 
   async function handleOpen(interpretation) {
     const limit = interpretation.maxItems || 10;
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
+      maxItems: limit,
+      fallbackQuery: interpretation.rawQuery,
+      fallbackKeywords: interpretation.queryKeywords,
+    });
     const sessions = groupHistorySessions(entries);
     const topSession = sessions[0];
     const urlsToOpen = topSession ? topSession.items.map((item) => item.url).slice(0, Math.min(limit, 8)) : [];
@@ -844,7 +915,11 @@ export function createHistoryAssistantService() {
 
   async function handleDelete(interpretation) {
     const limit = interpretation.maxItems || 10;
-    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, { maxItems: limit });
+    const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
+      maxItems: limit,
+      fallbackQuery: interpretation.rawQuery,
+      fallbackKeywords: interpretation.queryKeywords,
+    });
     const sessions = groupHistorySessions(entries);
     const items = sessions.flatMap((session) =>
       session.items.map((item) => ({
