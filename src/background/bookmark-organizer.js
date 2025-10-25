@@ -6,29 +6,15 @@ Follow these rules carefully:
    - \`id\`: the id from the input.
    - \`cleanTitle\`: polished title text. Fix obvious casing/punctuation.
    - \`primaryCategory\`: 1–3 word label that captures the main theme.
-   - \`secondaryTags\`: 1–4 optional lowerCamelCase tags for finer grouping.
-   - \`keywords\`: 3–6 short search tokens that help retrieve the bookmark.
-   - \`summary\`: one sentence (≤18 words) highlighting why the bookmark matters.
    - \`action\`: one of \`keep\`, \`archive\`, or \`reviewDuplicate\`.
    - \`duplicateOf\`: the id of the suspected duplicate when \`action\` is \`reviewDuplicate\`; otherwise \`null\`.
    - \`notes\`: practical tip or follow-up (≤120 characters). Use an empty string when nothing is needed.
 3. Choose categories that resemble real bookmark folders (e.g., "Research", "Learning", "Entertainment", "Tools", "Shopping", "Personal"). Use "Unsorted" if the theme is unclear and explain why in \`notes\`.
 4. If two bookmarks look like duplicates (same topic + nearly identical titles or URLs), set \`action\` to \`reviewDuplicate\`, point \`duplicateOf\` to the matching id, and mention the reason in \`notes\`.
-5. Keep \`secondaryTags\` and \`keywords\` relevant—avoid generic terms such as "misc" or "link".
-6. Do not include prose outside the JSON response.
+5. Do not include prose outside the JSON response.
 
 Output schema:
 {
-  "collectionSummary": {
-    "dominantCategories": string[],
-    "bookmarksNeedingAttention": string[],
-    "suggestedFolders": {
-      category: {
-        "count": number,
-        "sampleIds": string[]
-      }
-    }
-  },
   "bookmarks": BookmarkResult[]
 }
 
@@ -36,9 +22,6 @@ BookmarkResult = {
   "id": string,
   "cleanTitle": string,
   "primaryCategory": string,
-  "secondaryTags": string[],
-  "keywords": string[],
-  "summary": string,
   "action": "keep" | "archive" | "reviewDuplicate",
   "duplicateOf": string | null,
   "notes": string
@@ -48,36 +31,6 @@ const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    collectionSummary: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        dominantCategories: {
-          type: "array",
-          items: { type: "string" },
-        },
-        bookmarksNeedingAttention: {
-          type: "array",
-          items: { type: "string" },
-        },
-        suggestedFolders: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              count: { type: "number" },
-              sampleIds: {
-                type: "array",
-                items: { type: "string" },
-              },
-            },
-            required: ["count", "sampleIds"],
-          },
-        },
-      },
-      required: ["dominantCategories", "bookmarksNeedingAttention", "suggestedFolders"],
-    },
     bookmarks: {
       type: "array",
       items: {
@@ -87,15 +40,6 @@ const RESPONSE_SCHEMA = {
           id: { type: "string" },
           cleanTitle: { type: "string" },
           primaryCategory: { type: "string" },
-          secondaryTags: {
-            type: "array",
-            items: { type: "string" },
-          },
-          keywords: {
-            type: "array",
-            items: { type: "string" },
-          },
-          summary: { type: "string" },
           action: {
             type: "string",
             enum: ["keep", "archive", "reviewDuplicate"],
@@ -109,17 +53,12 @@ const RESPONSE_SCHEMA = {
           "id",
           "cleanTitle",
           "primaryCategory",
-          "secondaryTags",
-          "keywords",
-          "summary",
           "action",
-          "duplicateOf",
-          "notes",
         ],
       },
     },
   },
-  required: ["collectionSummary", "bookmarks"],
+  required: ["bookmarks"],
 };
 
 const DEFAULT_LANGUAGE = "English";
