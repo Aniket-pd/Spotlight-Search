@@ -32,6 +32,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
 const MAX_ITEMS_PER_SESSION = 12;
+const MAX_AUTO_OPEN_TABS = 8;
 const MAX_LOG_ENTRIES = 25;
 const PROMPT_HISTORY_SAMPLE_LIMIT = 60;
 const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 160;
@@ -1290,17 +1291,37 @@ export function createHistoryAssistantService() {
       fallbackKeywords: interpretation.queryKeywords,
     });
     const sessions = groupHistorySessions(entries);
-    const topSession = sessions[0];
-    const urlsToOpen = topSession ? topSession.items.map((item) => item.url).slice(0, Math.min(limit, 8)) : [];
+    const uniqueUrls = new Set();
+    const openCap = Math.min(limit, MAX_AUTO_OPEN_TABS);
+    const urlsToOpen = [];
+    const sortedEntries = Array.isArray(entries)
+      ? entries
+          .slice()
+          .sort((a, b) => (b?.lastVisitTime || 0) - (a?.lastVisitTime || 0))
+      : [];
+    for (const entry of sortedEntries) {
+      if (!entry || typeof entry.url !== "string" || !entry.url) {
+        continue;
+      }
+      if (uniqueUrls.has(entry.url)) {
+        continue;
+      }
+      uniqueUrls.add(entry.url);
+      urlsToOpen.push(entry.url);
+      if (urlsToOpen.length >= openCap) {
+        break;
+      }
+    }
+    let openedCount = 0;
     for (const url of urlsToOpen) {
-      if (!url) continue;
       try {
         await chrome.tabs.create({ url });
+        openedCount += 1;
       } catch (err) {
         console.warn("Spotlight: failed to open history tab", err);
       }
     }
-    const ack = buildAckMessage("open", interpretation, urlsToOpen.length);
+    const ack = buildAckMessage("open", interpretation, openedCount);
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
       action: "open",
