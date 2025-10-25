@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -220,6 +221,61 @@ export function registerMessageHandlers({
         .catch((error) => {
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_REQUEST") {
+      if (!historyAssistant || typeof historyAssistant.handleIntent !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable", requestId: message.requestId });
+        return true;
+      }
+      historyAssistant
+        .handleIntent(message.intent || {}, { requestId: message.requestId })
+        .then((result) => {
+          sendResponse(result || { success: false, error: "No response", requestId: message.requestId });
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant intent failed", err);
+          sendResponse({
+            success: false,
+            error: err?.message || "Unable to process history request",
+            requestId: message.requestId,
+          });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_OPEN_SELECTION") {
+      if (!historyAssistant || typeof historyAssistant.openSelection !== "function") {
+        sendResponse({ success: false, error: "Unable to open selection" });
+        return true;
+      }
+      historyAssistant
+        .openSelection(Array.isArray(message.entries) ? message.entries : [])
+        .then((result) => {
+          sendResponse(result || { success: false, error: "No response" });
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant open selection failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to open selection" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_DELETE_SELECTION") {
+      if (!historyAssistant || typeof historyAssistant.deleteSelection !== "function") {
+        sendResponse({ success: false, error: "Unable to delete selection" });
+        return true;
+      }
+      historyAssistant
+        .deleteSelection(Array.isArray(message.entries) ? message.entries : [])
+        .then((result) => {
+          sendResponse(result || { success: false, error: "No response" });
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant delete selection failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to delete selection" });
         });
       return true;
     }

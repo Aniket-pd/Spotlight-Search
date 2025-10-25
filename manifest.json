@@ -13,7 +13,9 @@
     "downloads",
     "topSites"
   ],
-  "host_permissions": ["file:///*"],
+  "host_permissions": [
+    "file:///*"
+  ],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"
@@ -35,10 +37,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "src/shared/web-search.js",
         "src/content/bookmark-organizer-ui.js",
+        "src/content/history-assistant.js",
         "src/content/index.js"
       ],
       "run_at": "document_idle"
@@ -46,8 +51,13 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/styles.css", "icons/*.svg"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "src/content/styles.css",
+        "icons/*.svg"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "action": {

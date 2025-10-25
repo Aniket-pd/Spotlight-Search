@@ -51,6 +51,7 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+let historyAssistantApi = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -399,6 +400,8 @@ function createOverlay() {
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
 
+  ensureHistoryAssistant();
+
   if (shadowContentEl && !shadowContentEl.contains(overlayEl)) {
     shadowContentEl.appendChild(overlayEl);
   }
@@ -493,6 +496,58 @@ function installOverlayGuards() {
     ["keydown", "keypress", "keyup"].forEach((type) => {
       shadowRootEl.addEventListener(type, stopKeys);
     });
+  }
+}
+
+function ensureHistoryAssistant() {
+  if (!containerEl) {
+    return null;
+  }
+  const api = globalThis.SpotlightHistoryAssistant;
+  if (!api || typeof api.initialize !== "function") {
+    return historyAssistantApi;
+  }
+  if (!historyAssistantApi) {
+    historyAssistantApi = api.initialize({ container: containerEl });
+  }
+  return historyAssistantApi;
+}
+
+function updateHistoryAssistantState() {
+  const assistant = ensureHistoryAssistant();
+  if (!assistant) {
+    if (resultsEl) {
+      resultsEl.classList.remove("history-assistant-hidden");
+    }
+    if (containerEl) {
+      containerEl.classList.remove("history-assistant-active");
+    }
+    return;
+  }
+  const shouldActivate = activeFilter === "history";
+  if (typeof assistant.setActive === "function") {
+    assistant.setActive(shouldActivate);
+  }
+  if (resultsEl && typeof assistant.shouldSuppressResults === "function") {
+    const suppress = assistant.shouldSuppressResults();
+    resultsEl.classList.toggle("history-assistant-hidden", suppress);
+  }
+}
+
+function resetHistoryAssistant() {
+  if (historyAssistantApi) {
+    if (typeof historyAssistantApi.setActive === "function") {
+      historyAssistantApi.setActive(false);
+    }
+    if (typeof historyAssistantApi.reset === "function") {
+      historyAssistantApi.reset();
+    }
+  }
+  if (resultsEl) {
+    resultsEl.classList.remove("history-assistant-hidden");
+  }
+  if (containerEl) {
+    containerEl.classList.remove("history-assistant-active");
   }
 }
 
@@ -1263,6 +1318,7 @@ async function openOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  resetHistoryAssistant();
   resultsEl.innerHTML = "";
   inputEl.value = "";
   setGhostText("");
@@ -1303,6 +1359,7 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   resetSubfilterState();
+  resetHistoryAssistant();
   setGhostText("");
   resetSlashMenuState();
   resetEngineMenuState();
@@ -1524,6 +1581,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantState();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
@@ -2241,6 +2299,15 @@ function requestSummaryForResult(result, options = {}) {
 
 function renderResults() {
   if (!resultsEl) {
+    return;
+  }
+
+  const assistant = ensureHistoryAssistant();
+  if (assistant && typeof assistant.shouldSuppressResults === "function" && assistant.shouldSuppressResults()) {
+    resultsEl.innerHTML = "";
+    if (inputEl) {
+      inputEl.removeAttribute("aria-activedescendant");
+    }
     return;
   }
 

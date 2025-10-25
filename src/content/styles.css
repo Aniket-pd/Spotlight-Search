@@ -762,3 +762,318 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.8);
 }
+
+.spotlight-results.history-assistant-hidden {
+  display: none !important;
+}
+
+.spotlight-history-assistant {
+  padding: 18px 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(16, 16, 22, 0.88);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.history-assistant-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-assistant-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.history-assistant-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.history-assistant-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-assistant-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(30, 30, 40, 0.9);
+}
+
+.history-assistant-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 15px;
+  padding: 6px 4px;
+}
+
+.history-assistant-input:focus {
+  outline: none;
+}
+
+.history-assistant-submit {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0b1120;
+  background: linear-gradient(135deg, #93c5fd, #a5b4fc);
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.history-assistant-submit:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.history-assistant-submit:not(:disabled):hover {
+  box-shadow: 0 10px 24px rgba(147, 197, 253, 0.28);
+  transform: translateY(-1px);
+}
+
+.history-assistant-feedback {
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.8);
+  min-height: 18px;
+}
+
+.history-assistant-feedback.info {
+  color: rgba(147, 197, 253, 0.95);
+}
+
+.history-assistant-feedback.success {
+  color: rgba(134, 239, 172, 0.9);
+}
+
+.history-assistant-feedback.warning {
+  color: rgba(253, 224, 171, 0.92);
+}
+
+.history-assistant-feedback.error {
+  color: rgba(252, 165, 165, 0.92);
+}
+
+.history-assistant-progress {
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.history-assistant-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.history-assistant-group {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(18, 18, 28, 0.85);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-assistant-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-assistant-group-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-assistant-group-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.history-assistant-group-meta {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.history-assistant-group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-assistant-chip {
+  border: 1px solid rgba(148, 163, 235, 0.35);
+  background: rgba(129, 140, 248, 0.12);
+  color: rgba(210, 221, 255, 0.94);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border 0.16s ease;
+}
+
+.history-assistant-chip:hover {
+  background: rgba(129, 140, 248, 0.28);
+  border-color: rgba(148, 163, 235, 0.6);
+}
+
+.history-assistant-chip.danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  color: rgba(254, 226, 226, 0.94);
+}
+
+.history-assistant-chip.danger:hover {
+  background: rgba(248, 113, 113, 0.28);
+  border-color: rgba(252, 165, 165, 0.6);
+}
+
+.history-assistant-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-assistant-entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(26, 26, 36, 0.78);
+}
+
+.history-assistant-entry-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 70%;
+}
+
+.history-assistant-entry-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.history-assistant-entry-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.history-assistant-entry-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.history-assistant-empty {
+  font-size: 14px;
+  padding: 20px;
+  border-radius: 12px;
+  background: rgba(24, 24, 36, 0.82);
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.history-assistant-confirm-title {
+  margin: 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.history-assistant-confirm-description {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.history-assistant-confirm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.history-assistant-confirm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.history-assistant-confirm-group {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 20, 30, 0.85);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-assistant-confirm-group-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-assistant-confirm-group-meta {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.history-assistant-confirm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-assistant-confirm-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.history-assistant-checkbox {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.history-assistant-confirm-entry-text {
+  flex: 1;
+  line-height: 1.35;
+}
+
+.history-assistant-confirm-controls {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
