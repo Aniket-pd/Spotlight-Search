@@ -302,6 +302,37 @@ function selectMostRecentBookmarks(bookmarks, limit, excludeIds) {
   return selected;
 }
 
+function normalizeOrganizerAction(value) {
+  if (value === "archive" || value === "reviewDuplicate") {
+    return value;
+  }
+  return "keep";
+}
+
+function sanitizeOrganizerResult(rawResult) {
+  const sanitized = [];
+  const rawBookmarks = Array.isArray(rawResult?.bookmarks) ? rawResult.bookmarks : [];
+  for (const entry of rawBookmarks) {
+    if (!entry || typeof entry.id === "undefined") {
+      continue;
+    }
+    const id = String(entry.id);
+    if (!id) {
+      continue;
+    }
+    const cleanTitle = typeof entry.cleanTitle === "string" ? entry.cleanTitle.trim() : "";
+    const primaryCategory = typeof entry.primaryCategory === "string" ? entry.primaryCategory.trim() : "";
+    const action = normalizeOrganizerAction(entry.action);
+    const duplicateOf =
+      action === "reviewDuplicate" && entry.duplicateOf !== null && entry.duplicateOf !== undefined
+        ? String(entry.duplicateOf)
+        : null;
+    const notes = typeof entry.notes === "string" ? entry.notes.trim() : "";
+    sanitized.push({ id, cleanTitle, primaryCategory, action, duplicateOf, notes });
+  }
+  return { bookmarks: sanitized };
+}
+
 function buildPromptPayload(bookmarks, language) {
   const payload = {
     language: language || DEFAULT_LANGUAGE,
@@ -635,7 +666,8 @@ export function createBookmarkOrganizerService(options = {}) {
       }
       const payload = buildPromptPayload(bookmarks, language);
       const { raw, parsed } = await runPrompt(payload);
-      const changes = await applyOrganizerChanges(bookmarks, parsed, { folderLookup, nodeMap });
+      const sanitizedResult = sanitizeOrganizerResult(parsed);
+      const changes = await applyOrganizerChanges(bookmarks, sanitizedResult, { folderLookup, nodeMap });
       rememberOrganized(
         bookmarks.map((entry) => (entry && typeof entry.id !== "undefined" ? String(entry.id) : null)).filter(Boolean),
         Date.now()
@@ -651,7 +683,7 @@ export function createBookmarkOrganizerService(options = {}) {
         generatedAt: Date.now(),
         payload,
         sourceBookmarks: bookmarks,
-        result: parsed,
+        result: sanitizedResult,
         rawText: raw,
         changes,
       };
