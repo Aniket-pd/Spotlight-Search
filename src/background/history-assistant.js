@@ -46,8 +46,9 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
 const MAX_ITEMS_PER_SESSION = 12;
 const MAX_LOG_ENTRIES = 25;
-const PROMPT_HISTORY_SAMPLE_LIMIT = 40;
-const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 220;
+const PROMPT_HISTORY_SAMPLE_LIMIT = 60;
+const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 160;
+const PROMPT_HISTORY_HOST_LIMIT = 12;
 const IMPLICIT_TIME_PRESETS = new Set([
   "any",
   "today",
@@ -522,6 +523,37 @@ function formatLocalIso(date) {
   return `${iso}${timezoneOffset}`;
 }
 
+function extractHostname(url) {
+  if (typeof url !== "string" || !url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function formatHistorySample(entries, hostCounts) {
+  const entryObjects = entries.map((entry) => ({
+    index: entry.index,
+    title: entry.title,
+    url: entry.url,
+    host: entry.host,
+    lastVisitIso: entry.lastVisitIso,
+    visitCount: entry.visitCount,
+  }));
+  const topHosts = Array.from(hostCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, PROMPT_HISTORY_HOST_LIMIT)
+    .map(([host, count]) => ({ host, visits: count }));
+  return (
+    `History entries JSON (most recent first):\n${JSON.stringify(entryObjects, null, 2)}\n\n` +
+    `Top domains by visit count: ${JSON.stringify(topHosts)}`
+  );
+}
+
 async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
   if (!chrome?.history?.search) {
     return "History API unavailable.";
@@ -535,7 +567,8 @@ async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
     if (!Array.isArray(results) || results.length === 0) {
       return "No recent history entries available.";
     }
-    const lines = [];
+    const entries = [];
+    const hostCounts = new Map();
     for (let index = 0; index < results.length; index += 1) {
       const entry = results[index];
       if (!entry) continue;
@@ -549,9 +582,20 @@ async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
           : entry.url || "(untitled)";
       const safeTitle = title.replace(/\s+/g, " ").slice(0, PROMPT_HISTORY_ENTRY_MAX_LENGTH);
       const url = typeof entry.url === "string" ? entry.url : "";
-      lines.push(`${index + 1}. [${timestamp}] ${safeTitle}${url ? ` <${url}>` : ""}`);
+      const host = extractHostname(url);
+      if (host) {
+        hostCounts.set(host, (hostCounts.get(host) || 0) + 1);
+      }
+      entries.push({
+        index: index + 1,
+        title: safeTitle,
+        url,
+        host,
+        lastVisitIso: timestamp,
+        visitCount: typeof entry.visitCount === "number" ? entry.visitCount : 0,
+      });
     }
-    return lines.join("\n");
+    return formatHistorySample(entries, hostCounts);
   } catch (error) {
     console.warn("Spotlight history assistant failed to collect prompt sample", error);
     return "Failed to collect history sample.";
@@ -573,16 +617,20 @@ function buildPrompt(query, historySample, now = new Date()) {
   const timezoneOffset = formatTimezoneOffset(now);
   const localIso = formatLocalIso(now);
   const historySection = historySample ? historySample : "No recent history entries available.";
-  return `You are a Chrome history assistant that interprets natural language requests.\n\n` +
+  return (
+    `You are a Chrome history assistant that interprets natural language requests.\n\n` +
     `Current local date and time: ${weekdayLabel}, ${localIso} (UTC${timezoneOffset}). Use this to resolve relative time expressions.\n` +
     `Decide whether the user wants to search, open, or delete browsing history, or if you need to clarify first.\n` +
     `Only use these actions: search, open, delete, clarify.\n` +
     `Prefer time range presets when they fit. Always provide ISO-8601 strings (with timezone offsets) for start and end when available.\n` +
     `Topics should be short keywords extracted from the request.\n` +
-    `If the request is ambiguous, set action to \\"clarify\\" and provide a followUpQuestion.\n` +
+    `If the request is ambiguous, set action to \"clarify\" and provide a followUpQuestion.\n` +
+    `Base your interpretation on the user request and the following browsing history data. Reference the provided titles, URLs, timestamps, or domains when determining topics or time ranges, and avoid inventing entries.\n` +
     `Always respond with JSON that matches the provided schema.\n\n` +
-    `Recent history entries (most recent first):\n${historySection}\n\n` +
-    `User request: ${trimmed}`;
+    `${historySection}\n\n` +
+    `User request: ${trimmed}`
+  );
+
 }
 
 export function createHistoryAssistantService() {
