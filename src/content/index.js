@@ -81,8 +81,10 @@ let historyAssistantState = {
   operationId: null,
   undoToken: null,
   log: [],
+  action: null,
 };
 let historyAssistantSelection = null;
+let historyAssistantResultsActive = false;
 
 const HISTORY_SESSION_ACTION_ATTRIBUTE = "data-history-action";
 const HISTORY_SESSION_ID_ATTRIBUTE = "data-history-session-id";
@@ -99,9 +101,101 @@ function resetHistoryAssistantState() {
     operationId: null,
     undoToken: null,
     log: [],
+    action: null,
   };
   historyAssistantSelection = null;
   historyAssistantLastRequestId = 0;
+  historyAssistantResultsActive = false;
+}
+
+function buildHistoryAssistantResultDescription(item, session) {
+  const timeLabel = typeof item?.timeLabel === "string" ? item.timeLabel : "";
+  let host = "";
+  if (typeof item?.url === "string" && item.url) {
+    try {
+      const parsed = new URL(item.url);
+      host = parsed.hostname.replace(/^www\./i, "");
+    } catch (err) {
+      host = "";
+    }
+  }
+  if (host && timeLabel) {
+    return `${host} · ${timeLabel}`;
+  }
+  if (timeLabel) {
+    return timeLabel;
+  }
+  if (host) {
+    return host;
+  }
+  if (typeof session?.timeRangeLabel === "string" && session.timeRangeLabel) {
+    return session.timeRangeLabel;
+  }
+  return typeof item?.url === "string" ? item.url : "";
+}
+
+function mapHistoryAssistantSessionsToResults(sessions) {
+  const results = [];
+  if (!Array.isArray(sessions)) {
+    return results;
+  }
+  sessions.forEach((session, sessionIndex) => {
+    const items = Array.isArray(session?.items) ? session.items : [];
+    items.forEach((item, itemIndex) => {
+      if (!item || typeof item.url !== "string" || !item.url) {
+        return;
+      }
+      const lastVisitTime =
+        typeof item.lastVisitTime === "number" && Number.isFinite(item.lastVisitTime)
+          ? item.lastVisitTime
+          : undefined;
+      const visitCount =
+        typeof item.visitCount === "number" && Number.isFinite(item.visitCount)
+          ? item.visitCount
+          : undefined;
+      const idBase = typeof item.id === "string" && item.id
+        ? item.id
+        : `${sessionIndex}-${itemIndex}-${Date.now()}`;
+      results.push({
+        id: `history-assistant-${idBase}`,
+        type: "history",
+        title: typeof item.title === "string" && item.title ? item.title : item.url,
+        url: item.url,
+        description: buildHistoryAssistantResultDescription(item, session),
+        lastVisitTime,
+        visitCount,
+        historyAssistant: true,
+        historyAssistantSessionId: typeof session?.id === "string" ? session.id : null,
+        historyAssistantItemId: typeof item.id === "string" ? item.id : null,
+      });
+    });
+  });
+  return results;
+}
+
+function syncHistoryAssistantResultsWithOverlay() {
+  if (activeFilter !== "history") {
+    return;
+  }
+  if (historyAssistantState.action !== "show") {
+    if (historyAssistantResultsActive) {
+      historyAssistantResultsActive = false;
+      resultsState = [];
+      lazyList.setItems(resultsState);
+      applyCachedFavicons(resultsState);
+      activeIndex = -1;
+      renderResults();
+    }
+    return;
+  }
+  const sessions = Array.isArray(historyAssistantState.sessions) ? historyAssistantState.sessions : [];
+  const results = mapHistoryAssistantSessionsToResults(sessions);
+  historyAssistantResultsActive = true;
+  resultsState = results;
+  lazyList.setItems(resultsState);
+  applyCachedFavicons(resultsState);
+  activeIndex = resultsState.length > 0 ? 0 : -1;
+  renderResults();
 }
 
 function getWebSearchApi() {
@@ -561,9 +655,11 @@ function handleHistoryAssistantSubmit(event) {
       operationId: typeof response.operationId === "string" ? response.operationId : null,
       undoToken: typeof response.undoToken === "string" ? response.undoToken : null,
       log: Array.isArray(response.log) ? response.log : historyAssistantState.log,
+      action: typeof response.action === "string" ? response.action : null,
     };
     historyAssistantSelection = null;
     renderHistoryAssistantState();
+    syncHistoryAssistantResultsWithOverlay();
   });
 }
 
@@ -2157,6 +2253,7 @@ function requestResults(query) {
         return;
       }
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+      historyAssistantResultsActive = false;
       lazyList.setItems(resultsState);
       pruneSummaryState();
       applyCachedFavicons(resultsState);
@@ -2393,6 +2490,18 @@ function triggerWebSearch(engineIdOverride = null) {
 
 function openResult(result) {
   if (!result) return;
+  if (result.historyAssistant && typeof result.url === "string" && result.url) {
+    chrome.runtime.sendMessage(
+      { type: "SPOTLIGHT_HISTORY_ASSIST_OPEN", urls: [result.url] },
+      () => {
+        if (chrome.runtime.lastError) {
+          console.warn("Spotlight history assistant open error", chrome.runtime.lastError);
+        }
+      }
+    );
+    closeOverlay();
+    return;
+  }
   if (result.type === "command") {
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
