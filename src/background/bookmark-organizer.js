@@ -376,7 +376,7 @@ function determineTargetFolderName(resultEntry) {
   return "Organized";
 }
 
-async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeMap) {
+async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeMap, folderNameCache) {
   const sanitizedTitle = sanitizeFolderName(title);
   const normalized = normalizeFolderName(sanitizedTitle);
   if (!normalized) {
@@ -387,16 +387,72 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     return createdFolders.get(cacheKey);
   }
 
+  const normalizedParentId = normalizeId(parentId);
+  const globalCache = folderNameCache instanceof Map ? folderNameCache : null;
+  let cachedFallback = null;
+  if (globalCache && globalCache.has(normalized)) {
+    const cachedEntry = globalCache.get(normalized);
+    const cachedId = normalizeId(cachedEntry?.id);
+    if (cachedId || cachedId === "0") {
+      const cachedNode = await getOrFetchBookmarkNode(cachedId, nodeMap);
+      if (cachedNode?.isFolder) {
+        const cachedParentId = normalizeId(cachedNode.parentId);
+        const cachedTitle =
+          typeof cachedNode.title === "string" && cachedNode.title.trim()
+            ? cachedNode.title.trim()
+            : sanitizedTitle;
+
+        let cachedFolderMap = folderLookup.get(cachedParentId);
+        if (!cachedFolderMap) {
+          cachedFolderMap = new Map();
+          folderLookup.set(cachedParentId, cachedFolderMap);
+        }
+        cachedFolderMap.set(normalized, { id: cachedId, title: cachedTitle });
+
+        createdFolders.set(cacheKey, cachedId);
+
+        if (!nodeMap.has(cachedId)) {
+          nodeMap.set(cachedId, {
+            id: cachedId,
+            title: cachedTitle,
+            parentId: cachedParentId,
+            isFolder: true,
+            children: Array.isArray(cachedNode.children)
+              ? cachedNode.children.map((child) => normalizeId(child)).filter(Boolean)
+              : [],
+          });
+        }
+
+        if (!normalizedParentId || cachedParentId === normalizedParentId) {
+          return cachedId;
+        }
+
+        cachedFallback = { id: cachedId, parentId: cachedParentId, title: cachedTitle };
+      } else {
+        globalCache.delete(normalized);
+      }
+    } else {
+      globalCache.delete(normalized);
+    }
+  }
+
   let folderMap = folderLookup.get(parentId);
   folderMap = await refreshFolderLookup(parentId, folderLookup, nodeMap);
   if (folderMap && folderMap.has(normalized)) {
     const existing = folderMap.get(normalized);
     const folderId = normalizeId(existing?.id ?? existing);
     if (!folderId && folderId !== "0") {
-      return parentId;
+      return cachedFallback ? cachedFallback.id : parentId;
     }
     const folderTitle = typeof existing?.title === "string" ? existing.title : sanitizedTitle;
     createdFolders.set(cacheKey, folderId);
+    if (globalCache) {
+      globalCache.set(normalized, {
+        id: folderId,
+        parentId: normalizedParentId,
+        title: folderTitle,
+      });
+    }
     if (!nodeMap.has(folderId)) {
       nodeMap.set(folderId, {
         id: folderId,
@@ -409,16 +465,29 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     return folderId;
   }
 
-  const locatedId = await locateExistingFolderBySearch(
+  const located = await locateExistingFolderBySearch(
     parentId,
     normalized,
     sanitizedTitle,
     folderLookup,
-    nodeMap
+    nodeMap,
+    folderNameCache
   );
-  if (locatedId) {
-    createdFolders.set(cacheKey, locatedId);
-    return locatedId;
+  if (located && located.id) {
+    createdFolders.set(cacheKey, located.id);
+    if (globalCache) {
+      globalCache.set(normalized, {
+        id: located.id,
+        parentId: normalizeId(located.parentId),
+        title: located.title || sanitizedTitle,
+      });
+    }
+    return located.id;
+  }
+
+  if (cachedFallback && cachedFallback.id) {
+    createdFolders.set(cacheKey, cachedFallback.id);
+    return cachedFallback.id;
   }
 
   const folder = await chrome.bookmarks.create({ parentId, title: sanitizedTitle });
@@ -433,6 +502,13 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     const refreshedId = normalizeId(refreshed?.id ?? refreshed) || folderId;
     const refreshedTitle = typeof refreshed?.title === "string" ? refreshed.title : sanitizedTitle;
     createdFolders.set(cacheKey, refreshedId);
+    if (globalCache) {
+      globalCache.set(normalized, {
+        id: refreshedId,
+        parentId: normalizedParentId,
+        title: refreshedTitle,
+      });
+    }
     nodeMap.set(refreshedId, {
       id: refreshedId,
       title: refreshedTitle,
@@ -449,6 +525,13 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   }
   folderMap.set(normalized, { id: folderId, title: sanitizedTitle });
   createdFolders.set(cacheKey, folderId);
+  if (globalCache) {
+    globalCache.set(normalized, {
+      id: folderId,
+      parentId: normalizedParentId,
+      title: sanitizedTitle,
+    });
+  }
   nodeMap.set(folderId, {
     id: folderId,
     title: sanitizedTitle,
@@ -460,7 +543,14 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   return folderId;
 }
 
-async function locateExistingFolderBySearch(parentId, normalizedName, sanitizedTitle, folderLookup, nodeMap) {
+async function locateExistingFolderBySearch(
+  parentId,
+  normalizedName,
+  sanitizedTitle,
+  folderLookup,
+  nodeMap,
+  folderNameCache
+) {
   if (!normalizedName || !sanitizedTitle) {
     return null;
   }
@@ -478,13 +568,15 @@ async function locateExistingFolderBySearch(parentId, normalizedName, sanitizedT
   }
 
   const normalizedParentId = normalizeId(parentId);
+  const globalCache = folderNameCache instanceof Map ? folderNameCache : null;
+  let fallback = null;
   for (const node of nodes) {
     if (!node || node.url) {
       continue;
     }
     const nodeId = normalizeId(node.id);
     const nodeParentId = normalizeId(node.parentId);
-    if (!nodeId || !nodeParentId || nodeParentId !== normalizedParentId) {
+    if (!nodeId || !nodeParentId) {
       continue;
     }
     const candidateTitle = typeof node.title === "string" ? node.title : "";
@@ -506,12 +598,36 @@ async function locateExistingFolderBySearch(parentId, normalizedName, sanitizedT
       folderMap = new Map();
       folderLookup.set(nodeParentId, folderMap);
     }
+    const sanitizedCandidate =
+      typeof node.title === "string" ? sanitizeFolderName(node.title) || sanitizedTitle : sanitizedTitle;
     folderMap.set(normalizedName, {
       id: nodeId,
-      title: typeof node.title === "string" ? node.title : sanitizedTitle,
+      title: sanitizedCandidate,
     });
 
-    return nodeId;
+    const resolved = {
+      id: nodeId,
+      parentId: nodeParentId,
+      title: sanitizedCandidate,
+    };
+
+    if (!normalizedParentId || nodeParentId === normalizedParentId) {
+      if (globalCache) {
+        globalCache.set(normalizedName, resolved);
+      }
+      return resolved;
+    }
+
+    if (!fallback) {
+      fallback = resolved;
+    }
+  }
+
+  if (fallback) {
+    if (globalCache) {
+      globalCache.set(normalizedName, fallback);
+    }
+    return fallback;
   }
 
   return null;
@@ -570,6 +686,7 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
 
   const folderLookup = context.folderLookup instanceof Map ? context.folderLookup : new Map();
   const nodeMap = context.nodeMap instanceof Map ? context.nodeMap : new Map();
+  const folderNameCache = context.folderNameCache instanceof Map ? context.folderNameCache : null;
   const createdFolders = new Map();
   const sourceMap = new Map(sourceBookmarks.map((entry) => [String(entry.id), entry]));
 
@@ -628,7 +745,14 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
       continue;
     }
 
-    const folderId = await ensureFolder(parentId, targetFolderName, folderLookup, createdFolders, nodeMap);
+    const folderId = await ensureFolder(
+      parentId,
+      targetFolderName,
+      folderLookup,
+      createdFolders,
+      nodeMap,
+      folderNameCache
+    );
     if (!folderId || folderId === source.parentId) {
       continue;
     }
@@ -717,6 +841,7 @@ export function createBookmarkOrganizerService(options = {}) {
   let sessionPromise = null;
   let activeRequest = null;
   const recentlyOrganized = new Map();
+  const folderNameCache = new Map();
 
   function pruneRecentlyOrganized(now = Date.now()) {
     for (const [id, timestamp] of recentlyOrganized) {
@@ -826,7 +951,11 @@ export function createBookmarkOrganizerService(options = {}) {
       const payload = buildPromptPayload(bookmarks, language);
       const { raw, parsed } = await runPrompt(payload);
       const sanitizedResult = sanitizeOrganizerResult(parsed);
-      const changes = await applyOrganizerChanges(bookmarks, sanitizedResult, { folderLookup, nodeMap });
+      const changes = await applyOrganizerChanges(bookmarks, sanitizedResult, {
+        folderLookup,
+        nodeMap,
+        folderNameCache,
+      });
       rememberOrganized(
         bookmarks.map((entry) => (entry && typeof entry.id !== "undefined" ? String(entry.id) : null)).filter(Boolean),
         Date.now()
