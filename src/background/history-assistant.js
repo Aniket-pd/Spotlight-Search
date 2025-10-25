@@ -88,6 +88,27 @@ const TOPIC_STOP_WORDS = new Set([
   "yesterday",
 ]);
 
+const ACTION_KEYWORDS = {
+  show: ["show", "list", "find", "search", "display", "look", "fetch"],
+  open: ["open", "reopen", "resume", "launch", "restore", "start"],
+  delete: ["delete", "remove", "clear", "erase", "cleanup", "trash", "forget", "wipe", "purge"],
+};
+
+const TIME_KEYWORD_PATTERNS = [
+  { pattern: /\btoday\b/i, label: "today" },
+  { pattern: /\byesterday\b/i, label: "yesterday" },
+  { pattern: /\bthis\s+week\b/i, label: "this week" },
+  { pattern: /\blast\s+week\b/i, label: "last week" },
+  { pattern: /\bthis\s+month\b/i, label: "this month" },
+  { pattern: /\blast\s+month\b/i, label: "last month" },
+  { pattern: /\blast\s+24\s+hours\b/i, label: "last 24 hours" },
+  { pattern: /\bpast\s+24\s+hours\b/i, label: "last 24 hours" },
+  { pattern: /\blast\s+7\s+days\b/i, label: "last 7 days" },
+  { pattern: /\bpast\s+7\s+days\b/i, label: "last 7 days" },
+  { pattern: /\blast\s+30\s+days\b/i, label: "last 30 days" },
+  { pattern: /\bpast\s+30\s+days\b/i, label: "last 30 days" },
+];
+
 function normalizeKeywordList(list) {
   if (!Array.isArray(list)) {
     return [];
@@ -161,6 +182,93 @@ function extractQueryKeywords(query) {
   return Array.from(new Set(keywords));
 }
 
+function detectActionTokens(query) {
+  if (typeof query !== "string" || !query.trim()) {
+    return [];
+  }
+  const lower = query.toLowerCase();
+  const detected = new Set();
+  for (const [action, words] of Object.entries(ACTION_KEYWORDS)) {
+    if (words.some((word) => lower.includes(word))) {
+      detected.add(action);
+    }
+  }
+  return Array.from(detected);
+}
+
+function detectTimeTokens(query) {
+  if (typeof query !== "string" || !query.trim()) {
+    return [];
+  }
+  const tokens = new Set();
+  for (const { pattern, label } of TIME_KEYWORD_PATTERNS) {
+    if (pattern.test(query)) {
+      tokens.add(label);
+    }
+  }
+  const durationPattern = /(last|past)\s+(\d+)\s+(day|days|week|weeks|month|months|hour|hours)/gi;
+  let match;
+  while ((match = durationPattern.exec(query)) !== null) {
+    const [, , countStr, unitRaw] = match;
+    const count = Number.parseInt(countStr, 10);
+    if (!Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+    const unit = unitRaw.toLowerCase();
+    let normalizedUnit = unit;
+    if (!unit.endsWith("s")) {
+      normalizedUnit = `${unit}s`;
+    }
+    tokens.add(`last ${count} ${normalizedUnit}`);
+  }
+  return Array.from(tokens);
+}
+
+function formatTopicToken(token) {
+  if (!token) {
+    return "";
+  }
+  if (/^[a-z]+$/.test(token)) {
+    if (token.length <= 3) {
+      return token.toUpperCase();
+    }
+    return token.replace(/^(.)/, (char) => char.toUpperCase());
+  }
+  if (/^[a-z0-9]+$/i.test(token)) {
+    return token;
+  }
+  return token;
+}
+
+function buildQueryTokenData(query) {
+  if (typeof query !== "string") {
+    return { tokens: [], topicTokens: [], timeTokens: [], actionTokens: [] };
+  }
+  const rawTokens = query.match(/[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*/g) || [];
+  const lowerMap = new Map();
+  for (const token of rawTokens) {
+    const lower = token.toLowerCase();
+    if (!lowerMap.has(lower)) {
+      lowerMap.set(lower, token);
+    }
+  }
+  const keywordList = extractQueryKeywords(query);
+  const topicTokens = [];
+  for (const keyword of keywordList) {
+    const source = lowerMap.get(keyword) || keyword;
+    const formatted = formatTopicToken(source);
+    if (formatted) {
+      topicTokens.push(formatted);
+    }
+  }
+  return {
+    tokens: rawTokens,
+    topicTokens: Array.from(new Set(topicTokens)),
+    timeTokens: detectTimeTokens(query),
+    actionTokens: detectActionTokens(query),
+  };
+}
+
 function clampConfidence(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return 0;
@@ -185,6 +293,19 @@ function normalizeAction(value) {
   const normalized = value.trim().toLowerCase();
   if (normalized === "show" || normalized === "open" || normalized === "delete") {
     return normalized;
+  }
+  return null;
+}
+
+function resolveActionFromTokens(tokenData) {
+  if (!tokenData || !Array.isArray(tokenData.actionTokens)) {
+    return null;
+  }
+  for (const token of tokenData.actionTokens) {
+    const normalized = normalizeAction(token);
+    if (normalized) {
+      return normalized;
+    }
   }
   return null;
 }
@@ -216,6 +337,155 @@ function parseIsoTimestamp(value) {
     return null;
   }
   return parsed;
+}
+
+function getStartOfWeek(timestamp) {
+  const date = new Date(timestamp);
+  const day = date.getDay();
+  const diff = (day + 6) % 7;
+  date.setDate(date.getDate() - diff);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function getEndOfWeek(timestamp) {
+  const start = getStartOfWeek(timestamp);
+  const date = new Date(start);
+  date.setDate(date.getDate() + 6);
+  date.setHours(23, 59, 59, 999);
+  return date.getTime();
+}
+
+function getStartOfMonth(timestamp) {
+  const date = new Date(timestamp);
+  date.setDate(1);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function getEndOfMonth(timestamp) {
+  const date = new Date(timestamp);
+  date.setDate(1);
+  date.setHours(0, 0, 0, 0);
+  date.setMonth(date.getMonth() + 1);
+  date.setMilliseconds(date.getMilliseconds() - 1);
+  return date.getTime();
+}
+
+function interpretRelativeRange(label, now = Date.now()) {
+  if (typeof label !== "string" || !label.trim()) {
+    return null;
+  }
+  const normalized = label.trim().toLowerCase();
+  const todayStart = toStartOfDay(now);
+  switch (normalized) {
+    case "today": {
+      const startTime = todayStart;
+      const endTime = startTime + DAY_MS - 1;
+      return { startTime, endTime, preset: "today", description: "today" };
+    }
+    case "yesterday": {
+      const startTime = todayStart - DAY_MS;
+      const endTime = todayStart - 1;
+      return { startTime, endTime, preset: "yesterday", description: "yesterday" };
+    }
+    case "this week": {
+      const startTime = getStartOfWeek(now);
+      const endTime = Math.min(now, getEndOfWeek(now));
+      return { startTime, endTime, preset: "thisWeek", description: "this week" };
+    }
+    case "last week": {
+      const endOfCurrentWeek = getStartOfWeek(now) - 1;
+      const startTime = getStartOfWeek(endOfCurrentWeek);
+      const endTime = getEndOfWeek(endOfCurrentWeek);
+      return { startTime, endTime, preset: "lastWeek", description: "last week" };
+    }
+    case "this month": {
+      const startTime = getStartOfMonth(now);
+      const endTime = Math.min(now, getEndOfMonth(now));
+      return { startTime, endTime, preset: "thisMonth", description: "this month" };
+    }
+    case "last month": {
+      const endOfLastMonth = getStartOfMonth(now) - 1;
+      const startTime = getStartOfMonth(endOfLastMonth);
+      const endTime = getEndOfMonth(endOfLastMonth);
+      return { startTime, endTime, preset: "lastMonth", description: "last month" };
+    }
+    case "last 7 days": {
+      const startTime = toStartOfDay(now - 6 * DAY_MS);
+      return { startTime, endTime: now, preset: "last7days", description: "last 7 days" };
+    }
+    case "last 30 days": {
+      const startTime = toStartOfDay(now - 29 * DAY_MS);
+      return { startTime, endTime: now, preset: "last30days", description: "last 30 days" };
+    }
+    case "last 24 hours": {
+      const startTime = now - 24 * 60 * 60 * 1000;
+      return { startTime, endTime: now, preset: "custom", description: "last 24 hours" };
+    }
+    default:
+      break;
+  }
+  const durationMatch = normalized.match(/^(last|past)\s+(\d+)\s+(day|days|week|weeks|month|months|hour|hours)$/);
+  if (durationMatch) {
+    const [, , countStr, unitRaw] = durationMatch;
+    const count = Number.parseInt(countStr, 10);
+    if (Number.isFinite(count) && count > 0) {
+      const unit = unitRaw.toLowerCase();
+      let durationMs;
+      if (unit.startsWith("hour")) {
+        durationMs = count * 60 * 60 * 1000;
+      } else if (unit.startsWith("week")) {
+        durationMs = count * 7 * DAY_MS;
+      } else if (unit.startsWith("month")) {
+        durationMs = count * 30 * DAY_MS;
+      } else {
+        durationMs = count * DAY_MS;
+      }
+      const endTime = now;
+      let startTime = now - durationMs;
+      if (durationMs >= DAY_MS) {
+        const days = Math.max(1, Math.ceil(durationMs / DAY_MS));
+        startTime = toStartOfDay(now - (days - 1) * DAY_MS);
+      }
+      const normalizedUnit = unit.endsWith("s") ? unit : `${unit}s`;
+      const description = `last ${count} ${normalizedUnit}`;
+      return { startTime, endTime, preset: "custom", description };
+    }
+  }
+  return null;
+}
+
+function interpretBoundary(value, type, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const trimmed = value.trim();
+  const relative = interpretRelativeRange(trimmed, now);
+  if (relative) {
+    if (type === "start") {
+      return {
+        time: relative.startTime,
+        preset: relative.preset,
+        description: relative.description,
+        rangeEnd: relative.endTime,
+      };
+    }
+    return {
+      time: relative.endTime,
+      preset: relative.preset,
+      description: relative.description,
+      rangeStart: relative.startTime,
+    };
+  }
+  if (trimmed.toLowerCase() === "now") {
+    return { time: now, description: "now", preset: "custom" };
+  }
+  const parsed = parseDateBoundary(trimmed, type, now);
+  if (Number.isFinite(parsed)) {
+    return { time: parsed, preset: "custom" };
+  }
+  return null;
 }
 
 function parseDateBoundary(value, type, now = Date.now()) {
@@ -270,15 +540,43 @@ function detectPresetFromRange(startTime, endTime, now = Date.now()) {
   return "custom";
 }
 
-function normalizeTimeRange(rawRange, now = Date.now()) {
-  const defaultRange = { startTime: 0, endTime: now, preset: "any" };
-  if (!rawRange || typeof rawRange !== "object") {
-    return defaultRange;
+function normalizeTimeRange(rawRange, now = Date.now(), tokenData = null) {
+  const defaultRange = { startTime: 0, endTime: now, preset: "any", description: "all time" };
+  const fallbackTokens = Array.isArray(tokenData?.timeTokens) ? tokenData.timeTokens : [];
+  const startValue =
+    rawRange && typeof rawRange.start === "string" && rawRange.start.trim()
+      ? rawRange.start
+      : fallbackTokens[0];
+  const endValue =
+    rawRange && typeof rawRange.end === "string" && rawRange.end.trim() ? rawRange.end : undefined;
+
+  let startBoundary = interpretBoundary(startValue, "start", now);
+  let endBoundary = interpretBoundary(endValue, "end", now);
+
+  if (!startBoundary && !startValue && fallbackTokens.length > 0) {
+    startBoundary = interpretBoundary(fallbackTokens[0], "start", now);
   }
-  const startCandidate = parseDateBoundary(rawRange.start, "start", now);
-  const endCandidate = parseDateBoundary(rawRange.end, "end", now);
-  let startTime = Number.isFinite(startCandidate) ? startCandidate : defaultRange.startTime;
-  let endTime = Number.isFinite(endCandidate) ? endCandidate : defaultRange.endTime;
+  if (!endBoundary && !endValue && startBoundary?.rangeEnd !== undefined) {
+    endBoundary = {
+      time: startBoundary.rangeEnd,
+      preset: startBoundary.preset,
+      description: startBoundary.description,
+    };
+  }
+  if (!startBoundary && !startValue && endBoundary?.rangeStart !== undefined) {
+    startBoundary = {
+      time: endBoundary.rangeStart,
+      preset: endBoundary.preset,
+      description: endBoundary.description,
+    };
+  }
+
+  let startTime = startBoundary?.time ?? defaultRange.startTime;
+  let endTime = endBoundary?.time ?? defaultRange.endTime;
+  let preset = startBoundary?.preset || endBoundary?.preset || defaultRange.preset;
+  let description =
+    startBoundary?.description || endBoundary?.description || fallbackTokens[0] || defaultRange.description;
+
   if (!Number.isFinite(startTime) || startTime < 0) {
     startTime = 0;
   }
@@ -291,13 +589,19 @@ function normalizeTimeRange(rawRange, now = Date.now()) {
     endTime = temp;
   }
   endTime = Math.min(endTime, now);
-  const preset = detectPresetFromRange(startTime, endTime, now);
-  return { startTime, endTime, preset };
+  const derivedPreset = preset && preset !== "custom" ? preset : detectPresetFromRange(startTime, endTime, now);
+  if (!description || !description.trim()) {
+    description = describeTimeRange({ preset: derivedPreset, startTime, endTime }, now);
+  }
+  return { startTime, endTime, preset: derivedPreset, description };
 }
 
 function describeTimeRange(range, now = Date.now()) {
   if (!range) {
     return "all time";
+  }
+  if (typeof range.description === "string" && range.description.trim()) {
+    return range.description.trim();
   }
   const { preset, startTime, endTime } = range;
   if (preset && preset !== "custom" && preset !== "specific" && preset !== "any") {
@@ -541,12 +845,30 @@ async function collectHistoryEntries(topics, range, options = {}) {
   return filtered;
 }
 
-function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "") {
+function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "", tokenData = null) {
   const confidence = clampConfidence(parsed?.confidence);
-  const action = normalizeAction(parsed?.action);
-  const topics = normalizeTopics(parsed?.topics);
-  const maxItems = normalizeMaxItems(parsed?.maxItems);
-  const timeRange = normalizeTimeRange(parsed?.dateRange, now);
+  let action = normalizeAction(parsed?.action);
+  const tokenAction = resolveActionFromTokens(tokenData);
+  if (!action && tokenAction) {
+    action = tokenAction;
+  }
+  let topics = normalizeTopics(parsed?.topics);
+  const tokenTopics = Array.isArray(tokenData?.topicTokens) ? tokenData.topicTokens.slice(0, 8) : [];
+  if (topics.length) {
+    for (const topic of tokenTopics) {
+      if (!topics.includes(topic)) {
+        topics.push(topic);
+      }
+    }
+    topics = topics.slice(0, 8);
+  } else if (tokenTopics.length) {
+    topics = tokenTopics.slice(0, 8);
+  }
+  let maxItems = normalizeMaxItems(parsed?.maxItems);
+  if (!maxItems) {
+    maxItems = 20;
+  }
+  const timeRange = normalizeTimeRange(parsed?.dateRange, now, tokenData);
   const queryText = typeof originalQuery === "string" ? originalQuery.trim() : "";
   const queryKeywords = extractQueryKeywords(queryText);
   return {
@@ -656,26 +978,32 @@ async function buildPromptHistorySample(limit = PROMPT_HISTORY_SAMPLE_LIMIT) {
   }
 }
 
-function buildPrompt(query, historySample, now = new Date()) {
+function buildPrompt(query, tokenData, historySample, now = new Date()) {
   const trimmed = typeof query === "string" ? query.trim() : "";
   const localIso = formatLocalIso(now);
   const historySection = historySample ? historySample : "No recent history entries available.";
-  const inputPayload = JSON.stringify({ query: trimmed, now: localIso });
+  const tokenPayload = {
+    tokens: Array.isArray(tokenData?.tokens) ? tokenData.tokens : [],
+    topicTokens: Array.isArray(tokenData?.topicTokens) ? tokenData.topicTokens : [],
+    timeTokens: Array.isArray(tokenData?.timeTokens) ? tokenData.timeTokens : [],
+    actionTokens: Array.isArray(tokenData?.actionTokens) ? tokenData.actionTokens : [],
+  };
+  const inputPayload = JSON.stringify({ query: trimmed, tokens: tokenPayload, now: localIso });
+  const exampleInput =
+    '{"query":"show AI sites from last 7 days","tokens":{"tokens":["show","AI","sites","last","7","days"],"topicTokens":["AI"],"timeTokens":["last 7 days"],"actionTokens":["show"]},"now":"2025-10-25T18:30:00Z"}';
+  const exampleOutput =
+    '{"action":"show","topics":["AI"],"dateRange":{"start":"last 7 days","end":"now"},"maxItems":20,"confidence":0.95}';
   return [
-    "You are the Smart History Search interpreter for a Chrome extension similar to macOS Spotlight.",
-    "### GOAL\nTurn a user's natural-language query about their browsing history into a **structured JSON command** that the extension can execute.",
-    "---",
-    "### INPUT FORMAT\nThe model receives this JSON input:\n{\n  \"query\": string,              // what the user typed\n  \"now\": ISO_8601_datetime      // current date-time, used for relative time phrases\n}",
-    "---",
-    "### REQUIRED OUTPUT FORMAT\nReturn ONLY one JSON object, with no explanations:\n{\n  \"action\": \"show\" | \"open\" | \"delete\",\n  \"topics\": string[],\n  \"dateRange\": {\n     \"start\": \"YYYY-MM-DD\",\n     \"end\": \"YYYY-MM-DD\"\n  },\n  \"maxItems\": number,\n  \"confidence\": 0–1\n}",
-    "---",
-    "### EXTRACTION RULES\n1. **Action detection**\n   - Words like “show”, “list”, “find” → \"show\"\n   - Words like “open”, “reopen” → \"open\"\n   - Words like “delete”, “clear”, “remove” → \"delete\"\n\n2. **Topic extraction**\n   - Collect keywords, brand names, or phrases.\n   - Do NOT include stop words.\n\n3. **Date range parsing**\n   - “today” → start = end = current date\n   - “yesterday” → start = now-1 day, end = now-1 day\n   - “last week” → start = now-7 days, end = now\n   - “last 3 days” → start = now-3 days, end = now\n   - “September 2024” → first and last day of that month\n\n4. **Quantity handling**\n   - If the query includes a number (“top 5”, “last 20”), set maxItems accordingly.\n\n5. **Output control**\n   - If query has no history-related intent, return { \"confidence\": 0 }.",
-    "---",
-    "### IMPLEMENTATION TIP\nAfter receiving this JSON from the Prompt API:\n\nPass topics and dateRange into chrome.history.search().\n\nFilter and display results grouped by date.\n\nHandle action: \"open\" or \"delete\" with chrome.tabs.create() or chrome.history.deleteUrl() respectively.",
-    "OUTPUT REQUIREMENTS\nRespond only with valid JSON\nDo not include any extra text or explanations\nMust always include \"confidence\" key",
+    "You are the Smart History Search interpreter for a Chrome extension.",
+    "Your input is a JSON object containing the user's natural query plus pre-tokenized hints: { \"query\": string, \"tokens\": { \"tokens\": string[], \"topicTokens\": string[], \"timeTokens\": string[], \"actionTokens\": string[] }, \"now\": ISO_8601_datetime }.",
+    "Use the provided token data as the primary source of truth—if actionTokens, topicTokens, or timeTokens exist, rely on them directly before inferring from the raw query.",
+    "Return exactly one JSON object with this schema: { \"action\": \"show\" | \"open\" | \"delete\", \"topics\": string[], \"dateRange\": { \"start\": string, \"end\": string } | null, \"maxItems\": number, \"confidence\": number }.",
+    "Rules:\n1. Detect the action from actionTokens, falling back to the query only when tokens are empty.\n2. Use topicTokens for keywords such as AI, GPT, Claude, Gemini, YouTube, Reddit, or GitHub.\n3. Map timeTokens like \"today\", \"yesterday\", \"last week\", \"last 7 days\" into human-readable text (not exact dates) for dateRange.start/end.\n4. Default maxItems to 20 unless the query requests a different count (for example \"top 5\").\n5. Keep confidence between 0 and 1.\n6. If there is no history-related intent, respond with { \"confidence\": 0 }.",
+    "Example input:\n" + exampleInput,
+    "Example output:\n" + exampleOutput,
     `Recent history sample (most recent first):\n${historySection}`,
     `Input JSON:\n${inputPayload}`,
-    "Return just the JSON command described above."
+    "Respond with valid JSON only—no explanations or extra text."
   ].join("\n\n");
 }
 
@@ -747,6 +1075,7 @@ export function createHistoryAssistantService() {
 
   async function runPrompt(query) {
     const session = await ensureSession();
+    const tokenData = buildQueryTokenData(query);
     const candidateLimits = [
       PROMPT_HISTORY_SAMPLE_LIMIT,
       Math.floor(PROMPT_HISTORY_SAMPLE_LIMIT / 2),
@@ -781,7 +1110,7 @@ export function createHistoryAssistantService() {
         historySample = "History sample omitted to satisfy Prompt API input limits.";
       }
       const attemptNow = new Date();
-      const promptText = buildPrompt(query, historySample, attemptNow);
+      const promptText = buildPrompt(query, tokenData, historySample, attemptNow);
       try {
         const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
         let parsed;
@@ -790,7 +1119,7 @@ export function createHistoryAssistantService() {
         } catch (error) {
           throw new Error("History assistant returned invalid JSON");
         }
-        return sanitizeInterpretation(parsed, attemptNow.getTime(), query);
+        return sanitizeInterpretation(parsed, attemptNow.getTime(), query, tokenData);
       } catch (error) {
         lastError = error;
         if (isPromptInputTooLargeError(error) && limit !== limits[limits.length - 1]) {
@@ -824,7 +1153,7 @@ export function createHistoryAssistantService() {
   }
 
   async function handleShow(interpretation) {
-    const limit = interpretation.maxItems || 10;
+    const limit = interpretation.maxItems || 20;
     const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
       maxItems: limit,
       fallbackQuery: interpretation.rawQuery,
@@ -852,7 +1181,7 @@ export function createHistoryAssistantService() {
   }
 
   async function handleOpen(interpretation) {
-    const limit = interpretation.maxItems || 10;
+    const limit = interpretation.maxItems || 20;
     const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
       maxItems: limit,
       fallbackQuery: interpretation.rawQuery,
@@ -914,7 +1243,7 @@ export function createHistoryAssistantService() {
   }
 
   async function handleDelete(interpretation) {
-    const limit = interpretation.maxItems || 10;
+    const limit = interpretation.maxItems || 20;
     const entries = await collectHistoryEntries(interpretation.topics, interpretation.timeRange, {
       maxItems: limit,
       fallbackQuery: interpretation.rawQuery,
