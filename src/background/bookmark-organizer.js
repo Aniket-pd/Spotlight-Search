@@ -109,6 +109,55 @@ function normalizeFolderName(name = "") {
   return sanitizeFolderName(name).toLowerCase();
 }
 
+function createBookmarkSnapshot(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return { ids: new Set(), maxDateAdded: null };
+  }
+
+  const ids = new Set();
+  let maxDateAdded = null;
+
+  for (const entry of entries) {
+    const id = normalizeId(entry?.id);
+    if (id) {
+      ids.add(id);
+    }
+
+    const added = typeof entry?.dateAdded === "number" ? entry.dateAdded : null;
+    if (Number.isFinite(added) && (maxDateAdded === null || added > maxDateAdded)) {
+      maxDateAdded = added;
+    }
+  }
+
+  return { ids, maxDateAdded };
+}
+
+function hasUnseenBookmarks(entries, snapshot) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return false;
+  }
+
+  if (!snapshot || !(snapshot.ids instanceof Set)) {
+    return true;
+  }
+
+  const lastMaxDate = Number.isFinite(snapshot.maxDateAdded) ? snapshot.maxDateAdded : null;
+
+  for (const entry of entries) {
+    const id = normalizeId(entry?.id);
+    if (id && !snapshot.ids.has(id)) {
+      return true;
+    }
+
+    const added = typeof entry?.dateAdded === "number" ? entry.dateAdded : null;
+    if (Number.isFinite(added) && (lastMaxDate === null || added > lastMaxDate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function getBookmarkChildren(parentId) {
   return new Promise((resolve, reject) => {
     if (!parentId && parentId !== "0") {
@@ -842,6 +891,7 @@ export function createBookmarkOrganizerService(options = {}) {
   let activeRequest = null;
   const recentlyOrganized = new Map();
   const folderNameCache = new Map();
+  let lastOrganizedSnapshot = null;
 
   function pruneRecentlyOrganized(now = Date.now()) {
     for (const [id, timestamp] of recentlyOrganized) {
@@ -948,6 +998,9 @@ export function createBookmarkOrganizerService(options = {}) {
       if (!bookmarks.length) {
         throw new Error("No new bookmarks available to organize");
       }
+      if (!hasUnseenBookmarks(bookmarks, lastOrganizedSnapshot)) {
+        throw new Error("No new bookmarks added since the last run");
+      }
       const payload = buildPromptPayload(bookmarks, language);
       const { raw, parsed } = await runPrompt(payload);
       const sanitizedResult = sanitizeOrganizerResult(parsed);
@@ -960,6 +1013,7 @@ export function createBookmarkOrganizerService(options = {}) {
         bookmarks.map((entry) => (entry && typeof entry.id !== "undefined" ? String(entry.id) : null)).filter(Boolean),
         Date.now()
       );
+      lastOrganizedSnapshot = createBookmarkSnapshot(bookmarks);
       if (
         typeof scheduleRebuild === "function" &&
         changes &&
