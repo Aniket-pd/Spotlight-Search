@@ -129,6 +129,26 @@ function getBookmarkChildren(parentId) {
   });
 }
 
+function searchBookmarksByTitle(title) {
+  return new Promise((resolve, reject) => {
+    if (!title) {
+      resolve([]);
+      return;
+    }
+    try {
+      chrome.bookmarks.search({ title }, (nodes) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(Array.isArray(nodes) ? nodes : []);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 function getRecentBookmarks(limit) {
   return new Promise((resolve, reject) => {
     const max = clampLimit(limit);
@@ -389,6 +409,18 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     return folderId;
   }
 
+  const locatedId = await locateExistingFolderBySearch(
+    parentId,
+    normalized,
+    sanitizedTitle,
+    folderLookup,
+    nodeMap
+  );
+  if (locatedId) {
+    createdFolders.set(cacheKey, locatedId);
+    return locatedId;
+  }
+
   const folder = await chrome.bookmarks.create({ parentId, title: sanitizedTitle });
   if (!folder || !folder.id) {
     throw new Error(`Failed to create folder "${sanitizedTitle}"`);
@@ -426,6 +458,63 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
   });
 
   return folderId;
+}
+
+async function locateExistingFolderBySearch(parentId, normalizedName, sanitizedTitle, folderLookup, nodeMap) {
+  if (!normalizedName || !sanitizedTitle) {
+    return null;
+  }
+
+  let nodes = [];
+  try {
+    nodes = await searchBookmarksByTitle(sanitizedTitle);
+  } catch (error) {
+    console.warn("Failed to search bookmarks while locating organizer folder", error);
+    return null;
+  }
+
+  if (!nodes.length) {
+    return null;
+  }
+
+  const normalizedParentId = normalizeId(parentId);
+  for (const node of nodes) {
+    if (!node || node.url) {
+      continue;
+    }
+    const nodeId = normalizeId(node.id);
+    const nodeParentId = normalizeId(node.parentId);
+    if (!nodeId || !nodeParentId || nodeParentId !== normalizedParentId) {
+      continue;
+    }
+    const candidateTitle = typeof node.title === "string" ? node.title : "";
+    if (normalizeFolderName(candidateTitle) !== normalizedName) {
+      continue;
+    }
+
+    const normalizedNode = normalizeBookmarkNode(node) || {
+      id: nodeId,
+      title: sanitizeFolderName(candidateTitle) || sanitizedTitle,
+      parentId: nodeParentId,
+      isFolder: true,
+      children: [],
+    };
+    nodeMap.set(nodeId, normalizedNode);
+
+    let folderMap = folderLookup.get(nodeParentId);
+    if (!folderMap) {
+      folderMap = new Map();
+      folderLookup.set(nodeParentId, folderMap);
+    }
+    folderMap.set(normalizedName, {
+      id: nodeId,
+      title: typeof node.title === "string" ? node.title : sanitizedTitle,
+    });
+
+    return nodeId;
+  }
+
+  return null;
 }
 
 async function refreshFolderLookup(parentId, folderLookup, nodeMap) {
