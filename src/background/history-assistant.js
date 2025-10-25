@@ -269,11 +269,72 @@ function buildQueryTokenData(query) {
   };
 }
 
+function buildDateRangeFromTokens(tokenData) {
+  const tokens = Array.isArray(tokenData?.timeTokens) ? tokenData.timeTokens : [];
+  if (!tokens.length) {
+    return null;
+  }
+  const primary = tokens.find((token) => typeof token === "string" && token.trim());
+  if (!primary) {
+    return null;
+  }
+  const normalized = primary.trim();
+  const lower = normalized.toLowerCase();
+  if (lower === "today" || lower === "yesterday") {
+    return { start: normalized, end: normalized };
+  }
+  if (lower === "now") {
+    return { start: normalized, end: normalized };
+  }
+  if (lower === "this week" || lower === "this month") {
+    return { start: normalized, end: "now" };
+  }
+  if (lower.startsWith("last ") || lower.startsWith("past ")) {
+    return { start: normalized, end: "now" };
+  }
+  return { start: normalized, end: "now" };
+}
+
 function clampConfidence(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return 0;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+function detectRequestedItemCount(tokenData, query) {
+  const rawTokens = Array.isArray(tokenData?.tokens) ? tokenData.tokens : [];
+  for (let index = 0; index < rawTokens.length; index += 1) {
+    const token = rawTokens[index];
+    if (typeof token !== "string") {
+      continue;
+    }
+    if (!/^\d+$/.test(token.trim())) {
+      continue;
+    }
+    const previous = rawTokens[index - 1];
+    if (typeof previous === "string") {
+      const normalizedPrev = previous.toLowerCase();
+      if (["top", "last", "recent", "open", "show", "delete"].includes(normalizedPrev)) {
+        const parsed = Number.parseInt(token, 10);
+        const normalized = normalizeMaxItems(parsed);
+        if (normalized) {
+          return normalized;
+        }
+      }
+    }
+  }
+  if (typeof query === "string" && query) {
+    const match = query.match(/(?:top|last|recent|open|show|delete)\s+(\d{1,3})/i);
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10);
+      const normalized = normalizeMaxItems(parsed);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return null;
 }
 
 function normalizeTopics(input) {
@@ -543,12 +604,18 @@ function detectPresetFromRange(startTime, endTime, now = Date.now()) {
 function normalizeTimeRange(rawRange, now = Date.now(), tokenData = null) {
   const defaultRange = { startTime: 0, endTime: now, preset: "any", description: "all time" };
   const fallbackTokens = Array.isArray(tokenData?.timeTokens) ? tokenData.timeTokens : [];
-  const startValue =
-    rawRange && typeof rawRange.start === "string" && rawRange.start.trim()
-      ? rawRange.start
-      : fallbackTokens[0];
-  const endValue =
-    rawRange && typeof rawRange.end === "string" && rawRange.end.trim() ? rawRange.end : undefined;
+  const tokenRange = buildDateRangeFromTokens(tokenData);
+
+  let startValue = tokenRange?.start;
+  let endValue = tokenRange?.end;
+
+  if (!startValue) {
+    startValue =
+      rawRange && typeof rawRange.start === "string" && rawRange.start.trim() ? rawRange.start : fallbackTokens[0];
+  }
+  if (!endValue) {
+    endValue = rawRange && typeof rawRange.end === "string" && rawRange.end.trim() ? rawRange.end : undefined;
+  }
 
   let startBoundary = interpretBoundary(startValue, "start", now);
   let endBoundary = interpretBoundary(endValue, "end", now);
@@ -575,7 +642,7 @@ function normalizeTimeRange(rawRange, now = Date.now(), tokenData = null) {
   let endTime = endBoundary?.time ?? defaultRange.endTime;
   let preset = startBoundary?.preset || endBoundary?.preset || defaultRange.preset;
   let description =
-    startBoundary?.description || endBoundary?.description || fallbackTokens[0] || defaultRange.description;
+    startBoundary?.description || endBoundary?.description || tokenRange?.start || fallbackTokens[0] || defaultRange.description;
 
   if (!Number.isFinite(startTime) || startTime < 0) {
     startTime = 0;
@@ -594,6 +661,30 @@ function normalizeTimeRange(rawRange, now = Date.now(), tokenData = null) {
     description = describeTimeRange({ preset: derivedPreset, startTime, endTime }, now);
   }
   return { startTime, endTime, preset: derivedPreset, description };
+}
+
+function interpretTokensFirst(query, tokenData, now = Date.now()) {
+  const queryText = typeof query === "string" ? query.trim() : "";
+  const action = resolveActionFromTokens(tokenData) || detectActionTokens(queryText)[0] || null;
+  if (!action) {
+    return null;
+  }
+  const topics = Array.isArray(tokenData?.topicTokens) ? tokenData.topicTokens.slice(0, 8) : [];
+  const maxItems = detectRequestedItemCount(tokenData, queryText) || 20;
+  const timeRangeInput = buildDateRangeFromTokens(tokenData);
+  const timeRange = normalizeTimeRange(timeRangeInput, now, tokenData);
+  const queryKeywords = extractQueryKeywords(queryText);
+  const confidenceBase = 0.6 + (topics.length ? 0.15 : 0) + (timeRangeInput ? 0.1 : 0);
+  const confidence = clampConfidence(Math.min(0.95, confidenceBase));
+  return {
+    confidence,
+    action,
+    topics,
+    maxItems,
+    timeRange,
+    rawQuery: queryText,
+    queryKeywords,
+  };
 }
 
 function describeTimeRange(range, now = Date.now()) {
@@ -847,28 +938,31 @@ async function collectHistoryEntries(topics, range, options = {}) {
 
 function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "", tokenData = null) {
   const confidence = clampConfidence(parsed?.confidence);
-  let action = normalizeAction(parsed?.action);
   const tokenAction = resolveActionFromTokens(tokenData);
-  if (!action && tokenAction) {
-    action = tokenAction;
+  let action = tokenAction || normalizeAction(parsed?.action);
+  if (!action) {
+    const detected = detectActionTokens(originalQuery);
+    action = detected.length ? detected[0] : null;
   }
-  let topics = normalizeTopics(parsed?.topics);
+  const promptTopics = normalizeTopics(parsed?.topics);
   const tokenTopics = Array.isArray(tokenData?.topicTokens) ? tokenData.topicTokens.slice(0, 8) : [];
-  if (topics.length) {
-    for (const topic of tokenTopics) {
+  let topics = tokenTopics.slice();
+  if (!topics.length && promptTopics.length) {
+    topics = promptTopics.slice(0, 8);
+  } else {
+    for (const topic of promptTopics) {
       if (!topics.includes(topic)) {
         topics.push(topic);
       }
     }
     topics = topics.slice(0, 8);
-  } else if (tokenTopics.length) {
-    topics = tokenTopics.slice(0, 8);
   }
   let maxItems = normalizeMaxItems(parsed?.maxItems);
   if (!maxItems) {
     maxItems = 20;
   }
-  const timeRange = normalizeTimeRange(parsed?.dateRange, now, tokenData);
+  const effectiveRange = buildDateRangeFromTokens(tokenData) || parsed?.dateRange || null;
+  const timeRange = normalizeTimeRange(effectiveRange, now, tokenData);
   const queryText = typeof originalQuery === "string" ? originalQuery.trim() : "";
   const queryKeywords = extractQueryKeywords(queryText);
   return {
@@ -1074,8 +1168,13 @@ export function createHistoryAssistantService() {
   }
 
   async function runPrompt(query) {
-    const session = await ensureSession();
     const tokenData = buildQueryTokenData(query);
+    const nowTs = Date.now();
+    const tokenInterpretation = interpretTokensFirst(query, tokenData, nowTs);
+    if (tokenInterpretation && tokenInterpretation.confidence >= 0.7) {
+      return tokenInterpretation;
+    }
+    const session = await ensureSession();
     const candidateLimits = [
       PROMPT_HISTORY_SAMPLE_LIMIT,
       Math.floor(PROMPT_HISTORY_SAMPLE_LIMIT / 2),
@@ -1131,6 +1230,9 @@ export function createHistoryAssistantService() {
         }
         throw error;
       }
+    }
+    if (tokenInterpretation) {
+      return tokenInterpretation;
     }
     throw lastError || new Error("Prompt failed");
   }
