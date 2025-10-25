@@ -94,14 +94,6 @@ function formatBookmarkNotes(entry) {
   return parts.join(" · ");
 }
 
-function createTraversalMeta() {
-  return {
-    bookmarks: [],
-    folderLookup: new Map(),
-    nodeMap: new Map(),
-  };
-}
-
 function normalizeId(value) {
   if (value === null || value === undefined) {
     return null;
@@ -115,100 +107,6 @@ function sanitizeFolderName(name = "") {
 
 function normalizeFolderName(name = "") {
   return sanitizeFolderName(name).toLowerCase();
-}
-
-function flattenBookmarkTree(nodes, ancestry = [], meta = createTraversalMeta()) {
-  if (!Array.isArray(nodes)) {
-    return meta;
-  }
-
-  for (const node of nodes) {
-    if (!node) {
-      continue;
-    }
-
-    const id = normalizeId(node.id);
-    const parentId = normalizeId(
-      node.parentId !== undefined ? node.parentId : ancestry.length ? ancestry[ancestry.length - 1].id : null
-    );
-    const title = typeof node.title === "string" ? node.title : "";
-    const isFolder = !node.url;
-
-    if (!meta.nodeMap.has(id)) {
-      meta.nodeMap.set(id, {
-        id,
-        title,
-        parentId,
-        isFolder,
-        children: Array.isArray(node.children) ? node.children.map((child) => normalizeId(child.id)) : [],
-      });
-    }
-
-    if (Array.isArray(node.children) && node.children.length) {
-      let folderMap = meta.folderLookup.get(id);
-      if (!folderMap) {
-        folderMap = new Map();
-        meta.folderLookup.set(id, folderMap);
-      }
-      for (const child of node.children) {
-        if (!child || child.url) {
-          continue;
-        }
-        const childId = normalizeId(child.id);
-        const childTitle = typeof child.title === "string" ? child.title.trim() : "";
-        const normalized = normalizeFolderName(childTitle);
-        if (normalized) {
-          folderMap.set(normalized, { id: childId, title: childTitle });
-        }
-      }
-    }
-
-    const nextAncestry = isFolder
-      ? [...ancestry, { id, title, parentId }]
-      : ancestry;
-
-    if (node.url) {
-      const folders = ancestry.filter((ancestor) => ancestor && ancestor.title).map((ancestor) => ancestor.title);
-      const entry = {
-        id,
-        title: title || node.url || "Untitled bookmark",
-        url: node.url,
-        dateAdded: typeof node.dateAdded === "number" ? node.dateAdded : null,
-        parentId,
-        parentTitle: ancestry.length ? ancestry[ancestry.length - 1].title || "" : "",
-        path: folders.join(" / "),
-        ancestors: ancestry.map((ancestor) => ({
-          id: ancestor.id,
-          title: ancestor.title,
-          parentId: ancestor.parentId,
-        })),
-      };
-      entry.userNotes = formatBookmarkNotes(entry);
-      meta.bookmarks.push(entry);
-    }
-
-    if (Array.isArray(node.children) && node.children.length) {
-      flattenBookmarkTree(node.children, nextAncestry, meta);
-    }
-  }
-
-  return meta;
-}
-
-function getBookmarkTree() {
-  return new Promise((resolve, reject) => {
-    try {
-      chrome.bookmarks.getTree((nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-          return;
-        }
-        resolve(Array.isArray(nodes) ? nodes : []);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
 }
 
 function getBookmarkChildren(parentId) {
@@ -229,6 +127,93 @@ function getBookmarkChildren(parentId) {
       reject(error);
     }
   });
+}
+
+function getRecentBookmarks(limit) {
+  return new Promise((resolve, reject) => {
+    const max = clampLimit(limit);
+    try {
+      chrome.bookmarks.getRecent(max, (nodes) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(Array.isArray(nodes) ? nodes : []);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function getBookmarkNodeById(id) {
+  return new Promise((resolve, reject) => {
+    const normalizedId = normalizeId(id);
+    if (!normalizedId && normalizedId !== "0") {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.bookmarks.get(normalizedId, (nodes) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(Array.isArray(nodes) && nodes.length ? nodes[0] : null);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function normalizeBookmarkNode(node) {
+  if (!node) {
+    return null;
+  }
+  const id = normalizeId(node.id);
+  if (!id) {
+    return null;
+  }
+  const parentId = normalizeId(node.parentId);
+  const title = typeof node.title === "string" ? node.title : "";
+  const isFolder = !node.url;
+  const children = Array.isArray(node.children)
+    ? node.children.map((child) => normalizeId(child.id)).filter(Boolean)
+    : [];
+  return { id, title, parentId, isFolder, children };
+}
+
+async function getOrFetchBookmarkNode(id, nodeMap) {
+  const normalizedId = normalizeId(id);
+  if (!normalizedId && normalizedId !== "0") {
+    return null;
+  }
+  if (nodeMap.has(normalizedId)) {
+    return nodeMap.get(normalizedId);
+  }
+  const rawNode = await getBookmarkNodeById(normalizedId);
+  const normalizedNode = normalizeBookmarkNode(rawNode);
+  if (normalizedNode) {
+    nodeMap.set(normalizedNode.id, normalizedNode);
+  }
+  return normalizedNode;
+}
+
+async function buildAncestorChain(parentId, nodeMap) {
+  const chain = [];
+  const visited = new Set();
+  let currentId = normalizeId(parentId);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const node = await getOrFetchBookmarkNode(currentId, nodeMap);
+    if (!node) {
+      break;
+    }
+    chain.push(node);
+    currentId = node.parentId;
+  }
+  return chain.reverse();
 }
 
 function clampLimit(limit) {
@@ -542,14 +527,73 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
 }
 
 async function collectRecentBookmarks(limit, excludeIds) {
-  const tree = await getBookmarkTree();
-  const meta = flattenBookmarkTree(tree);
-  const flattened = meta.bookmarks;
-  if (!flattened.length) {
-    return { bookmarks: [], folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
+  const desiredLimit = clampLimit(limit);
+  const excludeSet = excludeIds instanceof Set && excludeIds.size ? excludeIds : null;
+  const requestSize = Math.min(
+    MAX_BOOKMARK_LIMIT,
+    Math.max(desiredLimit * 2, desiredLimit + (excludeSet ? excludeSet.size : 0) + 10)
+  );
+  const recentNodes = await getRecentBookmarks(requestSize);
+  if (!recentNodes.length) {
+    return { bookmarks: [], folderLookup: new Map(), nodeMap: new Map() };
   }
-  const limited = selectMostRecentBookmarks(flattened, limit, excludeIds);
-  return { bookmarks: limited, folderLookup: meta.folderLookup, nodeMap: meta.nodeMap };
+
+  const folderLookup = new Map();
+  const nodeMap = new Map();
+  const bookmarks = [];
+  const seenIds = new Set();
+
+  for (const node of recentNodes) {
+    if (!node || node.url === undefined) {
+      continue;
+    }
+    const bookmarkId = normalizeId(node.id);
+    if (!bookmarkId || seenIds.has(bookmarkId)) {
+      continue;
+    }
+    seenIds.add(bookmarkId);
+    if (excludeSet && excludeSet.has(bookmarkId)) {
+      continue;
+    }
+
+    const ancestry = await buildAncestorChain(node.parentId, nodeMap);
+    const parent = ancestry.length ? ancestry[ancestry.length - 1] : null;
+    const parentId = normalizeId(node.parentId);
+    if (parentId && !folderLookup.has(parentId)) {
+      folderLookup.set(parentId, new Map());
+    }
+
+    const ancestors = ancestry.map((ancestor) => ({
+      id: ancestor.id,
+      title: ancestor.title,
+      parentId: ancestor.parentId,
+    }));
+    const path = ancestors.map((ancestor) => ancestor.title).filter(Boolean).join(" / ");
+    const entry = {
+      id: bookmarkId,
+      title: typeof node.title === "string" && node.title ? node.title : node.url || "Untitled bookmark",
+      url: typeof node.url === "string" ? node.url : "",
+      dateAdded: typeof node.dateAdded === "number" ? node.dateAdded : null,
+      parentId,
+      parentTitle: parent?.title || "",
+      path,
+      ancestors,
+    };
+    entry.userNotes = formatBookmarkNotes(entry);
+
+    nodeMap.set(bookmarkId, {
+      id: bookmarkId,
+      title: entry.title,
+      parentId,
+      isFolder: false,
+      children: [],
+    });
+
+    bookmarks.push(entry);
+  }
+
+  const limited = selectMostRecentBookmarks(bookmarks, desiredLimit, excludeSet);
+  return { bookmarks: limited, folderLookup, nodeMap };
 }
 
 export function createBookmarkOrganizerService(options = {}) {
