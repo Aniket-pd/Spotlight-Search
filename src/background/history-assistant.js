@@ -46,6 +46,85 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
 const MAX_ITEMS_PER_SESSION = 12;
 const MAX_LOG_ENTRIES = 25;
+const TOPIC_STOP_WORDS = new Set([
+  "a",
+  "about",
+  "again",
+  "all",
+  "an",
+  "and",
+  "any",
+  "back",
+  "delete",
+  "find",
+  "for",
+  "from",
+  "go",
+  "goes",
+  "history",
+  "hour",
+  "hours",
+  "i",
+  "in",
+  "last",
+  "me",
+  "month",
+  "months",
+  "my",
+  "need",
+  "of",
+  "open",
+  "past",
+  "please",
+  "recent",
+  "remove",
+  "reopen",
+  "resume",
+  "search",
+  "show",
+  "tab",
+  "tabs",
+  "that",
+  "the",
+  "these",
+  "this",
+  "those",
+  "to",
+  "today",
+  "view",
+  "want",
+  "week",
+  "weeks",
+  "yesterday",
+]);
+
+function extractKeywords(topics) {
+  if (!Array.isArray(topics) || topics.length === 0) {
+    return [];
+  }
+  const keywords = [];
+  for (const topic of topics) {
+    if (typeof topic !== "string") {
+      continue;
+    }
+    const trimmed = topic.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const parts = trimmed
+      .toLowerCase()
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      if (part.length < 3 || TOPIC_STOP_WORDS.has(part)) {
+        continue;
+      }
+      keywords.push(part);
+    }
+  }
+  return Array.from(new Set(keywords));
+}
 
 function clampConfidence(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -185,6 +264,9 @@ function describeTimeRange(range, now = Date.now()) {
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
     return "all time";
   }
+  if (startTime <= 0) {
+    return "all time";
+  }
   const startDate = new Date(startTime);
   const endDate = new Date(Math.min(endTime, now));
   const sameDay = startDate.toDateString() === endDate.toDateString();
@@ -270,21 +352,37 @@ function groupHistorySessions(entries) {
 }
 
 function filterEntriesByTopics(entries, topics) {
-  if (!topics.length) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return entries || [];
+  }
+  const uniqueKeywords = extractKeywords(topics);
+  if (!uniqueKeywords.length) {
     return entries;
   }
-  const normalizedTopics = topics.map((topic) => topic.toLowerCase());
-  return entries.filter((entry) => {
+  const filtered = entries.filter((entry) => {
     const title = (entry.title || "").toLowerCase();
     const url = (entry.url || "").toLowerCase();
-    return normalizedTopics.every((topic) => title.includes(topic) || url.includes(topic));
+    return uniqueKeywords.some((keyword) => title.includes(keyword) || url.includes(keyword));
   });
+  return filtered.length ? filtered : entries;
+}
+
+function buildTopicLabel(topics) {
+  if (!Array.isArray(topics) || topics.length === 0) {
+    return "everything";
+  }
+  const uniqueKeywords = extractKeywords(topics);
+  if (uniqueKeywords.length) {
+    return uniqueKeywords.slice(0, 4).join(", ");
+  }
+  const fallback = topics
+    .map((topic) => (typeof topic === "string" ? topic.trim() : ""))
+    .filter(Boolean);
+  return fallback.length ? fallback.join(", ") : "everything";
 }
 
 function buildAckMessage(action, interpretation, resultCount, timeLabel) {
-  const topicLabel = interpretation.topics.length
-    ? interpretation.topics.join(", ")
-    : "everything";
+  const topicLabel = buildTopicLabel(interpretation.topics);
   const rangeLabel = timeLabel || describeTimeRange(interpretation.timeRange);
   if (action === "search") {
     if (!resultCount) {
@@ -318,7 +416,8 @@ function logAssistantAction(log, entry) {
 }
 
 async function collectHistoryEntries(topics, range) {
-  const queryText = topics.join(" ");
+  const keywords = extractKeywords(topics);
+  const queryText = keywords.length ? keywords.join(" ") : topics.join(" ");
   const params = {
     text: queryText,
     maxResults: MAX_HISTORY_RESULTS,
