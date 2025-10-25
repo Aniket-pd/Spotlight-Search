@@ -549,7 +549,7 @@ function formatHistorySample(entries, hostCounts) {
     .slice(0, PROMPT_HISTORY_HOST_LIMIT)
     .map(([host, count]) => ({ host, visits: count }));
   return (
-    `History entries JSON (most recent first):\n${JSON.stringify(entryObjects, null, 2)}\n\n` +
+    `History entries JSON (most recent first):\n${JSON.stringify(entryObjects)}\n\n` +
     `Top domains by visit count: ${JSON.stringify(topHosts)}`
   );
 }
@@ -633,6 +633,25 @@ function buildPrompt(query, historySample, now = new Date()) {
 
 }
 
+function isPromptInputTooLargeError(error) {
+  if (!error) {
+    return false;
+  }
+  if (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "OperationError") {
+    const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+    if (message.includes("input") && message.includes("large")) {
+      return true;
+    }
+  }
+  const text = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    text.includes("input is too large") ||
+    text.includes("input too large") ||
+    text.includes("prompt too large") ||
+    text.includes("request too large")
+  );
+}
+
 export function createHistoryAssistantService() {
   let sessionInstance = null;
   let sessionPromise = null;
@@ -682,16 +701,62 @@ export function createHistoryAssistantService() {
 
   async function runPrompt(query) {
     const session = await ensureSession();
-    const historySample = await buildPromptHistorySample();
-    const promptText = buildPrompt(query, historySample);
-    const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      throw new Error("History assistant returned invalid JSON");
+    const candidateLimits = [
+      PROMPT_HISTORY_SAMPLE_LIMIT,
+      Math.floor(PROMPT_HISTORY_SAMPLE_LIMIT / 2),
+      20,
+      10,
+      5,
+      0,
+    ];
+    const limits = [];
+    for (const value of candidateLimits) {
+      const normalized = Math.max(0, Math.floor(value));
+      if (limits.length === 0) {
+        limits.push(normalized);
+        continue;
+      }
+      const previous = limits[limits.length - 1];
+      if (normalized === 0 && previous !== 0) {
+        limits.push(0);
+      } else if (normalized > 0 && normalized < previous) {
+        limits.push(normalized);
+      }
     }
-    return sanitizeInterpretation(parsed);
+    if (limits.length === 0 || limits[limits.length - 1] !== 0) {
+      limits.push(0);
+    }
+    let lastError = null;
+    for (const limit of limits) {
+      let historySample;
+      if (limit > 0) {
+        historySample = await buildPromptHistorySample(limit);
+      } else {
+        historySample = "History sample omitted to satisfy Prompt API input limits.";
+      }
+      const promptText = buildPrompt(query, historySample);
+      try {
+        const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (error) {
+          throw new Error("History assistant returned invalid JSON");
+        }
+        return sanitizeInterpretation(parsed);
+      } catch (error) {
+        lastError = error;
+        if (isPromptInputTooLargeError(error) && limit !== limits[limits.length - 1]) {
+          console.warn(
+            "Spotlight history assistant prompt exceeded input limits; retrying with smaller history sample",
+            { limit, message: error?.message }
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastError || new Error("Prompt failed");
   }
 
   function buildBaseResponse() {
