@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -220,6 +221,125 @@ export function registerMessageHandlers({
         .catch((error) => {
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST") {
+      if (!historyAssistant || typeof historyAssistant.processRequest !== "function") {
+        sendResponse({
+          success: false,
+          error: "History assistant unavailable",
+          requestId: typeof message.requestId === "number" ? message.requestId : null,
+        });
+        return true;
+      }
+      const query = typeof message.query === "string" ? message.query : "";
+      historyAssistant
+        .processRequest({ query })
+        .then((result) => {
+          const payload = result && typeof result === "object" ? result : { success: false };
+          payload.requestId = typeof message.requestId === "number" ? message.requestId : null;
+          if (typeof payload.success !== "boolean") {
+            payload.success = true;
+          }
+          sendResponse(payload);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant failed", error);
+          sendResponse({
+            success: false,
+            error: error?.message || "Unable to process history request",
+            requestId: typeof message.requestId === "number" ? message.requestId : null,
+          });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_DELETE_CONFIRM") {
+      if (!historyAssistant || typeof historyAssistant.confirmDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const token = typeof message.token === "string" ? message.token : "";
+      const selectedIds = Array.isArray(message.selectedIds) ? message.selectedIds : [];
+      historyAssistant
+        .confirmDeletion(token, selectedIds)
+        .then((result) => {
+          const payload = result && typeof result === "object" ? result : { success: true };
+          if (typeof payload.success !== "boolean") {
+            payload.success = true;
+          }
+          sendResponse(payload);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history delete confirmation failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to delete history" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_UNDO_DELETE") {
+      if (!historyAssistant || typeof historyAssistant.undoDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const token = typeof message.token === "string" ? message.token : "";
+      historyAssistant
+        .undoDeletion(token)
+        .then((result) => {
+          const payload = result && typeof result === "object" ? result : { success: true };
+          if (typeof payload.success !== "boolean") {
+            payload.success = true;
+          }
+          sendResponse(payload);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history undo failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to undo" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_OPEN") {
+      if (!historyAssistant || typeof historyAssistant.openUrls !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const urls = Array.isArray(message.urls) ? message.urls : [];
+      historyAssistant
+        .openUrls(urls)
+        .then((result) => {
+          const payload = result && typeof result === "object" ? result : { opened: 0 };
+          payload.success = true;
+          sendResponse(payload);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history open failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to open" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_DELETE_DIRECT") {
+      if (!historyAssistant || typeof historyAssistant.deleteEntries !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const entries = Array.isArray(message.entries) ? message.entries : [];
+      const context = message && typeof message.context === "object" && message.context ? message.context : {};
+      historyAssistant
+        .deleteEntries(entries, context)
+        .then((result) => {
+          const payload = result && typeof result === "object" ? result : { success: true };
+          if (typeof payload.success !== "boolean") {
+            payload.success = true;
+          }
+          sendResponse(payload);
+        })
+        .catch((error) => {
+          console.error("Spotlight: history delete direct failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to delete history" });
         });
       return true;
     }

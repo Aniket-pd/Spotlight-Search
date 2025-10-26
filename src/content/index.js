@@ -51,6 +51,46 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+let historyAssistantEl = null;
+let historyAssistantFormEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantStatusEl = null;
+let historyAssistantResultsEl = null;
+let historyAssistantToggleEl = null;
+let historyAssistantFeedbackEl = null;
+let historyAssistantFollowupEl = null;
+let historyAssistantFollowupTextEl = null;
+let historyAssistantFollowupHintEl = null;
+let historyAssistantConfirmEl = null;
+let historyAssistantConfirmListEl = null;
+let historyAssistantConfirmSubmitEl = null;
+let historyAssistantConfirmCancelEl = null;
+let historyAssistantConfirmTitleEl = null;
+let historyAssistantUndoEl = null;
+let historyAssistantUndoButtonEl = null;
+let historyAssistantUndoTextEl = null;
+let historyAssistantClarifyButtonEl = null;
+let historyAssistantActive = false;
+let historyAssistantRequestId = 0;
+const historyAssistantEntryMap = new Map();
+const HISTORY_ASSISTANT_DEFAULT_FEEDBACK = "Ask me to find, reopen, or clean up history.";
+const HISTORY_ASSISTANT_PLACEHOLDER = "Try \"show news articles from yesterday morning\"";
+const HISTORY_ASSISTANT_CONFIRM_PLACEHOLDER = "Select entries to remove";
+const HISTORY_ASSISTANT_UNDO_TIMEOUT = 60000;
+const historyAssistantState = {
+  visible: false,
+  paused: false,
+  pending: false,
+  feedback: HISTORY_ASSISTANT_DEFAULT_FEEDBACK,
+  followupQuestion: "",
+  followupHint: "",
+  groups: [],
+  confirmation: null,
+  undo: null,
+  rangeLabel: "",
+  topics: [],
+  undoTimer: null,
+};
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -387,6 +427,8 @@ function createOverlay() {
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
+  createHistoryAssistantPanel(inputWrapper);
+
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
@@ -438,6 +480,924 @@ function createOverlay() {
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
+}
+
+function createHistoryAssistantPanel(wrapper) {
+  if (!wrapper || historyAssistantEl) {
+    return;
+  }
+
+  historyAssistantEl = document.createElement("div");
+  historyAssistantEl.className = "spotlight-history-assistant";
+  historyAssistantEl.setAttribute("role", "region");
+  historyAssistantEl.setAttribute("aria-live", "polite");
+  historyAssistantEl.setAttribute("aria-hidden", "true");
+
+  const header = document.createElement("div");
+  header.className = "spotlight-history-assistant-header";
+
+  const title = document.createElement("div");
+  title.className = "spotlight-history-assistant-title";
+  const badge = document.createElement("span");
+  badge.className = "spotlight-history-assistant-badge";
+  badge.textContent = "Smart history";
+  title.appendChild(badge);
+  historyAssistantFeedbackEl = document.createElement("span");
+  historyAssistantFeedbackEl.className = "spotlight-history-assistant-feedback";
+  historyAssistantFeedbackEl.textContent = HISTORY_ASSISTANT_DEFAULT_FEEDBACK;
+  title.appendChild(historyAssistantFeedbackEl);
+  header.appendChild(title);
+
+  historyAssistantToggleEl = document.createElement("button");
+  historyAssistantToggleEl.type = "button";
+  historyAssistantToggleEl.className = "spotlight-history-assistant-toggle";
+  historyAssistantToggleEl.textContent = "Pause";
+  historyAssistantToggleEl.addEventListener("click", handleHistoryAssistantTogglePause);
+  header.appendChild(historyAssistantToggleEl);
+
+  historyAssistantEl.appendChild(header);
+
+  historyAssistantFollowupEl = document.createElement("div");
+  historyAssistantFollowupEl.className = "spotlight-history-assistant-followup";
+  historyAssistantFollowupEl.setAttribute("aria-hidden", "true");
+  historyAssistantFollowupTextEl = document.createElement("span");
+  historyAssistantFollowupTextEl.className = "spotlight-history-assistant-followup-text";
+  historyAssistantFollowupEl.appendChild(historyAssistantFollowupTextEl);
+  historyAssistantFollowupHintEl = document.createElement("span");
+  historyAssistantFollowupHintEl.className = "spotlight-history-assistant-followup-hint";
+  historyAssistantFollowupEl.appendChild(historyAssistantFollowupHintEl);
+  historyAssistantClarifyButtonEl = document.createElement("button");
+  historyAssistantClarifyButtonEl.type = "button";
+  historyAssistantClarifyButtonEl.className = "spotlight-history-assistant-followup-button";
+  historyAssistantClarifyButtonEl.textContent = "Use suggestion";
+  historyAssistantClarifyButtonEl.addEventListener("click", () => {
+    if (!historyAssistantInputEl || !historyAssistantState.followupQuestion) {
+      return;
+    }
+    historyAssistantInputEl.value = historyAssistantState.followupQuestion;
+    historyAssistantInputEl.focus({ preventScroll: true });
+    historyAssistantInputEl.select();
+  });
+  historyAssistantFollowupEl.appendChild(historyAssistantClarifyButtonEl);
+  historyAssistantEl.appendChild(historyAssistantFollowupEl);
+
+  historyAssistantFormEl = document.createElement("form");
+  historyAssistantFormEl.className = "spotlight-history-assistant-form";
+  historyAssistantInputEl = document.createElement("input");
+  historyAssistantInputEl.type = "text";
+  historyAssistantInputEl.className = "spotlight-history-assistant-input";
+  historyAssistantInputEl.setAttribute("placeholder", HISTORY_ASSISTANT_PLACEHOLDER);
+  historyAssistantInputEl.setAttribute("spellcheck", "false");
+  historyAssistantFormEl.appendChild(historyAssistantInputEl);
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "spotlight-history-assistant-submit";
+  submitButton.textContent = "Ask";
+  historyAssistantFormEl.appendChild(submitButton);
+  historyAssistantFormEl.addEventListener("submit", handleHistoryAssistantSubmit);
+  historyAssistantEl.appendChild(historyAssistantFormEl);
+
+  historyAssistantStatusEl = document.createElement("div");
+  historyAssistantStatusEl.className = "spotlight-history-assistant-status";
+  historyAssistantStatusEl.textContent = "";
+  historyAssistantEl.appendChild(historyAssistantStatusEl);
+
+  historyAssistantConfirmEl = document.createElement("div");
+  historyAssistantConfirmEl.className = "spotlight-history-assistant-confirm";
+  historyAssistantConfirmEl.setAttribute("aria-hidden", "true");
+  historyAssistantConfirmTitleEl = document.createElement("div");
+  historyAssistantConfirmTitleEl.className = "spotlight-history-assistant-confirm-title";
+  historyAssistantConfirmEl.appendChild(historyAssistantConfirmTitleEl);
+  historyAssistantConfirmListEl = document.createElement("div");
+  historyAssistantConfirmListEl.className = "spotlight-history-assistant-confirm-list";
+  historyAssistantConfirmListEl.addEventListener("change", handleHistoryAssistantConfirmToggle, true);
+  historyAssistantConfirmEl.appendChild(historyAssistantConfirmListEl);
+  const confirmActions = document.createElement("div");
+  confirmActions.className = "spotlight-history-assistant-confirm-actions";
+  historyAssistantConfirmSubmitEl = document.createElement("button");
+  historyAssistantConfirmSubmitEl.type = "button";
+  historyAssistantConfirmSubmitEl.className = "spotlight-history-assistant-confirm-submit";
+  historyAssistantConfirmSubmitEl.textContent = "Delete selected";
+  historyAssistantConfirmSubmitEl.addEventListener("click", handleHistoryAssistantConfirmSubmit);
+  confirmActions.appendChild(historyAssistantConfirmSubmitEl);
+  historyAssistantConfirmCancelEl = document.createElement("button");
+  historyAssistantConfirmCancelEl.type = "button";
+  historyAssistantConfirmCancelEl.className = "spotlight-history-assistant-confirm-cancel";
+  historyAssistantConfirmCancelEl.textContent = "Cancel";
+  historyAssistantConfirmCancelEl.addEventListener("click", handleHistoryAssistantConfirmCancel);
+  confirmActions.appendChild(historyAssistantConfirmCancelEl);
+  historyAssistantConfirmEl.appendChild(confirmActions);
+  historyAssistantEl.appendChild(historyAssistantConfirmEl);
+
+  historyAssistantResultsEl = document.createElement("div");
+  historyAssistantResultsEl.className = "spotlight-history-assistant-results";
+  historyAssistantResultsEl.addEventListener("click", handleHistoryAssistantActionClick);
+  historyAssistantEl.appendChild(historyAssistantResultsEl);
+
+  historyAssistantUndoEl = document.createElement("div");
+  historyAssistantUndoEl.className = "spotlight-history-assistant-undo";
+  historyAssistantUndoEl.setAttribute("aria-hidden", "true");
+  historyAssistantUndoTextEl = document.createElement("span");
+  historyAssistantUndoTextEl.className = "spotlight-history-assistant-undo-text";
+  historyAssistantUndoEl.appendChild(historyAssistantUndoTextEl);
+  historyAssistantUndoButtonEl = document.createElement("button");
+  historyAssistantUndoButtonEl.type = "button";
+  historyAssistantUndoButtonEl.className = "spotlight-history-assistant-undo-button";
+  historyAssistantUndoButtonEl.textContent = "Undo";
+  historyAssistantUndoButtonEl.addEventListener("click", handleHistoryAssistantUndo);
+  historyAssistantUndoEl.appendChild(historyAssistantUndoButtonEl);
+  historyAssistantEl.appendChild(historyAssistantUndoEl);
+
+  wrapper.appendChild(historyAssistantEl);
+}
+
+function setHistoryAssistantActive(active) {
+  const shouldActivate = Boolean(active);
+  if (historyAssistantActive === shouldActivate) {
+    return;
+  }
+  historyAssistantActive = shouldActivate;
+  if (!shouldActivate) {
+    resetHistoryAssistantState({ keepUndo: false, keepVisibility: false });
+  } else {
+    resetHistoryAssistantState({ keepUndo: false, keepVisibility: true });
+    setHistoryAssistantFeedback(HISTORY_ASSISTANT_DEFAULT_FEEDBACK);
+  }
+  renderHistoryAssistant();
+}
+
+function resetHistoryAssistantState(options = {}) {
+  const { keepUndo = false, keepVisibility = false } = options;
+  historyAssistantState.pending = false;
+  historyAssistantState.feedback = HISTORY_ASSISTANT_DEFAULT_FEEDBACK;
+  historyAssistantState.followupQuestion = "";
+  historyAssistantState.followupHint = "";
+  historyAssistantState.groups = [];
+  historyAssistantState.confirmation = null;
+  historyAssistantState.rangeLabel = "";
+  historyAssistantState.topics = [];
+  historyAssistantEntryMap.clear();
+  if (!keepUndo) {
+    clearHistoryAssistantUndo();
+  }
+  if (!keepVisibility) {
+    historyAssistantState.visible = false;
+  }
+}
+
+function setHistoryAssistantFeedback(message) {
+  historyAssistantState.feedback = message || HISTORY_ASSISTANT_DEFAULT_FEEDBACK;
+  if (historyAssistantFeedbackEl) {
+    historyAssistantFeedbackEl.textContent = historyAssistantState.feedback;
+  }
+}
+
+function setHistoryAssistantFollowup(question, hint) {
+  historyAssistantState.followupQuestion = typeof question === "string" ? question.trim() : "";
+  historyAssistantState.followupHint = typeof hint === "string" ? hint.trim() : "";
+  renderHistoryAssistantFollowup();
+}
+
+function renderHistoryAssistant() {
+  if (!historyAssistantEl) {
+    return;
+  }
+  const visible = historyAssistantActive;
+  historyAssistantState.visible = visible;
+  historyAssistantEl.classList.toggle("visible", visible);
+  historyAssistantEl.setAttribute("aria-hidden", visible ? "false" : "true");
+  if (!visible) {
+    return;
+  }
+
+  historyAssistantEl.classList.toggle("paused", historyAssistantState.paused);
+  historyAssistantEl.classList.toggle("pending", historyAssistantState.pending);
+
+  if (historyAssistantToggleEl) {
+    historyAssistantToggleEl.textContent = historyAssistantState.paused ? "Resume" : "Pause";
+  }
+
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.disabled = historyAssistantState.paused || historyAssistantState.pending;
+    const placeholder = historyAssistantState.paused
+      ? "Assistant is paused"
+      : HISTORY_ASSISTANT_PLACEHOLDER;
+    historyAssistantInputEl.setAttribute("placeholder", placeholder);
+  }
+
+  setHistoryAssistantFeedback(historyAssistantState.feedback);
+
+  if (historyAssistantStatusEl) {
+    historyAssistantStatusEl.textContent = historyAssistantState.pending
+      ? "Thinking…"
+      : formatHistoryAssistantStatusLabel();
+  }
+
+  renderHistoryAssistantFollowup();
+  renderHistoryAssistantConfirmation();
+  renderHistoryAssistantGroups();
+  renderHistoryAssistantUndo();
+}
+
+function renderHistoryAssistantFollowup() {
+  if (!historyAssistantFollowupEl) {
+    return;
+  }
+  const hasQuestion = Boolean(historyAssistantState.followupQuestion);
+  historyAssistantFollowupEl.classList.toggle("visible", hasQuestion);
+  historyAssistantFollowupEl.setAttribute("aria-hidden", hasQuestion ? "false" : "true");
+  if (!hasQuestion) {
+    if (historyAssistantFollowupTextEl) {
+      historyAssistantFollowupTextEl.textContent = "";
+    }
+    if (historyAssistantFollowupHintEl) {
+      historyAssistantFollowupHintEl.textContent = "";
+    }
+    return;
+  }
+  if (historyAssistantFollowupTextEl) {
+    historyAssistantFollowupTextEl.textContent = historyAssistantState.followupQuestion;
+  }
+  if (historyAssistantFollowupHintEl) {
+    historyAssistantFollowupHintEl.textContent = historyAssistantState.followupHint || "";
+  }
+  if (historyAssistantClarifyButtonEl) {
+    historyAssistantClarifyButtonEl.disabled = historyAssistantState.paused;
+  }
+}
+
+function formatHistoryAssistantStatusLabel() {
+  const parts = [];
+  if (historyAssistantState.rangeLabel) {
+    parts.push(historyAssistantState.rangeLabel);
+  }
+  if (Array.isArray(historyAssistantState.topics) && historyAssistantState.topics.length) {
+    parts.push(historyAssistantState.topics.join(", "));
+  }
+  return parts.join(" · ");
+}
+
+function renderHistoryAssistantGroups() {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  historyAssistantEntryMap.clear();
+  if (!historyAssistantActive || historyAssistantState.pending) {
+    return;
+  }
+  const groups = Array.isArray(historyAssistantState.groups) ? historyAssistantState.groups : [];
+  if (!groups.length) {
+    const empty = document.createElement("div");
+    empty.className = "spotlight-history-assistant-empty";
+    empty.textContent = "No matching history yet";
+    historyAssistantResultsEl.appendChild(empty);
+    return;
+  }
+  groups.forEach((group) => {
+    if (!group || !group.entries || !group.entries.length) {
+      return;
+    }
+    const groupEl = document.createElement("div");
+    groupEl.className = "spotlight-history-group";
+    groupEl.dataset.groupId = String(group.id || "");
+
+    const header = document.createElement("div");
+    header.className = "spotlight-history-group-header";
+    const title = document.createElement("div");
+    title.className = "spotlight-history-group-title";
+    const label = document.createElement("span");
+    label.className = "spotlight-history-group-label";
+    label.textContent = group.label || "History";
+    title.appendChild(label);
+    if (group.timeWindow) {
+      const timeSpan = document.createElement("span");
+      timeSpan.className = "spotlight-history-group-time";
+      timeSpan.textContent = group.timeWindow;
+      title.appendChild(timeSpan);
+    }
+    header.appendChild(title);
+
+    const actions = document.createElement("div");
+    actions.className = "spotlight-history-group-actions";
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "spotlight-history-group-action";
+    openButton.dataset.historyAction = "open-group";
+    openButton.dataset.groupId = String(group.id || "");
+    openButton.textContent = "Open";
+    openButton.disabled = historyAssistantState.paused;
+    actions.appendChild(openButton);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "spotlight-history-group-action destructive";
+    deleteButton.dataset.historyAction = "delete-group";
+    deleteButton.dataset.groupId = String(group.id || "");
+    deleteButton.textContent = "Delete";
+    deleteButton.disabled = historyAssistantState.paused;
+    actions.appendChild(deleteButton);
+    header.appendChild(actions);
+
+    groupEl.appendChild(header);
+
+    const list = document.createElement("ul");
+    list.className = "spotlight-history-group-list";
+    group.entries.forEach((entry) => {
+      if (!entry || !entry.id || !entry.url) {
+        return;
+      }
+      historyAssistantEntryMap.set(String(entry.id), entry);
+      const item = document.createElement("li");
+      item.className = "spotlight-history-entry";
+      item.dataset.entryId = String(entry.id);
+
+      const main = document.createElement("div");
+      main.className = "spotlight-history-entry-main";
+      const titleEl = document.createElement("div");
+      titleEl.className = "spotlight-history-entry-title";
+      titleEl.textContent = entry.title || entry.url;
+      main.appendChild(titleEl);
+      const urlEl = document.createElement("div");
+      urlEl.className = "spotlight-history-entry-url";
+      urlEl.textContent = entry.host || entry.url;
+      urlEl.title = entry.url;
+      main.appendChild(urlEl);
+      item.appendChild(main);
+
+      const meta = document.createElement("div");
+      meta.className = "spotlight-history-entry-meta";
+      if (entry.timeLabel) {
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "spotlight-history-entry-time";
+        timeSpan.textContent = entry.timeLabel;
+        meta.appendChild(timeSpan);
+      }
+      const actionGroup = document.createElement("div");
+      actionGroup.className = "spotlight-history-entry-actions";
+      const openEntry = document.createElement("button");
+      openEntry.type = "button";
+      openEntry.className = "spotlight-history-entry-action";
+      openEntry.dataset.historyAction = "open-entry";
+      openEntry.dataset.entryId = String(entry.id);
+      openEntry.textContent = "Open";
+      openEntry.disabled = historyAssistantState.paused;
+      actionGroup.appendChild(openEntry);
+      const deleteEntry = document.createElement("button");
+      deleteEntry.type = "button";
+      deleteEntry.className = "spotlight-history-entry-action destructive";
+      deleteEntry.dataset.historyAction = "delete-entry";
+      deleteEntry.dataset.entryId = String(entry.id);
+      deleteEntry.textContent = "Delete";
+      deleteEntry.disabled = historyAssistantState.paused;
+      actionGroup.appendChild(deleteEntry);
+      meta.appendChild(actionGroup);
+      item.appendChild(meta);
+
+      list.appendChild(item);
+    });
+
+    groupEl.appendChild(list);
+    historyAssistantResultsEl.appendChild(groupEl);
+  });
+}
+
+function renderHistoryAssistantConfirmation() {
+  if (!historyAssistantConfirmEl) {
+    return;
+  }
+  const confirmation = historyAssistantState.confirmation;
+  const shouldShow = Boolean(
+    historyAssistantActive &&
+      confirmation &&
+      confirmation.entries &&
+      confirmation.entries.length
+  );
+  historyAssistantConfirmEl.classList.toggle("visible", shouldShow);
+  historyAssistantConfirmEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    if (historyAssistantConfirmListEl) {
+      historyAssistantConfirmListEl.innerHTML = "";
+    }
+    if (historyAssistantConfirmTitleEl) {
+      historyAssistantConfirmTitleEl.textContent = HISTORY_ASSISTANT_CONFIRM_PLACEHOLDER;
+    }
+    if (historyAssistantConfirmSubmitEl) {
+      historyAssistantConfirmSubmitEl.disabled = true;
+    }
+    return;
+  }
+
+  const entries = confirmation.entries || [];
+  const selected = confirmation.selected || new Set(entries.map((entry) => entry.id));
+  confirmation.selected = selected;
+
+  if (historyAssistantConfirmTitleEl) {
+    const summary = confirmation.summary || `Delete ${entries.length} item${entries.length === 1 ? "" : "s"}`;
+    historyAssistantConfirmTitleEl.textContent = summary;
+  }
+
+  if (historyAssistantConfirmListEl) {
+    historyAssistantConfirmListEl.innerHTML = "";
+    entries.forEach((entry) => {
+      const row = document.createElement("label");
+      row.className = "spotlight-history-confirm-item";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "spotlight-history-confirm-checkbox";
+      checkbox.dataset.entryId = String(entry.id);
+      checkbox.checked = selected.has(entry.id);
+      checkbox.disabled = historyAssistantState.pending;
+      row.appendChild(checkbox);
+      const title = document.createElement("span");
+      title.className = "spotlight-history-confirm-title";
+      title.textContent = entry.title || entry.url;
+      row.appendChild(title);
+      const meta = document.createElement("span");
+      meta.className = "spotlight-history-confirm-meta";
+      const metaParts = [];
+      if (entry.host) {
+        metaParts.push(entry.host);
+      }
+      if (entry.timeLabel) {
+        metaParts.push(entry.timeLabel);
+      }
+      meta.textContent = metaParts.join(" · ");
+      row.appendChild(meta);
+      historyAssistantConfirmListEl.appendChild(row);
+    });
+  }
+
+  if (historyAssistantConfirmSubmitEl) {
+    historyAssistantConfirmSubmitEl.disabled = selected.size === 0 || historyAssistantState.pending;
+    historyAssistantConfirmSubmitEl.textContent = confirmation.direct ? "Delete now" : "Delete selected";
+  }
+  if (historyAssistantConfirmCancelEl) {
+    historyAssistantConfirmCancelEl.disabled = historyAssistantState.pending;
+  }
+}
+
+function clearHistoryAssistantUndo() {
+  if (historyAssistantState.undoTimer) {
+    clearTimeout(historyAssistantState.undoTimer);
+    historyAssistantState.undoTimer = null;
+  }
+  historyAssistantState.undo = null;
+  renderHistoryAssistantUndo();
+}
+
+function scheduleHistoryAssistantUndo(undo) {
+  historyAssistantState.undo = undo;
+  renderHistoryAssistantUndo();
+  if (historyAssistantState.undoTimer) {
+    clearTimeout(historyAssistantState.undoTimer);
+  }
+  if (undo && undo.expiresAt) {
+    const delay = Math.max(0, undo.expiresAt - Date.now());
+    historyAssistantState.undoTimer = setTimeout(() => {
+      historyAssistantState.undoTimer = null;
+      historyAssistantState.undo = null;
+      renderHistoryAssistantUndo();
+    }, delay);
+  }
+}
+
+function renderHistoryAssistantUndo() {
+  if (!historyAssistantUndoEl) {
+    return;
+  }
+  const undo = historyAssistantState.undo;
+  const visible = Boolean(undo);
+  historyAssistantUndoEl.classList.toggle("visible", visible);
+  historyAssistantUndoEl.setAttribute("aria-hidden", visible ? "false" : "true");
+  if (!visible) {
+    if (historyAssistantUndoTextEl) {
+      historyAssistantUndoTextEl.textContent = "";
+    }
+    if (historyAssistantUndoButtonEl) {
+      historyAssistantUndoButtonEl.disabled = true;
+    }
+    return;
+  }
+  if (historyAssistantUndoTextEl) {
+    historyAssistantUndoTextEl.textContent = undo.message || "Undo last delete";
+  }
+  if (historyAssistantUndoButtonEl) {
+    historyAssistantUndoButtonEl.disabled = historyAssistantState.pending;
+  }
+}
+
+function applyHistoryAssistantResponse(response) {
+  if (!response || typeof response !== "object") {
+    setHistoryAssistantFeedback("History assistant unavailable.");
+    historyAssistantState.groups = [];
+    renderHistoryAssistant();
+    return;
+  }
+
+  const success = response.success !== false;
+  if (!success) {
+    const errorMessage = typeof response.error === "string" && response.error ? response.error : "History assistant unavailable.";
+    setHistoryAssistantFeedback(errorMessage);
+    historyAssistantState.groups = [];
+    historyAssistantState.confirmation = null;
+    setHistoryAssistantFollowup("", "");
+    renderHistoryAssistant();
+    return;
+  }
+
+  if (Array.isArray(response.groups)) {
+    historyAssistantState.groups = response.groups.map((group) => ({
+      id: group?.id || "",
+      label: typeof group?.label === "string" ? group.label : "History",
+      timeWindow: typeof group?.timeWindow === "string" ? group.timeWindow : "",
+      entries: Array.isArray(group?.entries)
+        ? group.entries
+            .map((entry) => ({
+              id: entry?.id || entry?.url || "",
+              title: typeof entry?.title === "string" ? entry.title : entry?.url || "Untitled",
+              url: entry?.url || "",
+              host: typeof entry?.host === "string" ? entry.host : "",
+              timeLabel: typeof entry?.timeLabel === "string" ? entry.timeLabel : "",
+            }))
+            .filter((entry) => entry.id && entry.url)
+        : [],
+    }));
+  } else {
+    historyAssistantState.groups = [];
+  }
+
+  historyAssistantState.rangeLabel = typeof response.rangeLabel === "string" ? response.rangeLabel : "";
+  historyAssistantState.topics = Array.isArray(response.topics)
+    ? response.topics.map((topic) => (typeof topic === "string" ? topic : "")).filter(Boolean)
+    : [];
+
+  if (response.action === "clarify") {
+    setHistoryAssistantFollowup(response.followupQuestion || "", response.followupHint || "");
+  } else {
+    setHistoryAssistantFollowup("", "");
+  }
+
+  if (response.action === "delete" && response.requiresConfirmation && response.confirmation) {
+    const confirmationEntries = Array.isArray(response.confirmation.entries)
+      ? response.confirmation.entries
+          .map((entry) => ({
+            id: entry?.id || entry?.url || "",
+            title: typeof entry?.title === "string" ? entry.title : entry?.url || "Untitled",
+            url: entry?.url || "",
+            host: typeof entry?.host === "string" ? entry.host : "",
+            timeLabel: typeof entry?.timeLabel === "string" ? entry.timeLabel : "",
+          }))
+          .filter((entry) => entry.id && entry.url)
+      : [];
+    historyAssistantState.confirmation = {
+      token: typeof response.confirmation.token === "string" ? response.confirmation.token : "",
+      deleteScope: typeof response.confirmation.deleteScope === "string" ? response.confirmation.deleteScope : "urls",
+      rangeLabel: typeof response.confirmation.rangeLabel === "string" ? response.confirmation.rangeLabel : response.rangeLabel || "",
+      summary: typeof response.confirmation.summary === "string" ? response.confirmation.summary : response.feedback || "",
+      entries: confirmationEntries,
+      selected: new Set(confirmationEntries.map((entry) => entry.id)),
+      direct: false,
+    };
+  } else {
+    historyAssistantState.confirmation = null;
+  }
+
+  if (response.action === "delete" && !response.requiresConfirmation && response.undoToken) {
+    const undoMessage = response.feedback || "Removed items";
+    scheduleHistoryAssistantUndo({
+      token: response.undoToken,
+      message: undoMessage,
+      expiresAt: Date.now() + HISTORY_ASSISTANT_UNDO_TIMEOUT,
+    });
+  } else if (response.undoToken) {
+    scheduleHistoryAssistantUndo({
+      token: response.undoToken,
+      message: response.feedback || "Removed items",
+      expiresAt: Date.now() + HISTORY_ASSISTANT_UNDO_TIMEOUT,
+    });
+  } else {
+    if (!response.undoToken) {
+      clearHistoryAssistantUndo();
+    }
+  }
+
+  const feedback = typeof response.feedback === "string" && response.feedback ? response.feedback : HISTORY_ASSISTANT_DEFAULT_FEEDBACK;
+  setHistoryAssistantFeedback(feedback);
+  renderHistoryAssistant();
+}
+
+function handleHistoryAssistantTogglePause() {
+  historyAssistantState.paused = !historyAssistantState.paused;
+  if (historyAssistantState.paused) {
+    historyAssistantState.pending = false;
+    setHistoryAssistantFeedback("History assistant paused.");
+  } else {
+    setHistoryAssistantFeedback(HISTORY_ASSISTANT_DEFAULT_FEEDBACK);
+  }
+  renderHistoryAssistant();
+}
+
+function handleHistoryAssistantSubmit(event) {
+  event.preventDefault();
+  if (!historyAssistantInputEl || historyAssistantState.paused) {
+    return;
+  }
+  const query = historyAssistantInputEl.value.trim();
+  if (!query) {
+    setHistoryAssistantFeedback("Try describing what to find, open, or delete.");
+    return;
+  }
+  sendHistoryAssistantRequest(query);
+}
+
+function sendHistoryAssistantRequest(query) {
+  historyAssistantRequestId += 1;
+  const requestId = historyAssistantRequestId;
+  historyAssistantState.pending = true;
+  historyAssistantState.confirmation = null;
+  clearHistoryAssistantUndo();
+  setHistoryAssistantFeedback("Working on it…");
+  renderHistoryAssistant();
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_ASSIST", query, requestId },
+    (response) => {
+      if (response && typeof response.requestId === "number" && response.requestId !== requestId) {
+        return;
+      }
+      historyAssistantState.pending = false;
+      if (chrome.runtime.lastError) {
+        setHistoryAssistantFeedback("History assistant unavailable.");
+        renderHistoryAssistant();
+        return;
+      }
+      applyHistoryAssistantResponse(response);
+    }
+  );
+}
+
+function handleHistoryAssistantActionClick(event) {
+  const target = event.target;
+  if (!target || !(target instanceof Element)) {
+    return;
+  }
+  const actionButton = target.closest("[data-history-action]");
+  if (!actionButton) {
+    return;
+  }
+  const action = actionButton.dataset.historyAction;
+  if (!action) {
+    return;
+  }
+  if (historyAssistantState.paused) {
+    event.preventDefault();
+    return;
+  }
+
+  if (action === "open-entry") {
+    const entryId = actionButton.dataset.entryId || "";
+    const entry = historyAssistantEntryMap.get(entryId);
+    if (!entry || !entry.url) {
+      return;
+    }
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_OPEN", urls: [entry.url] }, (response) => {
+      if (chrome.runtime.lastError || !response || response.success === false) {
+        setHistoryAssistantFeedback("Couldn't open that page.");
+        return;
+      }
+      setHistoryAssistantFeedback("Opened history item.");
+    });
+    return;
+  }
+
+  if (action === "open-group") {
+    const groupId = actionButton.dataset.groupId || "";
+    const group = findHistoryAssistantGroup(groupId);
+    if (!group || !group.entries || !group.entries.length) {
+      return;
+    }
+    const urls = group.entries.map((entry) => entry.url).filter(Boolean);
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_OPEN", urls }, (response) => {
+      if (chrome.runtime.lastError || !response || response.success === false) {
+        setHistoryAssistantFeedback("Couldn't reopen that session.");
+        return;
+      }
+      setHistoryAssistantFeedback(`Opened ${urls.length} item${urls.length === 1 ? "" : "s"}.`);
+    });
+    return;
+  }
+
+  if (action === "delete-entry") {
+    const entryId = actionButton.dataset.entryId || "";
+    const entry = historyAssistantEntryMap.get(entryId);
+    if (!entry) {
+      return;
+    }
+    startHistoryAssistantConfirmationFromEntries([entry], {
+      summary: `Delete "${entry.title}"?`,
+      direct: true,
+      rangeLabel: historyAssistantState.rangeLabel,
+    });
+    return;
+  }
+
+  if (action === "delete-group") {
+    const groupId = actionButton.dataset.groupId || "";
+    const group = findHistoryAssistantGroup(groupId);
+    if (!group || !group.entries || !group.entries.length) {
+      return;
+    }
+    startHistoryAssistantConfirmationFromEntries(group.entries, {
+      summary: `Delete ${group.entries.length} item${group.entries.length === 1 ? "" : "s"} from ${group.label}?`,
+      direct: true,
+      rangeLabel: group.label,
+    });
+  }
+}
+
+function findHistoryAssistantGroup(groupId) {
+  if (!groupId || !Array.isArray(historyAssistantState.groups)) {
+    return null;
+  }
+  return historyAssistantState.groups.find((group) => group && String(group.id) === String(groupId)) || null;
+}
+
+function startHistoryAssistantConfirmationFromEntries(entries, options = {}) {
+  const sanitized = Array.isArray(entries)
+    ? entries
+        .map((entry) => ({
+          id: entry?.id || entry?.url || "",
+          title: typeof entry?.title === "string" ? entry.title : entry?.url || "Untitled",
+          url: entry?.url || "",
+          host: typeof entry?.host === "string" ? entry.host : "",
+          timeLabel: typeof entry?.timeLabel === "string" ? entry.timeLabel : "",
+        }))
+        .filter((entry) => entry.id && entry.url)
+    : [];
+  if (!sanitized.length) {
+    return;
+  }
+  historyAssistantState.confirmation = {
+    token: typeof options.token === "string" ? options.token : "",
+    deleteScope: typeof options.deleteScope === "string" ? options.deleteScope : "urls",
+    rangeLabel: typeof options.rangeLabel === "string" ? options.rangeLabel : historyAssistantState.rangeLabel,
+    summary: typeof options.summary === "string" ? options.summary : `Delete ${sanitized.length} item${sanitized.length === 1 ? "" : "s"}?`,
+    entries: sanitized,
+    selected: new Set(sanitized.map((entry) => entry.id)),
+    direct: Boolean(options.direct),
+  };
+  renderHistoryAssistant();
+}
+
+function handleHistoryAssistantConfirmToggle(event) {
+  const target = event.target;
+  if (!historyAssistantState.confirmation || !target || target.type !== "checkbox") {
+    return;
+  }
+  const id = target.dataset.entryId || "";
+  if (!id) {
+    return;
+  }
+  if (!historyAssistantState.confirmation.selected) {
+    historyAssistantState.confirmation.selected = new Set();
+  }
+  if (target.checked) {
+    historyAssistantState.confirmation.selected.add(id);
+  } else {
+    historyAssistantState.confirmation.selected.delete(id);
+  }
+  renderHistoryAssistantConfirmation();
+}
+
+function handleHistoryAssistantConfirmSubmit() {
+  const confirmation = historyAssistantState.confirmation;
+  if (!confirmation || historyAssistantState.pending) {
+    return;
+  }
+  const selectedIds = confirmation.selected ? Array.from(confirmation.selected) : confirmation.entries.map((entry) => entry.id);
+  if (!selectedIds.length) {
+    setHistoryAssistantFeedback("Select at least one entry to delete.");
+    return;
+  }
+  historyAssistantState.pending = true;
+  renderHistoryAssistant();
+
+  if (confirmation.direct || !confirmation.token) {
+    const selectedEntries = confirmation.entries.filter((entry) => selectedIds.includes(entry.id));
+    chrome.runtime.sendMessage(
+      {
+        type: "SPOTLIGHT_HISTORY_DELETE_DIRECT",
+        entries: selectedEntries,
+        context: {
+          rangeLabel: confirmation.rangeLabel,
+          topics: historyAssistantState.topics,
+        },
+      },
+      (response) => {
+        historyAssistantState.pending = false;
+        historyAssistantState.confirmation = null;
+        if (chrome.runtime.lastError || !response || response.success === false) {
+          setHistoryAssistantFeedback((response && response.error) || "Unable to delete history.");
+          renderHistoryAssistant();
+          return;
+        }
+        if (Array.isArray(historyAssistantState.groups) && selectedEntries.length) {
+          const removedIds = new Set(selectedEntries.map((entry) => entry.id));
+          historyAssistantState.groups = historyAssistantState.groups
+            .map((group) => ({
+              ...group,
+              entries: Array.isArray(group.entries)
+                ? group.entries.filter((entry) => !removedIds.has(entry.id))
+                : [],
+            }))
+            .filter((group) => group.entries && group.entries.length);
+          removedIds.forEach((id) => {
+            historyAssistantEntryMap.delete(id);
+          });
+        }
+        if (response.undoToken) {
+          scheduleHistoryAssistantUndo({
+            token: response.undoToken,
+            message: response.feedback || "Removed items",
+            expiresAt: Date.now() + HISTORY_ASSISTANT_UNDO_TIMEOUT,
+          });
+        } else {
+          clearHistoryAssistantUndo();
+        }
+        setHistoryAssistantFeedback(response.feedback || "Removed items.");
+        renderHistoryAssistant();
+      }
+    );
+    return;
+  }
+
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_DELETE_CONFIRM", token: confirmation.token, selectedIds },
+    (response) => {
+      historyAssistantState.pending = false;
+      historyAssistantState.confirmation = null;
+      if (chrome.runtime.lastError || !response || response.success === false) {
+        setHistoryAssistantFeedback((response && response.error) || "Unable to delete history.");
+        renderHistoryAssistant();
+        return;
+      }
+      if (Array.isArray(historyAssistantState.groups) && selectedIds.length) {
+        const removedIds = new Set(selectedIds);
+        historyAssistantState.groups = historyAssistantState.groups
+          .map((group) => ({
+            ...group,
+            entries: Array.isArray(group.entries)
+              ? group.entries.filter((entry) => !removedIds.has(entry.id))
+              : [],
+          }))
+          .filter((group) => group.entries && group.entries.length);
+        removedIds.forEach((id) => {
+          historyAssistantEntryMap.delete(id);
+        });
+      }
+      if (response.undoToken) {
+        scheduleHistoryAssistantUndo({
+          token: response.undoToken,
+          message: response.feedback || "Removed items",
+          expiresAt: Date.now() + HISTORY_ASSISTANT_UNDO_TIMEOUT,
+        });
+      } else {
+        clearHistoryAssistantUndo();
+      }
+      setHistoryAssistantFeedback(response.feedback || "Removed items.");
+      renderHistoryAssistant();
+    }
+  );
+}
+
+function handleHistoryAssistantConfirmCancel() {
+  if (historyAssistantState.pending) {
+    return;
+  }
+  historyAssistantState.confirmation = null;
+  renderHistoryAssistant();
+}
+
+function handleHistoryAssistantUndo() {
+  const undo = historyAssistantState.undo;
+  if (!undo || historyAssistantState.pending) {
+    return;
+  }
+  historyAssistantState.pending = true;
+  renderHistoryAssistant();
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_UNDO_DELETE", token: undo.token },
+    (response) => {
+      historyAssistantState.pending = false;
+      historyAssistantState.undo = null;
+      if (chrome.runtime.lastError || !response || response.success === false) {
+        setHistoryAssistantFeedback((response && response.error) || "Unable to undo delete.");
+        renderHistoryAssistant();
+        return;
+      }
+      setHistoryAssistantFeedback(response.feedback || "Restored items to history.");
+      renderHistoryAssistant();
+    }
+  );
 }
 
 function installOverlayGuards() {
@@ -1269,6 +2229,9 @@ async function openOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  setHistoryAssistantActive(false);
+  resetHistoryAssistantState({ keepUndo: false, keepVisibility: false });
+  renderHistoryAssistant();
   pointerNavigationSuspended = true;
 
   if (!shadowHostEl.parentElement) {
@@ -1307,6 +2270,9 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  setHistoryAssistantActive(false);
+  resetHistoryAssistantState({ keepUndo: false, keepVisibility: false });
+  renderHistoryAssistant();
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -1524,6 +2490,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      setHistoryAssistantActive(activeFilter === "history");
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
