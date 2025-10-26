@@ -28,6 +28,8 @@ const RESPONSE_SCHEMA = {
   additionalProperties: false,
 };
 
+const SUMMARY_RESPONSE_SCHEMA = { type: "string" };
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_GAP_MS = 30 * 60 * 1000;
 const MAX_HISTORY_RESULTS = 160;
@@ -37,6 +39,7 @@ const MAX_LOG_ENTRIES = 25;
 const PROMPT_HISTORY_SAMPLE_LIMIT = 60;
 const PROMPT_HISTORY_ENTRY_MAX_LENGTH = 160;
 const PROMPT_HISTORY_HOST_LIMIT = 12;
+const SUMMARY_PROMPT_ENTRY_LIMIT = 30;
 const TOPIC_STOP_WORDS = new Set([
   "a",
   "about",
@@ -122,6 +125,38 @@ const HELP_QUERY_PATTERNS = [
 ];
 
 const HELP_SOFT_SIGNAL_TOKENS = new Set(["how", "can", "what", "you", "me", "this", "do", "able"]);
+
+const IDENTITY_QUERY_PATTERNS = [
+  /\bwho\s+are\s+you\b/i,
+  /\bwhat\s+are\s+you\b/i,
+  /\bwho\s+is\s+this\b/i,
+  /\bwho\s+am\s+i\s+talking\s+to\b/i,
+  /\btell\s+me\s+about\s+yourself\b/i,
+  /\bwhat\s+is\s+your\s+name\b/i,
+  /\bare\s+you\s+(?:a|the)\s+bot\b/i,
+  /\bare\s+you\s+an?\s+assistant\b/i,
+];
+
+const SUMMARY_QUERY_PATTERNS = [
+  /\bsummar(?:ize|ise|y)\b/i,
+  /\bsummary\b/i,
+  /\brecap\b/i,
+  /\boverview\b/i,
+  /\bwhat\s+have\s+i\s+(?:done|been\s+doing)\b/i,
+  /\bwhat\s+did\s+i\s+do\b/i,
+  /\bcatch\s+me\s+up\b/i,
+  /\bhow\s+did\s+my\s+(?:day|week|month)\b/i,
+];
+
+const SUMMARY_TOKENS = new Set([
+  "summary",
+  "summaries",
+  "summarize",
+  "summarise",
+  "recap",
+  "overview",
+  "review",
+]);
 
 function normalizeKeywordList(list) {
   if (!Array.isArray(list)) {
@@ -315,10 +350,73 @@ function detectHelpRequest(query, tokenData) {
 
 function buildHelpAcknowledgement() {
   return (
-    "I can look through your browsing history, reopen recent tabs, or delete entries you choose. " +
+    "I can search your browsing history, reopen recent tabs, summarize what you've been doing, or stage deletions for review. " +
     'Try asking for things like "show the YouTube videos I watched yesterday," ' +
-    '"open my GitHub tabs from last week," or "delete Saturday\'s shopping history."'
+    '"summarize what I did over the last three days," or "delete Saturday\'s shopping history after I confirm."'
   );
+}
+
+function detectIdentityRequest(query, tokenData) {
+  const text = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (text) {
+    for (const pattern of IDENTITY_QUERY_PATTERNS) {
+      if (pattern.test(text)) {
+        return true;
+      }
+    }
+  }
+  const rawTokens = Array.isArray(tokenData?.tokens) ? tokenData.tokens : [];
+  if (!rawTokens.length) {
+    return false;
+  }
+  const lowered = rawTokens
+    .map((token) => (typeof token === "string" ? token.toLowerCase() : ""))
+    .filter(Boolean);
+  if (!lowered.length) {
+    return false;
+  }
+  if (lowered.includes("who") && lowered.includes("you")) {
+    return true;
+  }
+  if (lowered.includes("what") && lowered.includes("you") && !resolveActionFromTokens(tokenData)) {
+    return true;
+  }
+  if (lowered.includes("your") && lowered.includes("name")) {
+    return true;
+  }
+  return false;
+}
+
+function buildIdentityAcknowledgement() {
+  return (
+    "I'm the Smart History Search assistant built into this Spotlight-style extension. " +
+    "I use Chrome's on-device Prompt API to interpret what you ask so I can find, reopen, summarize, or preview deletions from your browsing history."
+  );
+}
+
+function detectSummaryRequest(query, tokenData) {
+  const text = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (text) {
+    for (const pattern of SUMMARY_QUERY_PATTERNS) {
+      if (pattern.test(text)) {
+        return true;
+      }
+    }
+  }
+  const rawTokens = Array.isArray(tokenData?.tokens) ? tokenData.tokens : [];
+  if (!rawTokens.length) {
+    return false;
+  }
+  for (const token of rawTokens) {
+    if (typeof token !== "string") {
+      continue;
+    }
+    const lowered = token.toLowerCase();
+    if (SUMMARY_TOKENS.has(lowered)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildDateRangeFromTokens(tokenData) {
@@ -728,6 +826,7 @@ function interpretTokensFirst(query, tokenData, now = Date.now()) {
   const queryKeywords = extractQueryKeywords(queryText);
   const confidenceBase = 0.6 + (topics.length ? 0.15 : 0) + (timeRangeInput ? 0.1 : 0);
   const confidence = clampConfidence(Math.min(0.95, confidenceBase));
+  const wantsSummary = detectSummaryRequest(queryText, tokenData);
   return {
     confidence,
     action,
@@ -736,6 +835,7 @@ function interpretTokensFirst(query, tokenData, now = Date.now()) {
     timeRange,
     rawQuery: queryText,
     queryKeywords,
+    wantsSummary,
   };
 }
 
@@ -1047,6 +1147,7 @@ function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "", to
   const timeRange = normalizeTimeRange(effectiveRange, now, tokenData);
   const queryText = typeof originalQuery === "string" ? originalQuery.trim() : "";
   const queryKeywords = extractQueryKeywords(queryText);
+  const wantsSummary = detectSummaryRequest(queryText, tokenData);
   return {
     confidence,
     action,
@@ -1055,6 +1156,7 @@ function sanitizeInterpretation(parsed, now = Date.now(), originalQuery = "", to
     timeRange,
     rawQuery: queryText,
     queryKeywords,
+    wantsSummary,
   };
 }
 
@@ -1249,10 +1351,10 @@ export function createHistoryAssistantService() {
     return sessionPromise;
   }
 
-  async function runPrompt(query) {
-    const tokenData = buildQueryTokenData(query);
+  async function runPrompt(query, tokenData = null) {
+    const tokenHints = tokenData || buildQueryTokenData(query);
     const nowTs = Date.now();
-    const tokenInterpretation = interpretTokensFirst(query, tokenData, nowTs);
+    const tokenInterpretation = interpretTokensFirst(query, tokenHints, nowTs);
     if (tokenInterpretation && tokenInterpretation.confidence >= 0.7) {
       return tokenInterpretation;
     }
@@ -1291,7 +1393,7 @@ export function createHistoryAssistantService() {
         historySample = "History sample omitted to satisfy Prompt API input limits.";
       }
       const attemptNow = new Date();
-      const promptText = buildPrompt(query, tokenData, historySample, attemptNow);
+      const promptText = buildPrompt(query, tokenHints, historySample, attemptNow);
       try {
         const raw = await session.prompt(promptText, { responseConstraint: RESPONSE_SCHEMA });
         let parsed;
@@ -1300,7 +1402,7 @@ export function createHistoryAssistantService() {
         } catch (error) {
           throw new Error("History assistant returned invalid JSON");
         }
-        return sanitizeInterpretation(parsed, attemptNow.getTime(), query, tokenData);
+        return sanitizeInterpretation(parsed, attemptNow.getTime(), query, tokenHints);
       } catch (error) {
         lastError = error;
         if (isPromptInputTooLargeError(error) && limit !== limits[limits.length - 1]) {
@@ -1317,6 +1419,62 @@ export function createHistoryAssistantService() {
       return tokenInterpretation;
     }
     throw lastError || new Error("Prompt failed");
+  }
+
+  async function buildHistorySummary(entries, interpretation) {
+    if (!Array.isArray(entries) || !entries.length) {
+      return "";
+    }
+    try {
+      const session = await ensureSession();
+      const sorted = entries
+        .slice()
+        .filter((entry) => entry && typeof entry.url === "string")
+        .sort((a, b) => (b?.lastVisitTime || 0) - (a?.lastVisitTime || 0));
+      const limited = sorted.slice(0, SUMMARY_PROMPT_ENTRY_LIMIT);
+      if (!limited.length) {
+        return "";
+      }
+      const hostCounts = new Map();
+      const payload = limited.map((entry) => {
+        const host = extractHostname(entry.url) || "";
+        if (host) {
+          hostCounts.set(host, (hostCounts.get(host) || 0) + 1);
+        }
+        const lastVisitIso = Number.isFinite(entry.lastVisitTime)
+          ? new Date(entry.lastVisitTime).toISOString()
+          : null;
+        const title = typeof entry.title === "string" && entry.title.trim()
+          ? entry.title.trim().replace(/\s+/g, " ").slice(0, PROMPT_HISTORY_ENTRY_MAX_LENGTH)
+          : entry.url;
+        return {
+          title,
+          host,
+          url: entry.url,
+          lastVisitIso,
+        };
+      });
+      const topDomains = Array.from(hostCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, PROMPT_HISTORY_HOST_LIMIT)
+        .map(([host, visits]) => ({ host, visits }));
+      const topicLabel = buildTopicLabel(interpretation.topics, interpretation.queryKeywords);
+      const rangeLabel = describeTimeRange(interpretation.timeRange);
+      const prompt = [
+        "You are the Smart History Search assistant summarizer.",
+        `Provide a friendly 2-3 sentence recap of the user's browsing focused on ${topicLabel} during ${rangeLabel}.`,
+        "Use only the data provided below. Highlight notable domains or patterns and mention totals when helpful. Avoid inventing URLs or facts that are not present.",
+        `Entries JSON (most recent first):\n${JSON.stringify(payload)}`,
+        `Top domains by frequency: ${JSON.stringify(topDomains)}`,
+        "Respond with plain text only.",
+      ].join("\n\n");
+      const result = await session.prompt(prompt, { responseConstraint: SUMMARY_RESPONSE_SCHEMA });
+      const trimmed = typeof result === "string" ? result.trim() : "";
+      return trimmed;
+    } catch (error) {
+      console.warn("Spotlight history assistant summary failed", error);
+      return "";
+    }
   }
 
   function buildBaseResponse() {
@@ -1344,11 +1502,17 @@ export function createHistoryAssistantService() {
       fallbackKeywords: interpretation.queryKeywords,
     });
     const sessions = groupHistorySessions(entries);
-    const ack = buildAckMessage("show", interpretation, {
+    let ack = buildAckMessage("show", interpretation, {
       count: entries.length,
       totalMatches: entries.length,
       limit,
     });
+    if (interpretation.wantsSummary && entries.length) {
+      const summaryText = await buildHistorySummary(entries, interpretation);
+      if (summaryText) {
+        ack = `${summaryText}\n\n${ack}`.trim();
+      }
+    }
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
       action: "show",
@@ -1617,13 +1781,26 @@ export function createHistoryAssistantService() {
   }
 
   async function handleQuery(query) {
-    const interpretation = await runPrompt(query);
+    const tokenData = buildQueryTokenData(query);
+    const interpretation = await runPrompt(query, tokenData);
     const response = buildBaseResponse();
     response.timeRange = interpretation.timeRange;
     response.topics = interpretation.topics;
     response.maxItems = interpretation.maxItems || null;
     if (!interpretation.action || interpretation.confidence < 0.35) {
-      const tokenData = buildQueryTokenData(query);
+      if (detectIdentityRequest(query, tokenData)) {
+        const ack = buildIdentityAcknowledgement();
+        logAssistantAction(actionLog, {
+          timestamp: Date.now(),
+          action: "info",
+          summary: ack,
+        });
+        response.action = "clarify";
+        response.followUpQuestion = "";
+        response.ack = ack;
+        response.log = actionLog.slice();
+        return response;
+      }
       if (detectHelpRequest(query, tokenData)) {
         const ack = buildHelpAcknowledgement();
         logAssistantAction(actionLog, {
