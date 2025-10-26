@@ -83,14 +83,30 @@ let historyAssistantState = {
   log: [],
   action: null,
 };
-let historyAssistantSelection = null;
 let historyAssistantResultsActive = false;
+let historyAssistantDeleteOverlayEl = null;
+let historyAssistantDeleteDialogEl = null;
+let historyAssistantDeleteListEl = null;
+let historyAssistantDeleteConfirmEl = null;
+let historyAssistantDeleteCancelEl = null;
+let historyAssistantDeleteMessageEl = null;
 
 const HISTORY_SESSION_ACTION_ATTRIBUTE = "data-history-action";
 const HISTORY_SESSION_ID_ATTRIBUTE = "data-history-session-id";
 const HISTORY_ITEM_ID_ATTRIBUTE = "data-history-item-id";
 
 function resetHistoryAssistantState() {
+  const pendingOperationId = historyAssistantState.operationId;
+  if (pendingOperationId) {
+    try {
+      chrome.runtime.sendMessage({
+        type: "SPOTLIGHT_HISTORY_ASSIST_CANCEL_DELETE",
+        operationId: pendingOperationId,
+      });
+    } catch (err) {
+      console.warn("Spotlight: failed to cancel pending history deletion on reset", err);
+    }
+  }
   historyAssistantState = {
     visible: false,
     loading: false,
@@ -103,9 +119,9 @@ function resetHistoryAssistantState() {
     log: [],
     action: null,
   };
-  historyAssistantSelection = null;
   historyAssistantLastRequestId = 0;
   historyAssistantResultsActive = false;
+  hideHistoryAssistantDeleteModal();
 }
 
 function buildHistoryAssistantResultDescription(item, session) {
@@ -360,11 +376,17 @@ function renderHistoryAssistantSessions() {
     return;
   }
   historyAssistantSessionsEl.innerHTML = "";
+  if (historyAssistantState.action === "show") {
+    historyAssistantSessionsEl.classList.remove("has-results");
+    historyAssistantSessionsEl.setAttribute("aria-hidden", "true");
+    return;
+  }
   const sessions = Array.isArray(historyAssistantState.sessions) ? historyAssistantState.sessions : [];
   if (!sessions.length) {
     historyAssistantSessionsEl.classList.remove("has-results");
     return;
   }
+  historyAssistantSessionsEl.setAttribute("aria-hidden", "false");
   historyAssistantSessionsEl.classList.add("has-results");
   sessions.forEach((session) => {
     if (!session) {
@@ -448,86 +470,165 @@ function renderHistoryAssistantSessions() {
   });
 }
 
-function renderHistoryAssistantPendingDeletion() {
-  if (!historyAssistantActionsEl) {
+function ensureHistoryAssistantDeleteModal() {
+  const host = shadowContentEl || shadowRootEl;
+  if (historyAssistantDeleteOverlayEl || !host) {
     return;
   }
-  historyAssistantActionsEl.innerHTML = "";
+  const overlay = document.createElement("div");
+  overlay.className = "spotlight-history-delete-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-hidden", "true");
+
+  const dialog = document.createElement("div");
+  dialog.className = "spotlight-history-delete-dialog";
+  dialog.tabIndex = -1;
+
+  const heading = document.createElement("h2");
+  heading.className = "spotlight-history-delete-heading";
+  const headingId = "spotlight-history-delete-heading";
+  heading.id = headingId;
+  heading.textContent = "Review history cleanup";
+  dialog.appendChild(heading);
+
+  const message = document.createElement("p");
+  message.className = "spotlight-history-delete-message";
+  const messageId = "spotlight-history-delete-message";
+  message.id = messageId;
+  dialog.appendChild(message);
+  dialog.setAttribute("aria-labelledby", headingId);
+  dialog.setAttribute("aria-describedby", messageId);
+
+  const list = document.createElement("ul");
+  list.className = "spotlight-history-delete-preview-list";
+  dialog.appendChild(list);
+
+  const buttons = document.createElement("div");
+  buttons.className = "spotlight-history-delete-buttons";
+
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = "spotlight-history-delete-button confirm";
+  confirm.textContent = "Yes";
+  confirm.addEventListener("click", handleHistoryAssistantConfirmDeletion);
+  buttons.appendChild(confirm);
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "spotlight-history-delete-button cancel";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", handleHistoryAssistantCancelDeletion);
+  buttons.appendChild(cancel);
+
+  dialog.appendChild(buttons);
+  overlay.appendChild(dialog);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      handleHistoryAssistantCancelDeletion();
+    }
+  });
+
+  host.appendChild(overlay);
+
+  historyAssistantDeleteOverlayEl = overlay;
+  historyAssistantDeleteDialogEl = dialog;
+  historyAssistantDeleteListEl = list;
+  historyAssistantDeleteConfirmEl = confirm;
+  historyAssistantDeleteCancelEl = cancel;
+  historyAssistantDeleteMessageEl = message;
+}
+
+function hideHistoryAssistantDeleteModal() {
+  if (!historyAssistantDeleteOverlayEl) {
+    return;
+  }
+  historyAssistantDeleteOverlayEl.classList.remove("visible");
+  historyAssistantDeleteOverlayEl.setAttribute("aria-hidden", "true");
+  if (historyAssistantDeleteConfirmEl) {
+    historyAssistantDeleteConfirmEl.disabled = false;
+  }
+}
+
+function showHistoryAssistantDeleteModal(items) {
+  ensureHistoryAssistantDeleteModal();
+  if (!historyAssistantDeleteOverlayEl || !historyAssistantDeleteListEl) {
+    return;
+  }
+  historyAssistantDeleteListEl.innerHTML = "";
+  items.forEach((item) => {
+    if (!item) {
+      return;
+    }
+    const li = document.createElement("li");
+    li.className = "spotlight-history-delete-preview-item";
+
+    const title = document.createElement("span");
+    title.className = "spotlight-history-delete-preview-title";
+    title.textContent = item.title || item.url || "(untitled)";
+    li.appendChild(title);
+
+    const meta = document.createElement("span");
+    meta.className = "spotlight-history-delete-preview-meta";
+    const host = (() => {
+      if (!item.url) {
+        return "";
+      }
+      try {
+        const parsed = new URL(item.url);
+        return parsed.hostname.replace(/^www\./i, "");
+      } catch (err) {
+        return "";
+      }
+    })();
+    const parts = [];
+    if (host) {
+      parts.push(host);
+    }
+    if (item.timeLabel) {
+      parts.push(item.timeLabel);
+    }
+    meta.textContent = parts.join(" · ");
+    if (meta.textContent) {
+      li.appendChild(meta);
+    }
+
+    historyAssistantDeleteListEl.appendChild(li);
+  });
+
+  if (historyAssistantDeleteMessageEl) {
+    const count = items.length;
+    if (count <= 1) {
+      historyAssistantDeleteMessageEl.textContent =
+        "Are you sure you want to delete this history entry?";
+    } else {
+      historyAssistantDeleteMessageEl.textContent = `Are you sure you want to delete these ${count} history entries?`;
+    }
+  }
+  if (historyAssistantDeleteConfirmEl) {
+    historyAssistantDeleteConfirmEl.disabled = false;
+  }
+  historyAssistantDeleteOverlayEl.classList.add("visible");
+  historyAssistantDeleteOverlayEl.setAttribute("aria-hidden", "false");
+  if (historyAssistantDeleteDialogEl) {
+    historyAssistantDeleteDialogEl.focus();
+  }
+}
+
+function renderHistoryAssistantPendingDeletion() {
+  if (historyAssistantActionsEl) {
+    historyAssistantActionsEl.innerHTML = "";
+    historyAssistantActionsEl.classList.remove("visible");
+  }
   const pending = historyAssistantState.pendingDeletion;
   const hasPending = Boolean(
     pending && pending.operationId && Array.isArray(pending.items) && pending.items.length
   );
   if (!hasPending) {
-    historyAssistantActionsEl.classList.toggle("visible", Boolean(historyAssistantState.undoToken));
+    hideHistoryAssistantDeleteModal();
     return;
   }
-  historyAssistantActionsEl.classList.add("visible");
-  const intro = document.createElement("p");
-  intro.textContent = "Select the entries you want to delete:";
-  historyAssistantActionsEl.appendChild(intro);
-
-  const list = document.createElement("ul");
-  list.className = "spotlight-history-delete-list";
-  pending.items.forEach((item) => {
-    if (!item) {
-      return;
-    }
-    const li = document.createElement("li");
-    li.className = "spotlight-history-delete-item";
-    const label = document.createElement("label");
-    label.className = "spotlight-history-delete-label";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = historyAssistantSelection === null || historyAssistantSelection.has(item.id);
-    checkbox.setAttribute(HISTORY_ITEM_ID_ATTRIBUTE, item.id);
-    checkbox.addEventListener("change", () => {
-      if (historyAssistantSelection === null) {
-        historyAssistantSelection = new Set(
-          pending.items.map((entry) => entry && entry.id).filter(Boolean)
-        );
-      }
-      if (checkbox.checked) {
-        historyAssistantSelection.add(item.id);
-      } else {
-        historyAssistantSelection.delete(item.id);
-      }
-    });
-    label.appendChild(checkbox);
-    const span = document.createElement("span");
-    span.textContent = item.title || item.url;
-    label.appendChild(span);
-    if (item.timeLabel) {
-      const time = document.createElement("span");
-      time.className = "spotlight-history-delete-time";
-      time.textContent = item.timeLabel;
-      label.appendChild(time);
-    }
-    li.appendChild(label);
-    list.appendChild(li);
-  });
-  historyAssistantActionsEl.appendChild(list);
-
-  const buttons = document.createElement("div");
-  buttons.className = "spotlight-history-delete-actions";
-
-  const confirmButton = document.createElement("button");
-  confirmButton.type = "button";
-  confirmButton.className = "spotlight-history-delete-confirm";
-  confirmButton.textContent = "Delete selected";
-  confirmButton.addEventListener("click", handleHistoryAssistantConfirmDeletion);
-  buttons.appendChild(confirmButton);
-
-  const cancelButton = document.createElement("button");
-  cancelButton.type = "button";
-  cancelButton.className = "spotlight-history-delete-cancel";
-  cancelButton.textContent = "Cancel";
-  cancelButton.addEventListener("click", () => {
-    resetHistoryAssistantState();
-    renderHistoryAssistantState();
-  });
-  buttons.appendChild(cancelButton);
-
-  historyAssistantActionsEl.appendChild(buttons);
+  showHistoryAssistantDeleteModal(pending.items);
 }
 
 function renderHistoryAssistantUndo() {
@@ -657,7 +758,6 @@ function handleHistoryAssistantSubmit(event) {
       log: Array.isArray(response.log) ? response.log : historyAssistantState.log,
       action: typeof response.action === "string" ? response.action : null,
     };
-    historyAssistantSelection = null;
     renderHistoryAssistantState();
     syncHistoryAssistantResultsWithOverlay();
   });
@@ -747,48 +847,90 @@ function handleHistoryAssistantConfirmDeletion() {
     return;
   }
   const items = Array.isArray(historyAssistantState.pendingDeletion.items)
-    ? historyAssistantState.pendingDeletion.items
+    ? historyAssistantState.pendingDeletion.items.filter((item) => item && item.id)
     : [];
-  const selection = historyAssistantSelection;
-  const selectedIds = items
-    .map((item) => item && item.id)
-    .filter((id) => {
-      if (!id) {
-        return false;
-      }
-      if (selection === null) {
-        return true;
-      }
-      return selection.has(id);
-    });
-  if (!selectedIds.length) {
-    setHistoryAssistantStatus("Choose at least one entry to delete.");
+  if (!items.length) {
+    hideHistoryAssistantDeleteModal();
+    setHistoryAssistantStatus("No history entries available to delete.");
     return;
   }
-  setHistoryAssistantStatus("Deleting selected history…");
+  if (historyAssistantDeleteConfirmEl) {
+    historyAssistantDeleteConfirmEl.disabled = true;
+  }
+  setHistoryAssistantStatus("Preparing deletion preview…");
   setHistoryAssistantLoading(true);
-  chrome.runtime.sendMessage(
-    { type: "SPOTLIGHT_HISTORY_ASSIST_DELETE", operationId: historyAssistantState.operationId, itemIds: selectedIds },
-    (response) => {
-      setHistoryAssistantLoading(false);
-      if (chrome.runtime.lastError) {
-        console.error("Spotlight history delete error", chrome.runtime.lastError);
-        setHistoryAssistantStatus("Failed to delete history.");
-        return;
-      }
-      if (!response || response.success === false) {
-        setHistoryAssistantStatus((response && response.error) || "Failed to delete history.");
-        return;
-      }
-      historyAssistantState = {
-        ...historyAssistantState,
-        ack: typeof response.ack === "string" ? response.ack : "History deleted.",
-        pendingDeletion: null,
-        operationId: null,
-      undoToken: typeof response.undoToken === "string" ? response.undoToken : null,
+  const payload = {
+    type: "SPOTLIGHT_HISTORY_ASSIST_DELETE",
+    operationId: historyAssistantState.operationId,
+    itemIds: items.map((item) => item.id),
+  };
+  chrome.runtime.sendMessage(payload, (response) => {
+    setHistoryAssistantLoading(false);
+    if (historyAssistantDeleteConfirmEl) {
+      historyAssistantDeleteConfirmEl.disabled = false;
+    }
+    if (chrome.runtime.lastError) {
+      console.error("Spotlight history delete error", chrome.runtime.lastError);
+      setHistoryAssistantStatus("Unable to prepare deletion.");
+      return;
+    }
+    if (!response || response.success === false) {
+      const message = (response && response.error) || "Unable to prepare deletion.";
+      setHistoryAssistantStatus(message);
+      return;
+    }
+    hideHistoryAssistantDeleteModal();
+    const ack = typeof response.ack === "string" ? response.ack : historyAssistantState.ack;
+    historyAssistantState = {
+      ...historyAssistantState,
+      ack,
+      pendingDeletion: null,
+      operationId: null,
+      undoToken: null,
       log: Array.isArray(response.log) ? response.log : historyAssistantState.log,
     };
-      historyAssistantSelection = null;
+    setHistoryAssistantStatus(ack || "Deletion preview complete.");
+    renderHistoryAssistantState();
+  });
+}
+
+function handleHistoryAssistantCancelDeletion() {
+  hideHistoryAssistantDeleteModal();
+  const operationId = historyAssistantState.operationId;
+  if (!operationId) {
+    historyAssistantState = {
+      ...historyAssistantState,
+      pendingDeletion: null,
+      operationId: null,
+      undoToken: null,
+      ack: "Deletion canceled.",
+    };
+    setHistoryAssistantStatus("Deletion canceled.");
+    renderHistoryAssistantState();
+    return;
+  }
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_ASSIST_CANCEL_DELETE", operationId },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.error("Spotlight history delete cancel error", chrome.runtime.lastError);
+      }
+      const success = response && response.success !== false;
+      const ack = success && typeof response.ack === "string"
+        ? response.ack
+        : "Deletion canceled.";
+      const nextLog = success && Array.isArray(response.log)
+        ? response.log
+        : historyAssistantState.log;
+      historyAssistantState = {
+        ...historyAssistantState,
+        ack,
+        pendingDeletion: null,
+        operationId: null,
+        undoToken: null,
+        log: nextLog,
+      };
+      setHistoryAssistantStatus(ack);
       renderHistoryAssistantState();
     }
   );

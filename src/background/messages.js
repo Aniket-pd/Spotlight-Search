@@ -259,6 +259,22 @@ export function registerMessageHandlers({
       return true;
     }
 
+    if (message.type === "SPOTLIGHT_HISTORY_ASSIST_CANCEL_DELETE") {
+      if (!historyAssistant || typeof historyAssistant.cancelDeletion !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const operationId = typeof message.operationId === "string" ? message.operationId : "";
+      historyAssistant
+        .cancelDeletion(operationId)
+        .then((result) => sendResponse(result))
+        .catch((err) => {
+          console.error("Spotlight: history delete cancel failed", err);
+          sendResponse({ success: false, error: err?.message || "Unable to cancel deletion" });
+        });
+      return true;
+    }
+
     if (message.type === "SPOTLIGHT_HISTORY_ASSIST_UNDO") {
       if (!historyAssistant || typeof historyAssistant.undoLastDeletion !== "function") {
         sendResponse({ success: false, error: "History assistant unavailable" });

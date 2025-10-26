@@ -950,7 +950,7 @@ function buildAckMessage(action, interpretation, details = {}) {
       Number.isFinite(limit) && totalMatches > limit
         ? ` (showing up to ${limit})`
         : "";
-    return `Ready to remove ${count} ${plural} from ${rangeLabel}${limitNotice}.`;
+    return `Review ${count} ${plural} from ${rangeLabel}${limitNotice} before deleting.`;
   }
 
   return "Let me know what you need with your history.";
@@ -1540,35 +1540,46 @@ export function createHistoryAssistantService() {
         error: "No history entries selected",
       };
     }
-    const undoEntries = [];
-    for (const item of selectedItems) {
-      const startTime = Math.max(0, (item.lastVisitTime || Date.now()) - 60 * 1000);
-      const endTime = (item.lastVisitTime || Date.now()) + 60 * 1000;
-      try {
-        await chrome.history.deleteRange({ startTime, endTime });
-        undoEntries.push({ url: item.url });
-      } catch (err) {
-        console.warn("Spotlight: history deletion failed", err);
-      }
-    }
-    if (undoEntries.length) {
-      lastUndoToken = createUndoToken();
-      lastUndoEntries = undoEntries;
-    } else {
-      lastUndoToken = null;
-      lastUndoEntries = null;
-    }
-    const plural = selectedItems.length === 1 ? "entry" : "entries";
-    const ack = `Removed ${selectedItems.length} history ${plural}.`;
+    lastUndoToken = null;
+    lastUndoEntries = null;
+    const count = selectedItems.length;
+    const plural = count === 1 ? "entry" : "entries";
+    const ack = `Previewed deletion of ${count} history ${plural}. No items were removed.`;
     logAssistantAction(actionLog, {
       timestamp: Date.now(),
-      action: "delete-confirmed",
+      action: "delete-preview",
       summary: ack,
     });
     return {
       success: true,
       ack,
-      undoToken: lastUndoToken,
+      undoToken: null,
+      log: actionLog.slice(),
+    };
+  }
+
+  async function cancelDeletion(operationId) {
+    if (!operationId || !pendingDeletionOperations.has(operationId)) {
+      return {
+        success: false,
+        error: "Delete request expired",
+      };
+    }
+    const operation = pendingDeletionOperations.get(operationId);
+    pendingDeletionOperations.delete(operationId);
+    const count = Array.isArray(operation?.items) ? operation.items.length : 0;
+    const plural = count === 1 ? "entry" : "entries";
+    const ack = count
+      ? `Canceled deletion request for ${count} history ${plural}.`
+      : "Deletion canceled.";
+    logAssistantAction(actionLog, {
+      timestamp: Date.now(),
+      action: "delete-cancel",
+      summary: ack,
+    });
+    return {
+      success: true,
+      ack,
       log: actionLog.slice(),
     };
   }
@@ -1653,6 +1664,7 @@ export function createHistoryAssistantService() {
   return {
     handleQuery,
     confirmDeletion,
+    cancelDeletion,
     undoLastDeletion,
     getLog,
     openUrls,
