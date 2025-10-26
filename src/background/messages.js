@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -220,6 +221,27 @@ export function registerMessageHandlers({
         .catch((error) => {
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      if (!historyAssistant || typeof historyAssistant.handleRequest !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .handleRequest(message.command)
+        .then((result) => {
+          if (result && typeof result === "object") {
+            sendResponse({ ...result });
+          } else {
+            sendResponse({ success: false, error: "Invalid history assistant response" });
+          }
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant request failed", err);
+          sendResponse({ success: false, error: err?.message || "History assistant error" });
         });
       return true;
     }
