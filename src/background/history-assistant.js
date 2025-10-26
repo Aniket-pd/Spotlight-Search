@@ -1352,13 +1352,33 @@ export function createHistoryAssistantService() {
   }
 
   async function runPrompt(query, tokenData = null) {
+    const rawQuery = typeof query === "string" ? query.trim() : "";
     const tokenHints = tokenData || buildQueryTokenData(query);
     const nowTs = Date.now();
     const tokenInterpretation = interpretTokensFirst(query, tokenHints, nowTs);
     if (tokenInterpretation && tokenInterpretation.confidence >= 0.7) {
       return tokenInterpretation;
     }
-    const session = await ensureSession();
+
+    let session;
+    try {
+      session = await ensureSession();
+    } catch (error) {
+      console.warn("Spotlight history assistant unable to create Prompt API session", error);
+      if (tokenInterpretation) {
+        return tokenInterpretation;
+      }
+      return {
+        confidence: 0,
+        action: null,
+        topics: [],
+        maxItems: null,
+        timeRange: null,
+        rawQuery,
+        queryKeywords: extractQueryKeywords(rawQuery),
+        wantsSummary: false,
+      };
+    }
     const candidateLimits = [
       PROMPT_HISTORY_SAMPLE_LIMIT,
       Math.floor(PROMPT_HISTORY_SAMPLE_LIMIT / 2),
@@ -1412,13 +1432,25 @@ export function createHistoryAssistantService() {
           );
           continue;
         }
-        throw error;
+        break;
       }
     }
     if (tokenInterpretation) {
       return tokenInterpretation;
     }
-    throw lastError || new Error("Prompt failed");
+    if (lastError) {
+      console.warn("Spotlight history assistant prompt failed; using fallback interpretation", lastError);
+    }
+    return {
+      confidence: 0,
+      action: null,
+      topics: [],
+      maxItems: null,
+      timeRange: null,
+      rawQuery,
+      queryKeywords: extractQueryKeywords(rawQuery),
+      wantsSummary: false,
+    };
   }
 
   async function buildHistorySummary(entries, interpretation) {
