@@ -1,4 +1,5 @@
 import "../shared/web-search.js";
+import { listFlags } from "../shared/flags.js";
 
 export function registerMessageHandlers({
   context,
@@ -38,6 +39,17 @@ export function registerMessageHandlers({
           console.error("Spotlight: query failed", err);
           sendResponse({ results: [], error: true, requestId: message.requestId });
         });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_FLAGS_GET") {
+      try {
+        const flags = listFlags();
+        sendResponse({ success: true, flags });
+      } catch (error) {
+        console.warn("Spotlight: failed to enumerate flags", error);
+        sendResponse({ success: false, error: error?.message || "Unable to read flags" });
+      }
       return true;
     }
 

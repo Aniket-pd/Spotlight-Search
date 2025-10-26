@@ -71,6 +71,7 @@ let assistantActiveRequestId = 0;
 let assistantPending = false;
 let smartHistoryAssistantEnabled = false;
 let assistantModulePromise = null;
+let assistantFlagRequestPromise = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -224,21 +225,67 @@ function ensureAssistantModule() {
   return assistantModulePromise;
 }
 
+function requestAssistantFlagFromBackground() {
+  if (
+    typeof chrome === "undefined" ||
+    !chrome.runtime ||
+    typeof chrome.runtime.sendMessage !== "function"
+  ) {
+    return Promise.resolve(null);
+  }
+  if (assistantFlagRequestPromise) {
+    return assistantFlagRequestPromise;
+  }
+  assistantFlagRequestPromise = new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_FLAGS_GET" }, (response) => {
+      assistantFlagRequestPromise = null;
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      if (response && response.success && response.flags) {
+        const flagValue = response.flags.smartHistoryAssistant;
+        if (typeof flagValue === "boolean") {
+          resolve(flagValue);
+          return;
+        }
+      }
+      resolve(null);
+    });
+  });
+  return assistantFlagRequestPromise;
+}
+
 async function refreshAssistantFlag() {
   let enabled = false;
+  let resolved = false;
   try {
     const module = await ensureAssistantModule();
     if (module && typeof module.isSmartHistoryAssistantEnabled === "function") {
       enabled = Boolean(module.isSmartHistoryAssistantEnabled());
-    } else if (globalThis.SpotlightFlags && typeof globalThis.SpotlightFlags.smartHistoryAssistant === "boolean") {
-      enabled = Boolean(globalThis.SpotlightFlags.smartHistoryAssistant);
+      resolved = true;
     }
   } catch (err) {
-    console.warn("Spotlight: failed to evaluate assistant flag", err);
-    if (globalThis.SpotlightFlags && typeof globalThis.SpotlightFlags.smartHistoryAssistant === "boolean") {
-      enabled = Boolean(globalThis.SpotlightFlags.smartHistoryAssistant);
+    console.warn("Spotlight: failed to load assistant flag module", err);
+  }
+
+  if (!resolved && globalThis.SpotlightFlags && typeof globalThis.SpotlightFlags.smartHistoryAssistant === "boolean") {
+    enabled = Boolean(globalThis.SpotlightFlags.smartHistoryAssistant);
+    resolved = true;
+  }
+
+  if (!resolved) {
+    try {
+      const backgroundValue = await requestAssistantFlagFromBackground();
+      if (typeof backgroundValue === "boolean") {
+        enabled = backgroundValue;
+        resolved = true;
+      }
+    } catch (err) {
+      console.warn("Spotlight: unable to request assistant flag", err);
     }
   }
+
   smartHistoryAssistantEnabled = enabled;
   updateAssistantVisibility();
 }
