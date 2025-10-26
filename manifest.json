@@ -7,6 +7,7 @@
     "tabs",
     "bookmarks",
     "history",
+    "sessions",
     "storage",
     "scripting",
     "webNavigation",

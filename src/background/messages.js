@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -186,6 +187,40 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      if (!historyAssistant || typeof historyAssistant.handleQuery !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const query = typeof message.query === "string" ? message.query : "";
+      const contextHint = typeof message.contextHint === "string" ? message.contextHint : "";
+      historyAssistant
+        .handleQuery(query, { contextHint })
+        .then((result) => sendResponse({ ...result, requestId: message.requestId || null }))
+        .catch((error) => {
+          console.error("Spotlight: history assistant query failed", error);
+          sendResponse({ success: false, message: error?.message || "History assistant request failed." });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_COMMAND") {
+      if (!historyAssistant || typeof historyAssistant.runCommand !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const command = typeof message.command === "object" && message.command ? message.command : {};
+      const entries = Array.isArray(message.entries) ? message.entries : undefined;
+      historyAssistant
+        .runCommand(command, { entries })
+        .then((result) => sendResponse({ ...result, requestId: message.requestId || null }))
+        .catch((error) => {
+          console.error("Spotlight: history assistant command failed", error);
+          sendResponse({ success: false, message: error?.message || "History assistant command failed." });
         });
       return true;
     }
