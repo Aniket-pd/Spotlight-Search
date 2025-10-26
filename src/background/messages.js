@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -186,6 +187,51 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      const requestId = typeof message.requestId === "number" ? message.requestId : null;
+      if (!historyAssistant || typeof historyAssistant.handleRequest !== "function") {
+        sendResponse({ success: false, error: "Smart History Assistant unavailable", requestId });
+        return true;
+      }
+      historyAssistant
+        .handleRequest({ query: message.query || "" })
+        .then((result) => {
+          sendResponse({ success: true, ...result, requestId });
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant request failed", err);
+          sendResponse({
+            success: false,
+            error: err?.message || "Unable to process that request",
+            requestId,
+          });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_PERFORM") {
+      const requestId = typeof message.requestId === "number" ? message.requestId : null;
+      if (!historyAssistant || typeof historyAssistant.handleManualAction !== "function") {
+        sendResponse({ success: false, error: "Smart History Assistant unavailable", requestId });
+        return true;
+      }
+      const entries = Array.isArray(message.entries) ? message.entries : [];
+      historyAssistant
+        .handleManualAction({ operation: message.operation, entries })
+        .then((result) => {
+          sendResponse({ ...result, requestId });
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant action failed", err);
+          sendResponse({
+            success: false,
+            error: err?.message || "Unable to complete that action",
+            requestId,
+          });
         });
       return true;
     }

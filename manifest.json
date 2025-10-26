@@ -37,6 +37,7 @@
     {
       "matches": ["<all_urls>"],
       "js": [
+        "src/shared/features.js",
         "src/shared/web-search.js",
         "src/content/bookmark-organizer-ui.js",
         "src/content/index.js"
