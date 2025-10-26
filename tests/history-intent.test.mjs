@@ -21,11 +21,13 @@ function testFallbackWhenOnlyTime() {
 }
 
 function testFlagDefault() {
+  const initial = isSmartHistoryAssistantEnabled();
+  assert.equal(initial, true);
   setSmartHistoryAssistantEnabled(false);
   assert.equal(isSmartHistoryAssistantEnabled(), false);
   setSmartHistoryAssistantEnabled(true);
   assert.equal(isSmartHistoryAssistantEnabled(), true);
-  setSmartHistoryAssistantEnabled(false);
+  setSmartHistoryAssistantEnabled(initial);
 }
 
 function run() {

@@ -1,5 +1,5 @@
 const DEFAULT_FLAGS = Object.freeze({
-  smartHistoryAssistant: false,
+  smartHistoryAssistant: true,
 });
 
 export const SMART_HISTORY_ASSISTANT_FLAG = "smartHistoryAssistant";
