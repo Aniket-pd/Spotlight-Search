@@ -46,7 +46,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/styles.css", "icons/*.svg"],
+      "resources": ["src/content/styles.css", "src/shared/flags.js", "icons/*.svg"],
       "matches": ["<all_urls>"]
     }
   ],

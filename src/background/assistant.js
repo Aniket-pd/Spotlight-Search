@@ -8,6 +8,7 @@ const DEFAULT_SESSION_OPTIONS = {
   temperature: 0.1,
   topK: 32,
   topP: 0.9,
+  outputLanguage: "en",
 };
 
 function getLanguageModelApi() {
@@ -189,6 +190,7 @@ export function createAssistantService({ context, runSearch }) {
         const response = await session.prompt({
           prompt: `Convert the natural language history request into JSON. Return fields searchQuery, timeRange (today|yesterday|last7|last30|older|null), domain, actions, explanation. Query: ${trimmed}`,
           responseSchema: schema,
+          outputLanguage: "en",
         });
         if (response && typeof response === "object") {
           const intent = {
