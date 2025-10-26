@@ -5,9 +5,11 @@ const REBUILD_DELAYS = {
   "tab-close-all": 400,
   "tab-close-domain": 400,
   "tab-close-audio": 400,
+  "tab-focus": 300,
+  "tab-unfocus": 300,
 };
 
-export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer }) {
+export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer, focus }) {
   const {
     sortAllTabsByDomainAndTitle,
     shuffleTabs,
@@ -42,6 +44,26 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
       case "tab-close-audio":
         await closeAudibleTabs();
         scheduleRebuild(REBUILD_DELAYS[commandId]);
+        return;
+      case "tab-focus":
+        if (!focus || typeof focus.focusTab !== "function") {
+          throw new Error("Focus service unavailable");
+        }
+        await focus.focusTab(args.tabId);
+        scheduleRebuild(REBUILD_DELAYS[commandId]);
+        return;
+      case "tab-unfocus":
+        if (!focus || typeof focus.unfocusTab !== "function") {
+          throw new Error("Focus service unavailable");
+        }
+        await focus.unfocusTab();
+        scheduleRebuild(REBUILD_DELAYS[commandId]);
+        return;
+      case "tab-focus-jump":
+        if (!focus || typeof focus.jumpToFocusedTab !== "function") {
+          throw new Error("Focus service unavailable");
+        }
+        await focus.jumpToFocusedTab();
         return;
       case "bookmark-organize":
         if (!bookmarkOrganizer || typeof bookmarkOrganizer.organizeBookmarks !== "function") {
