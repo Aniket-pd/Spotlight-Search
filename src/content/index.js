@@ -60,6 +60,17 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+let assistantContainerEl = null;
+let assistantInputEl = null;
+let assistantSendButton = null;
+let assistantStatusEl = null;
+let assistantAnswerEl = null;
+let assistantAvailabilityState = { status: "unknown" };
+let assistantRequestCounter = 0;
+let assistantActiveRequestId = 0;
+let assistantPending = false;
+let smartHistoryAssistantEnabled = false;
+let assistantModulePromise = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -193,6 +204,187 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .map((token) => (token || "").toLowerCase())
     .filter(Boolean),
 }));
+
+function ensureAssistantModule() {
+  if (assistantModulePromise) {
+    return assistantModulePromise;
+  }
+  if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.getURL === "function") {
+    try {
+      assistantModulePromise = import(chrome.runtime.getURL("src/shared/flags.js")).catch((error) => {
+        console.warn("Spotlight: unable to load flag module", error);
+        return null;
+      });
+    } catch (err) {
+      assistantModulePromise = Promise.resolve(null);
+    }
+  } else {
+    assistantModulePromise = Promise.resolve(null);
+  }
+  return assistantModulePromise;
+}
+
+async function refreshAssistantFlag() {
+  let enabled = false;
+  try {
+    const module = await ensureAssistantModule();
+    if (module && typeof module.isSmartHistoryAssistantEnabled === "function") {
+      enabled = Boolean(module.isSmartHistoryAssistantEnabled());
+    } else if (globalThis.SpotlightFlags && typeof globalThis.SpotlightFlags.smartHistoryAssistant === "boolean") {
+      enabled = Boolean(globalThis.SpotlightFlags.smartHistoryAssistant);
+    }
+  } catch (err) {
+    console.warn("Spotlight: failed to evaluate assistant flag", err);
+    if (globalThis.SpotlightFlags && typeof globalThis.SpotlightFlags.smartHistoryAssistant === "boolean") {
+      enabled = Boolean(globalThis.SpotlightFlags.smartHistoryAssistant);
+    }
+  }
+  smartHistoryAssistantEnabled = enabled;
+  updateAssistantVisibility();
+}
+
+function formatAssistantAvailability(state) {
+  if (!state || typeof state !== "object") {
+    return "";
+  }
+  const status = typeof state.status === "string" ? state.status : "unknown";
+  const reason = typeof state.reason === "string" ? state.reason : "";
+  switch (status) {
+    case "available":
+    case "ready":
+      return "Smart History Assistant ready";
+    case "unavailable":
+      return reason || "Smart History Assistant requires on-device model";
+    case "disabled":
+      return "Smart History Assistant disabled";
+    case "error":
+      return reason ? `Assistant error: ${reason}` : "Assistant unavailable";
+    default:
+      return "Preparing Smart History Assistant";
+  }
+}
+
+function updateAssistantStatus(message, { loading = false } = {}) {
+  if (!assistantStatusEl) {
+    return;
+  }
+  assistantStatusEl.textContent = message || "";
+  assistantStatusEl.classList.toggle("loading", Boolean(loading));
+}
+
+function setAssistantAnswer(answer) {
+  if (!assistantAnswerEl) {
+    return;
+  }
+  const text = typeof answer === "string" ? answer.trim() : "";
+  assistantAnswerEl.textContent = text;
+  assistantAnswerEl.classList.toggle("visible", Boolean(text));
+}
+
+function clearAssistantState() {
+  assistantPending = false;
+  assistantActiveRequestId = 0;
+  setAssistantAnswer("");
+  if (assistantStatusEl) {
+    assistantStatusEl.textContent = "";
+    assistantStatusEl.classList.remove("loading");
+  }
+}
+
+function updateAssistantVisibility() {
+  if (!assistantContainerEl) {
+    return;
+  }
+  const shouldShow = smartHistoryAssistantEnabled && activeFilter === "history";
+  assistantContainerEl.classList.toggle("visible", shouldShow);
+  assistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    assistantContainerEl.setAttribute("hidden", "true");
+    clearAssistantState();
+    return;
+  }
+  assistantContainerEl.removeAttribute("hidden");
+  if (assistantInputEl && !assistantInputEl.value) {
+    assistantInputEl.focus({ preventScroll: true });
+  }
+  fetchAssistantAvailability();
+}
+
+function fetchAssistantAvailability() {
+  if (!smartHistoryAssistantEnabled || !assistantContainerEl) {
+    return;
+  }
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_ASSISTANT_STATUS" }, (response) => {
+    if (chrome.runtime.lastError) {
+      updateAssistantStatus("Assistant unavailable", { loading: false });
+      return;
+    }
+    if (!response || response.success === false) {
+      assistantAvailabilityState = { status: "error", reason: response?.error || null };
+      updateAssistantStatus(formatAssistantAvailability(assistantAvailabilityState));
+      return;
+    }
+    assistantAvailabilityState = response.availability || { status: "unknown" };
+    updateAssistantStatus(formatAssistantAvailability(assistantAvailabilityState));
+  });
+}
+
+function handleAssistantSubmit(event) {
+  if (event) {
+    event.preventDefault();
+  }
+  if (!assistantInputEl) {
+    return;
+  }
+  const query = assistantInputEl.value.trim();
+  if (!query) {
+    return;
+  }
+  sendAssistantQuery(query);
+}
+
+function sendAssistantQuery(query) {
+  if (!smartHistoryAssistantEnabled) {
+    return;
+  }
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return;
+  }
+  assistantPending = true;
+  const requestId = ++assistantRequestCounter;
+  assistantActiveRequestId = requestId;
+  updateAssistantStatus("Working…", { loading: true });
+  const message = {
+    type: "SPOTLIGHT_ASSISTANT_REQUEST",
+    mode: "history",
+    query: trimmed,
+    requestId,
+  };
+  if (selectedSubfilter && selectedSubfilter.type === "history") {
+    message.subfilter = { ...selectedSubfilter };
+  }
+  chrome.runtime.sendMessage(message, (response) => {
+    if (chrome.runtime.lastError) {
+      assistantPending = false;
+      updateAssistantStatus("Assistant unavailable", { loading: false });
+      console.error("Spotlight assistant request error", chrome.runtime.lastError);
+      return;
+    }
+    if (!response || response.requestId !== assistantActiveRequestId) {
+      return;
+    }
+    assistantPending = false;
+    if (!response.success) {
+      const errorMessage = response.error || "Assistant request failed";
+      updateAssistantStatus(errorMessage, { loading: false });
+      return;
+    }
+    setAssistantAnswer(response.answer || "");
+    updateAssistantStatus(formatAssistantAvailability(response.assistant?.availability), { loading: false });
+    applyQueryResponse(response);
+  });
+}
 
 function ensureShadowRoot() {
   if (!document.body) {
@@ -387,6 +579,50 @@ function createOverlay() {
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
+  assistantContainerEl = document.createElement("div");
+  assistantContainerEl.className = "spotlight-assistant";
+  assistantContainerEl.setAttribute("role", "group");
+  assistantContainerEl.setAttribute("aria-hidden", "true");
+  assistantContainerEl.setAttribute("hidden", "true");
+
+  assistantStatusEl = document.createElement("div");
+  assistantStatusEl.className = "spotlight-assistant-status";
+  assistantStatusEl.textContent = "";
+  assistantContainerEl.appendChild(assistantStatusEl);
+
+  const assistantForm = document.createElement("form");
+  assistantForm.className = "spotlight-assistant-form";
+  assistantForm.addEventListener("submit", (event) => {
+    handleAssistantSubmit(event);
+  });
+
+  assistantInputEl = document.createElement("textarea");
+  assistantInputEl.className = "spotlight-assistant-input";
+  assistantInputEl.setAttribute("rows", "1");
+  assistantInputEl.setAttribute("placeholder", "Ask Smart History Assistant…");
+  assistantInputEl.setAttribute("aria-label", "Smart History Assistant");
+  assistantInputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      handleAssistantSubmit(event);
+    }
+  });
+  assistantForm.appendChild(assistantInputEl);
+
+  assistantSendButton = document.createElement("button");
+  assistantSendButton.type = "submit";
+  assistantSendButton.className = "spotlight-assistant-send";
+  assistantSendButton.textContent = "Ask";
+  assistantForm.appendChild(assistantSendButton);
+
+  assistantContainerEl.appendChild(assistantForm);
+
+  assistantAnswerEl = document.createElement("div");
+  assistantAnswerEl.className = "spotlight-assistant-answer spotlight-ai-panel";
+  assistantAnswerEl.textContent = "";
+  assistantContainerEl.appendChild(assistantAnswerEl);
+
+  inputWrapper.appendChild(assistantContainerEl);
+
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
@@ -438,6 +674,7 @@ function createOverlay() {
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
+  refreshAssistantFlag();
 }
 
 function installOverlayGuards() {
@@ -1315,6 +1552,7 @@ function closeOverlay() {
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  updateAssistantVisibility();
 }
 
 function handleGlobalKeydown(event) {
@@ -1494,6 +1732,85 @@ function handleInputChange() {
   }, 80);
 }
 
+function applyQueryResponse(response) {
+  if (!response) {
+    return;
+  }
+  resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+  lazyList.setItems(resultsState);
+  pruneSummaryState();
+  applyCachedFavicons(resultsState);
+  activeIndex = resultsState.length > 0 ? 0 : -1;
+  activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+  pointerNavigationSuspended = true;
+  renderResults();
+  updateSubfilterState(response.subfilters);
+  updateAssistantVisibility();
+
+  if (response.webSearch && typeof response.webSearch.engineId === "string") {
+    const api = getWebSearchApi();
+    if (api && typeof api.findSearchEngine === "function") {
+      const resolved = api.findSearchEngine(response.webSearch.engineId);
+      if (resolved) {
+        activeWebSearchEngine = resolved;
+        if (userSelectedWebSearchEngineId && userSelectedWebSearchEngineId !== resolved.id) {
+          userSelectedWebSearchEngineId = resolved.id;
+        }
+      }
+    }
+  } else if (!userSelectedWebSearchEngineId) {
+    const api = getWebSearchApi();
+    if (api && typeof api.getDefaultSearchEngine === "function") {
+      activeWebSearchEngine = api.getDefaultSearchEngine();
+    }
+  }
+
+  const trimmed = inputEl.value.trim();
+  if (trimmed === "> reindex") {
+    setGhostText("");
+    return;
+  }
+
+  const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
+  const answer = typeof response.answer === "string" ? response.answer : "";
+  setGhostText(slashMenuVisible || engineMenuVisible ? "" : ghost);
+  const filterLabel = getFilterStatusLabel(activeFilter);
+  const subfilterLabel = getActiveSubfilterLabel();
+  let statusMessage = "";
+  if (filterLabel) {
+    statusMessage = `Filtering ${filterLabel}`;
+    if (subfilterLabel) {
+      statusMessage = `${statusMessage} · ${subfilterLabel}`;
+    }
+  }
+  if (answer) {
+    statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
+  }
+  const engineStatusLabel = formatWebSearchStatus(response.webSearch);
+  if (engineStatusLabel) {
+    statusMessage = statusMessage ? `${statusMessage} · ${engineStatusLabel}` : engineStatusLabel;
+  }
+  if (statusMessage) {
+    setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
+  } else if (!ghostSuggestionText) {
+    setStatus("", { force: true });
+  }
+
+  if (
+    response.assistant &&
+    smartHistoryAssistantEnabled &&
+    activeFilter === "history" &&
+    response.assistant.intent &&
+    typeof response.answer === "string"
+  ) {
+    if (response.assistant.availability) {
+      assistantAvailabilityState = response.assistant.availability;
+    }
+    setAssistantAnswer(response.answer);
+    updateAssistantStatus(formatAssistantAvailability(response.assistant.availability || assistantAvailabilityState));
+  }
+}
+
 function requestResults(query) {
   lastRequestId = ++requestCounter;
   const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
@@ -1518,64 +1835,7 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
-      resultsState = Array.isArray(response.results) ? response.results.slice() : [];
-      lazyList.setItems(resultsState);
-      pruneSummaryState();
-      applyCachedFavicons(resultsState);
-      activeIndex = resultsState.length > 0 ? 0 : -1;
-      activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
-      pointerNavigationSuspended = true;
-      renderResults();
-      updateSubfilterState(response.subfilters);
-
-      if (response.webSearch && typeof response.webSearch.engineId === "string") {
-        const api = getWebSearchApi();
-        if (api && typeof api.findSearchEngine === "function") {
-          const resolved = api.findSearchEngine(response.webSearch.engineId);
-          if (resolved) {
-            activeWebSearchEngine = resolved;
-            if (userSelectedWebSearchEngineId && userSelectedWebSearchEngineId !== resolved.id) {
-              userSelectedWebSearchEngineId = resolved.id;
-            }
-          }
-        }
-      } else if (!userSelectedWebSearchEngineId) {
-        const api = getWebSearchApi();
-        if (api && typeof api.getDefaultSearchEngine === "function") {
-          activeWebSearchEngine = api.getDefaultSearchEngine();
-        }
-      }
-
-      const trimmed = inputEl.value.trim();
-      if (trimmed === "> reindex") {
-        setGhostText("");
-        return;
-      }
-
-      const ghost = response.ghost && typeof response.ghost.text === "string" ? response.ghost.text : "";
-      const answer = typeof response.answer === "string" ? response.answer : "";
-      setGhostText(slashMenuVisible || engineMenuVisible ? "" : ghost);
-      const filterLabel = getFilterStatusLabel(activeFilter);
-      const subfilterLabel = getActiveSubfilterLabel();
-      let statusMessage = "";
-      if (filterLabel) {
-        statusMessage = `Filtering ${filterLabel}`;
-        if (subfilterLabel) {
-          statusMessage = `${statusMessage} · ${subfilterLabel}`;
-        }
-      }
-      if (answer) {
-        statusMessage = statusMessage ? `${statusMessage} · ${answer}` : answer;
-      }
-      const engineStatusLabel = formatWebSearchStatus(response.webSearch);
-      if (engineStatusLabel) {
-        statusMessage = statusMessage ? `${statusMessage} · ${engineStatusLabel}` : engineStatusLabel;
-      }
-      if (statusMessage) {
-        setStatus(statusMessage, { force: true, sticky: Boolean(filterLabel) });
-      } else if (!ghostSuggestionText) {
-        setStatus("", { force: true });
-      }
+      applyQueryResponse(response);
     }
   );
 }

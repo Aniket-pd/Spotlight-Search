@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  assistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -220,6 +221,58 @@ export function registerMessageHandlers({
         .catch((error) => {
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_ASSISTANT_STATUS") {
+      if (!assistant || !assistant.isEnabled()) {
+        sendResponse({ success: false, enabled: false, status: "disabled" });
+        return true;
+      }
+      assistant
+        .getAvailability()
+        .then((availability) => {
+          sendResponse({ success: true, enabled: true, availability });
+        })
+        .catch((error) => {
+          console.error("Spotlight: assistant availability check failed", error);
+          sendResponse({
+            success: false,
+            enabled: true,
+            error: error?.message || "Unable to check assistant availability",
+          });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_ASSISTANT_REQUEST") {
+      if (!assistant || !assistant.isEnabled()) {
+        sendResponse({
+          success: false,
+          error: "Assistant unavailable",
+          requestId: message.requestId,
+        });
+        return true;
+      }
+      const payload = {
+        mode: typeof message.mode === "string" ? message.mode : "history",
+        query: typeof message.query === "string" ? message.query : "",
+        subfilter: message.subfilter && typeof message.subfilter === "object" ? message.subfilter : null,
+        webSearch: message.webSearch && typeof message.webSearch === "object" ? message.webSearch : null,
+      };
+      assistant
+        .handleRequest(payload)
+        .then((result) => {
+          sendResponse({ success: true, requestId: message.requestId, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: assistant request failed", error);
+          sendResponse({
+            success: false,
+            error: error?.message || "Assistant request failed",
+            requestId: message.requestId,
+          });
         });
       return true;
     }

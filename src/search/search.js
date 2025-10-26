@@ -1,5 +1,7 @@
 import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
 import "../shared/web-search.js";
+import { isSmartHistoryAssistantEnabled } from "../shared/flags.js";
+import { interpretHistoryQuery } from "./nlp/history-intent.js";
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -195,6 +197,29 @@ function extractHostname(url) {
   } catch (err) {
     return "";
   }
+}
+
+function resultMatchesDomain(result, domain) {
+  if (!domain) {
+    return true;
+  }
+  const target = typeof domain === "string" ? domain.trim().toLowerCase() : "";
+  if (!target) {
+    return true;
+  }
+  const url = typeof result?.url === "string" ? result.url : "";
+  if (!url) {
+    return false;
+  }
+  const host = extractHostname(url);
+  if (!host) {
+    return false;
+  }
+  const normalizedHost = host.toLowerCase();
+  if (normalizedHost === target) {
+    return true;
+  }
+  return normalizedHost.endsWith(`.${target}`);
 }
 
 function toTitleCase(text) {
@@ -1476,6 +1501,38 @@ export function runSearch(query, data, options = {}) {
     : items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0);
 
   const navigationState = options.navigation || null;
+  const assistantEnabled = isSmartHistoryAssistantEnabled();
+  const providedAssistantIntent =
+    options && typeof options.assistantIntent === "object" ? options.assistantIntent : null;
+  let assistantIntent = null;
+  let assistantAnswer = "";
+  let assistantDomain = null;
+  let scoringQuery = trimmed;
+
+  if (filterType === "history" && assistantEnabled) {
+    if (providedAssistantIntent) {
+      assistantIntent = providedAssistantIntent;
+    } else if (trimmed) {
+      try {
+        assistantIntent = interpretHistoryQuery(trimmed, { now: Date.now() });
+      } catch (err) {
+        console.warn("Spotlight: history intent parsing failed", err);
+      }
+    }
+    if (assistantIntent) {
+      if (assistantIntent.searchQuery) {
+        scoringQuery = assistantIntent.searchQuery;
+      }
+      if (assistantIntent.domain) {
+        assistantDomain = assistantIntent.domain;
+      }
+      if (assistantIntent.answer) {
+        assistantAnswer = assistantIntent.answer;
+      } else if (assistantIntent.explanation) {
+        assistantAnswer = assistantIntent.explanation;
+      }
+    }
+  }
 
   if (NAVIGATION_FILTERS.has(filterType)) {
     const navigationResults = buildNavigationResults(filterType, trimmed, navigationState);
@@ -1498,7 +1555,14 @@ export function runSearch(query, data, options = {}) {
     bookmarks: bookmarkItems,
     downloads: downloadItems,
   });
-  const activeSubfilterId = sanitizeSubfilterSelection(filterType, options?.subfilter, availableSubfilters);
+  const assistantRequestedSubfilter =
+    filterType === "history" && assistantIntent?.timeRange?.id
+      ? { type: "history", id: assistantIntent.timeRange.id }
+      : null;
+  const requestedSubfilter = options?.subfilter
+    ? options.subfilter
+    : assistantRequestedSubfilter;
+  const activeSubfilterId = sanitizeSubfilterSelection(filterType, requestedSubfilter, availableSubfilters);
   const subfilterPayload =
     filterType && availableSubfilters.length
       ? { type: filterType, options: availableSubfilters, activeId: activeSubfilterId }
@@ -1507,8 +1571,9 @@ export function runSearch(query, data, options = {}) {
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
   const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
+  const treatAsEmptyQuery = !trimmed || (!scoringQuery && assistantIntent);
 
-  if (!trimmed) {
+  if (treatAsEmptyQuery) {
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()
@@ -1516,6 +1581,10 @@ export function runSearch(query, data, options = {}) {
       : items.filter((item) => item.type === "tab");
 
     defaultItems = defaultItems.filter((item) => matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext));
+
+    if (filterType === "history" && assistantDomain) {
+      defaultItems = defaultItems.filter((item) => resultMatchesDomain(item, assistantDomain));
+    }
 
     if (filterType === "tab" || !filterType) {
       defaultItems.sort((a, b) => {
@@ -1553,6 +1622,7 @@ export function runSearch(query, data, options = {}) {
     }
 
     const limit = getResultLimit(filterType);
+    const baseAnswer = assistantAnswer || "";
 
     if (filterType === "topSite") {
       const limitedItems = sliceResultsForLimit(defaultItems, limit);
@@ -1561,9 +1631,13 @@ export function runSearch(query, data, options = {}) {
           .map((item, index) => buildResultFromItem(item, computeTopSiteScore(item, index)))
           .filter(Boolean),
         ghost: null,
-        answer: "",
+        answer: baseAnswer,
         filter: filterType,
         subfilters: subfilterPayload,
+        assistant:
+          filterType === "history" && assistantIntent
+            ? { intent: assistantIntent, domain: assistantDomain || null }
+            : null,
       };
     }
 
@@ -1585,9 +1659,13 @@ export function runSearch(query, data, options = {}) {
       return {
         results: merged,
         ghost: null,
-        answer: "",
+        answer: baseAnswer,
         filter: filterType,
         subfilters: subfilterPayload,
+        assistant:
+          filterType === "history" && assistantIntent
+            ? { intent: assistantIntent, domain: assistantDomain || null }
+            : null,
       };
     }
 
@@ -1595,17 +1673,31 @@ export function runSearch(query, data, options = {}) {
     return {
       results: limitedItems.map((item) => buildResultFromItem(item)).filter(Boolean),
       ghost: null,
-      answer: "",
+      answer: baseAnswer,
       filter: filterType,
       subfilters: subfilterPayload,
+      assistant:
+        filterType === "history" && assistantIntent
+          ? { intent: assistantIntent, domain: assistantDomain || null }
+          : null,
     };
   }
 
-  const tokens = tokenize(trimmed);
+  const tokens = tokenize(scoringQuery);
   const uniqueTokens = Array.from(new Set(tokens));
   const totalTokens = uniqueTokens.length;
   if (tokens.length === 0) {
-    return { results: [], ghost: null, answer: "", filter: filterType };
+    return {
+      results: [],
+      ghost: null,
+      answer: assistantAnswer || "",
+      filter: filterType,
+      subfilters: subfilterPayload,
+      assistant:
+        filterType === "history" && assistantIntent
+          ? { intent: assistantIntent, domain: assistantDomain || null }
+          : null,
+    };
   }
 
   const scores = new Map();
@@ -1632,7 +1724,7 @@ export function runSearch(query, data, options = {}) {
   }
 
   const results = [];
-  const shortQuery = trimmed.replace(/\s+/g, "").length <= 3;
+  const shortQuery = scoringQuery.replace(/\s+/g, "").length <= 3;
 
   for (const [itemId, score] of scores.entries()) {
     const item = items[itemId];
@@ -1688,8 +1780,16 @@ export function runSearch(query, data, options = {}) {
 
   results.sort(compareResults);
 
+  let rankedResults = results;
+  if (filterType === "history" && assistantDomain) {
+    const filtered = results.filter((result) => resultMatchesDomain(result, assistantDomain));
+    if (filtered.length) {
+      rankedResults = filtered;
+    }
+  }
+
   const limit = getResultLimit(filterType);
-  let finalResults = sliceResultsForLimit(results, limit);
+  let finalResults = sliceResultsForLimit(rankedResults, limit);
   const minRequiredMatches = totalTokens >= 3 ? 2 : totalTokens >= 1 ? 1 : 0;
   const hasMeaningfulLocalResults = finalResults.some((result) =>
     isMeaningfulLocalResult(result, minRequiredMatches, totalTokens)
@@ -1775,6 +1875,15 @@ export function runSearch(query, data, options = {}) {
       }
     : null;
 
+  if (assistantAnswer) {
+    answer = answer ? `${assistantAnswer} · ${answer}` : assistantAnswer;
+  }
+
+  const assistantPayload =
+    filterType === "history" && assistantIntent
+      ? { intent: assistantIntent, domain: assistantDomain || null }
+      : null;
+
   return {
     results: finalResults,
     ghost: ghostPayload,
@@ -1782,5 +1891,6 @@ export function runSearch(query, data, options = {}) {
     filter: filterType,
     subfilters: subfilterPayload,
     webSearch: webSearchInfo,
+    assistant: assistantPayload,
   };
 }
