@@ -697,6 +697,69 @@ async function runHistoryAssistantRequest(text) {
   }
 }
 
+const HISTORY_ASSISTANT_PRESET_LABELS = {
+  all: "all time",
+  today: "today",
+  yesterday: "yesterday",
+  last7: "last 7 days",
+  last30: "last 30 days",
+  older: "older than 30 days",
+};
+
+function sanitizeHistoryAssistantTimeRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const presetId = typeof range.presetId === "string" && range.presetId ? range.presetId : null;
+  const raw = typeof range.raw === "string" ? range.raw.trim() : "";
+  const labelCandidate = typeof range.label === "string" ? range.label.trim() : "";
+  const fallbackPresetLabel = presetId && HISTORY_ASSISTANT_PRESET_LABELS[presetId]
+    ? HISTORY_ASSISTANT_PRESET_LABELS[presetId]
+    : "";
+  const label = labelCandidate || raw || fallbackPresetLabel;
+  const from = Number.isFinite(range.from) && range.from >= 0 ? range.from : null;
+  const to = Number.isFinite(range.to) && range.to >= 0 ? range.to : null;
+  if (!presetId && !raw && !label && from === null && to === null) {
+    return null;
+  }
+  return {
+    presetId,
+    raw,
+    label,
+    from,
+    to,
+  };
+}
+
+function filterHistoryResultsByTimeRange(results, range) {
+  if (!Array.isArray(results) || !results.length || !range || typeof range !== "object") {
+    return Array.isArray(results) ? results : [];
+  }
+  const from = Number.isFinite(range.from) ? range.from : null;
+  const to = Number.isFinite(range.to) ? range.to : null;
+  if (from === null && to === null) {
+    return results;
+  }
+  return results.filter((entry) => {
+    const timestamp =
+      typeof entry?.timeStamp === "number"
+        ? entry.timeStamp
+        : typeof entry?.lastVisitTime === "number"
+        ? entry.lastVisitTime
+        : 0;
+    if (!timestamp) {
+      return false;
+    }
+    if (from !== null && timestamp < from) {
+      return false;
+    }
+    if (to !== null && timestamp > to) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function applyHistoryAssistantPlan(plan, requestId) {
   if (!plan || typeof plan !== "object") {
     setHistoryAssistantMessage("Assistant returned an empty plan", { tone: "error" });
@@ -707,17 +770,24 @@ function applyHistoryAssistantPlan(plan, requestId) {
   const query = typeof plan.query === "string" ? plan.query.trim() : "";
   const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
   const limit = Number.isFinite(plan.limit) ? plan.limit : null;
+  const timeRange = sanitizeHistoryAssistantTimeRange(plan.timeRange);
 
   historyAssistantPlan = {
     intent,
     message,
     subfilterId,
     limit,
+    timeRange,
     requestId,
   };
 
+  const timeRangeLabel = typeof timeRange?.label === "string" && timeRange.label ? timeRange.label : timeRange?.raw || "";
+  const normalizedRangeLabel = timeRangeLabel.toLowerCase();
+  const shouldHighlightRange = timeRangeLabel && normalizedRangeLabel !== "all time";
   if (message) {
     setHistoryAssistantMessage(message);
+  } else if (shouldHighlightRange) {
+    setHistoryAssistantMessage(`Focusing on ${timeRangeLabel}.`, { tone: "muted" });
   } else {
     setHistoryAssistantMessage("Assistant ready.", { tone: "muted" });
   }
@@ -828,21 +898,37 @@ function applyHistoryAssistantPlanAfterResults() {
     historyAssistantPlan = null;
     return;
   }
-  const historyResults = Array.isArray(resultsState)
+  const rawHistoryResults = Array.isArray(resultsState)
     ? resultsState.filter((result) => result && result.type === "history")
     : [];
+  const filteredHistoryResults = filterHistoryResultsByTimeRange(rawHistoryResults, historyAssistantPlan.timeRange);
+  const timeRangeLabel =
+    typeof historyAssistantPlan.timeRange?.label === "string" && historyAssistantPlan.timeRange.label
+      ? historyAssistantPlan.timeRange.label
+      : historyAssistantPlan.timeRange?.raw || "";
+  const normalizedRangeLabel = timeRangeLabel.toLowerCase();
+  const shouldAppendRange = timeRangeLabel && normalizedRangeLabel !== "all time";
 
   if (intent === "show") {
-    const countLabel = formatCountLabel(historyResults.length, "match");
-    if (historyResults.length) {
-      const message = historyAssistantPlan.message
+    const countLabel = formatCountLabel(filteredHistoryResults.length, "match");
+    let message;
+    if (filteredHistoryResults.length) {
+      message = historyAssistantPlan.message
         ? `${historyAssistantPlan.message} · ${countLabel}`
         : `Found ${countLabel}.`;
-      setHistoryAssistantMessage(message);
     } else {
-      const message = historyAssistantPlan.message
+      message = historyAssistantPlan.message
         ? `${historyAssistantPlan.message} · No matches found.`
         : "No matching history found.";
+    }
+    if (shouldAppendRange) {
+      if (!message.toLowerCase().includes(normalizedRangeLabel)) {
+        message = `${message} · Time range: ${timeRangeLabel}`;
+      }
+    }
+    if (filteredHistoryResults.length) {
+      setHistoryAssistantMessage(message);
+    } else {
       setHistoryAssistantMessage(message, { tone: "muted" });
     }
     historyAssistantPlan = null;
@@ -851,8 +937,13 @@ function applyHistoryAssistantPlanAfterResults() {
 
   if (intent === "summarize") {
     const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 20;
-    const summary = buildHistorySummary(historyResults, limit);
-    const message = historyAssistantPlan.message ? `${historyAssistantPlan.message} · ${summary}` : summary;
+    const summary = buildHistorySummary(filteredHistoryResults, limit);
+    let message = historyAssistantPlan.message ? `${historyAssistantPlan.message} · ${summary}` : summary;
+    if (shouldAppendRange) {
+      if (!message.toLowerCase().includes(normalizedRangeLabel)) {
+        message = `${message} · Time range: ${timeRangeLabel}`;
+      }
+    }
     setHistoryAssistantMessage(message);
     historyAssistantPlan = null;
     return;
@@ -860,13 +951,13 @@ function applyHistoryAssistantPlanAfterResults() {
 
   if (intent === "open") {
     const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 3;
-    openHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
+    openHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
     return;
   }
 
   if (intent === "delete") {
     const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 5;
-    deleteHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
+    deleteHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
     return;
   }
 
