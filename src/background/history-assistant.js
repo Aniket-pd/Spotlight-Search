@@ -1,4 +1,8 @@
-import { isSmartHistoryAssistantEnabled, observeFeatureFlags } from "../shared/feature-flags.js";
+import {
+  isSmartHistoryAssistantEnabled,
+  observeFeatureFlags,
+  setSmartHistoryAssistantEnabled,
+} from "../shared/feature-flags.js";
 
 const MAX_HISTORY_RESULTS = 60;
 const MAX_ACTION_RESULTS = 12;
@@ -838,6 +842,12 @@ export function createHistoryAssistantService() {
     },
     async operate({ operation, url }) {
       return handleSingleOperation(operation, url);
+    },
+    async setEnabled({ enabled }) {
+      await setSmartHistoryAssistantEnabled(Boolean(enabled));
+      availabilityCache = null;
+      availabilityTimestamp = 0;
+      return getAvailability();
     },
   };
 }

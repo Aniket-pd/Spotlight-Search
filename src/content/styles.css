@@ -861,6 +861,47 @@
   color: rgba(245, 245, 245, 0.72);
 }
 
+.spotlight-history-assistant-enable {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spotlight-history-assistant-enable.hidden {
+  display: none;
+}
+
+.spotlight-history-assistant-enable-button {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 245, 245, 0.35);
+  background: transparent;
+  color: rgba(245, 245, 245, 0.92);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.spotlight-history-assistant-enable-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(245, 245, 245, 0.55);
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.spotlight-history-assistant-enable-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.spotlight-history-assistant-enable-note {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(245, 245, 245, 0.65);
+}
+
 .spotlight-history-assistant-tips {
   list-style: none;
   display: flex;

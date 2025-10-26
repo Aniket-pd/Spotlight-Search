@@ -122,3 +122,40 @@ export function __resetFeatureFlagCacheForTests() {
   cachedFlags = null;
   pendingPromise = null;
 }
+
+async function writeFlagsToStorage(flags) {
+  if (!chrome?.storage?.local?.set) {
+    throw new Error("Storage unavailable");
+  }
+  const record = { ...DEFAULT_FLAGS, ...(flags || {}) };
+  await chrome.storage.local.set({ [STORAGE_KEY]: record });
+  try {
+    if (chrome?.storage?.local?.remove) {
+      await chrome.storage.local.remove(LEGACY_FLAG_KEY);
+    }
+  } catch (error) {
+    console.warn("Spotlight: failed to clear legacy feature flag", error);
+  }
+  cachedFlags = { ...record };
+}
+
+export async function setSmartHistoryAssistantEnabled(enabled) {
+  const parsed = toBoolean(enabled);
+  if (parsed === null) {
+    throw new Error("Invalid flag value");
+  }
+  let current = {};
+  if (chrome?.storage?.local?.get) {
+    try {
+      const stored = await chrome.storage.local.get({ [STORAGE_KEY]: null });
+      if (stored && typeof stored[STORAGE_KEY] === "object" && stored[STORAGE_KEY] !== null) {
+        current = { ...stored[STORAGE_KEY] };
+      }
+    } catch (error) {
+      console.warn("Spotlight: failed to read flags before update", error);
+    }
+  }
+  const next = { ...current, smartHistoryAssistant: parsed };
+  await writeFlagsToStorage(next);
+  return { ...cachedFlags };
+}

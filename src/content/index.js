@@ -68,6 +68,7 @@ const HISTORY_ASSISTANT_META_CLASS = "spotlight-history-assistant-meta";
 const HISTORY_ASSISTANT_ACTIONS_CLASS = "spotlight-history-assistant-actions";
 const HISTORY_ASSISTANT_SUMMARY_CLASS = "spotlight-history-assistant-summary";
 const HISTORY_ASSISTANT_HIDDEN_CLASS = "hidden";
+const HISTORY_ASSISTANT_ENABLE_BUTTON_LABEL = "Enable Smart History Assistant";
 
 let historyAssistantEl = null;
 let historyAssistantFormEl = null;
@@ -76,6 +77,8 @@ let historyAssistantSubmitEl = null;
 let historyAssistantStatusEl = null;
 let historyAssistantOutputEl = null;
 let historyAssistantTipsEl = null;
+let historyAssistantEnableEl = null;
+let historyAssistantEnableButtonEl = null;
 let historyAssistantState = null;
 let historyAssistantAvailability = {
   loaded: false,
@@ -87,6 +90,7 @@ let historyAssistantAvailability = {
 let historyAssistantStatusPromise = null;
 let historyAssistantStatusFetched = false;
 let historyAssistantRequestId = 0;
+let historyAssistantEnableRequestPending = false;
 
 function getInitialHistoryAssistantState() {
   return {
@@ -183,6 +187,22 @@ function ensureHistoryAssistantPanel() {
     historyAssistantStatusEl = document.createElement("div");
     historyAssistantStatusEl.className = `${HISTORY_ASSISTANT_CLASS}-status`;
 
+    historyAssistantEnableEl = document.createElement("div");
+    historyAssistantEnableEl.className = `${HISTORY_ASSISTANT_CLASS}-enable ${HISTORY_ASSISTANT_HIDDEN_CLASS}`;
+
+    historyAssistantEnableButtonEl = document.createElement("button");
+    historyAssistantEnableButtonEl.type = "button";
+    historyAssistantEnableButtonEl.className = `${HISTORY_ASSISTANT_CLASS}-enable-button`;
+    historyAssistantEnableButtonEl.textContent = HISTORY_ASSISTANT_ENABLE_BUTTON_LABEL;
+    historyAssistantEnableButtonEl.addEventListener("click", handleHistoryAssistantEnableClick);
+
+    const enableNote = document.createElement("p");
+    enableNote.className = `${HISTORY_ASSISTANT_CLASS}-enable-note`;
+    enableNote.textContent = "Turn it on to run natural-language history commands.";
+
+    historyAssistantEnableEl.appendChild(historyAssistantEnableButtonEl);
+    historyAssistantEnableEl.appendChild(enableNote);
+
     historyAssistantTipsEl = document.createElement("ul");
     historyAssistantTipsEl.className = `${HISTORY_ASSISTANT_CLASS}-tips`;
     const tips = [
@@ -203,6 +223,7 @@ function ensureHistoryAssistantPanel() {
     historyAssistantEl.appendChild(description);
     historyAssistantEl.appendChild(historyAssistantFormEl);
     historyAssistantEl.appendChild(historyAssistantStatusEl);
+    historyAssistantEl.appendChild(historyAssistantEnableEl);
     historyAssistantEl.appendChild(historyAssistantTipsEl);
     historyAssistantEl.appendChild(historyAssistantOutputEl);
   }
@@ -213,6 +234,11 @@ function ensureHistoryAssistantPanel() {
 
 function resetHistoryAssistantState(options = {}) {
   historyAssistantState = getInitialHistoryAssistantState();
+  historyAssistantEnableRequestPending = false;
+  if (historyAssistantEnableButtonEl) {
+    historyAssistantEnableButtonEl.disabled = false;
+    historyAssistantEnableButtonEl.textContent = HISTORY_ASSISTANT_ENABLE_BUTTON_LABEL;
+  }
   if (historyAssistantInputEl) {
     historyAssistantInputEl.value = "";
   }
@@ -244,8 +270,17 @@ function formatHistoryAssistantStatusText() {
     parts.push("Checking assistant availability…");
     return parts.join(" · ");
   }
+  if (historyAssistantEnableRequestPending) {
+    parts.push("Enabling Smart History Assistant…");
+    return parts.join(" · ");
+  }
   if (!historyAssistantAvailability.enabled) {
     parts.push("Smart History Assistant is disabled");
+    const disableReason =
+      historyAssistantAvailability.reason && historyAssistantAvailability.reason !== "Feature disabled"
+        ? historyAssistantAvailability.reason
+        : "Turn it on below to start using it.";
+    parts.push(disableReason);
   } else if (!historyAssistantAvailability.available) {
     parts.push(historyAssistantAvailability.reason || "Smart History Assistant unavailable");
   } else if (historyAssistantState.error) {
@@ -455,6 +490,19 @@ function renderHistoryAssistantState() {
     historyAssistantEl.classList.toggle("disabled", !historyAssistantAvailability.enabled);
   }
 
+  if (historyAssistantEnableEl) {
+    const showEnable = historyAssistantAvailability.loaded && !historyAssistantAvailability.enabled;
+    historyAssistantEnableEl.classList.toggle(HISTORY_ASSISTANT_HIDDEN_CLASS, !showEnable);
+  }
+
+  if (historyAssistantEnableButtonEl) {
+    historyAssistantEnableButtonEl.disabled =
+      historyAssistantEnableRequestPending || !historyAssistantAvailability.loaded || historyAssistantAvailability.enabled;
+    if (!historyAssistantEnableRequestPending) {
+      historyAssistantEnableButtonEl.textContent = HISTORY_ASSISTANT_ENABLE_BUTTON_LABEL;
+    }
+  }
+
   if (
     historyAssistantAvailability.loaded &&
     (!historyAssistantAvailability.available || !historyAssistantAvailability.enabled)
@@ -554,6 +602,58 @@ function requestHistoryAssistantStatus(force = false) {
     });
   });
   return historyAssistantStatusPromise;
+}
+
+function handleHistoryAssistantEnableClick() {
+  if (historyAssistantEnableRequestPending) {
+    return;
+  }
+  historyAssistantEnableRequestPending = true;
+  if (historyAssistantEnableButtonEl) {
+    historyAssistantEnableButtonEl.disabled = true;
+    historyAssistantEnableButtonEl.textContent = "Enabling…";
+  }
+  renderHistoryAssistantState();
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_ASSISTANT_SET_ENABLED", enabled: true },
+    (response) => {
+      historyAssistantEnableRequestPending = false;
+      if (historyAssistantEnableButtonEl) {
+        historyAssistantEnableButtonEl.disabled = false;
+        historyAssistantEnableButtonEl.textContent = HISTORY_ASSISTANT_ENABLE_BUTTON_LABEL;
+      }
+      if (chrome.runtime.lastError) {
+        setHistoryAssistantAvailability({
+          enabled: false,
+          available: false,
+          state: "error",
+          reason: chrome.runtime.lastError.message || "Unable to enable assistant",
+        });
+        return;
+      }
+      if (!response || response.success === false) {
+        const state = typeof response?.state === "string" ? response.state : "error";
+        const reason = (response && response.error) || response?.reason || "Unable to enable assistant";
+        setHistoryAssistantAvailability({
+          enabled: Boolean(response && response.enabled),
+          available: Boolean(response && response.available),
+          state,
+          reason,
+        });
+        return;
+      }
+      const nextAvailability = {
+        enabled: Boolean(response.enabled),
+        available: Boolean(response.available),
+        state: typeof response.state === "string" ? response.state : "unknown",
+        reason: typeof response.reason === "string" ? response.reason : "",
+      };
+      setHistoryAssistantAvailability(nextAvailability);
+      if (nextAvailability.enabled) {
+        requestHistoryAssistantStatus(true);
+      }
+    }
+  );
 }
 
 function handleHistoryAssistantKeydown(event) {

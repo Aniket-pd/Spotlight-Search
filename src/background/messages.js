@@ -225,6 +225,24 @@ export function registerMessageHandlers({
       return true;
     }
 
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_SET_ENABLED") {
+      if (!historyAssistant || typeof historyAssistant.setEnabled !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const enabled = Boolean(message.enabled);
+      historyAssistant
+        .setEnabled({ enabled })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant enable toggle failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to update assistant setting" });
+        });
+      return true;
+    }
+
     if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_OPERATE") {
       if (!historyAssistant || typeof historyAssistant.operate !== "function") {
         sendResponse({ success: false, error: "History assistant unavailable" });
