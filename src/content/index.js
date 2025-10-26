@@ -1,3 +1,5 @@
+import { createHistoryAssistant } from "./history-assistant.js";
+
 const OVERLAY_ID = "spotlight-overlay";
 const RESULTS_LIST_ID = "spotlight-results-list";
 const RESULT_OPTION_ID_PREFIX = "spotlight-option-";
@@ -51,6 +53,7 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+let historyAssistantController = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -386,6 +389,15 @@ function createOverlay() {
   statusEl.textContent = "";
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
+
+  historyAssistantController = createHistoryAssistant({
+    mountPoint: inputWrapper,
+    refreshResults: () => {
+      if (isOpen && inputEl) {
+        requestResults(inputEl.value);
+      }
+    },
+  });
 
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
@@ -1270,6 +1282,9 @@ async function openOverlay() {
   resetEngineMenuState();
   resetWebSearchSelection();
   pointerNavigationSuspended = true;
+  if (historyAssistantController) {
+    historyAssistantController.setActive(false);
+  }
 
   if (!shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
@@ -1314,6 +1329,9 @@ function closeOverlay() {
   }
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
+  }
+  if (historyAssistantController) {
+    historyAssistantController.handleOverlayClosed();
   }
 }
 
@@ -1524,6 +1542,9 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      if (historyAssistantController) {
+        historyAssistantController.setActive(activeFilter === "history");
+      }
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
