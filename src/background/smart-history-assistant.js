@@ -220,8 +220,9 @@ function detectPresetRange(normalized, now) {
   if (!presetId) {
     return null;
   }
-  const bounds = resolvePresetBounds(presetId, now);
-  return { presetId, ...bounds };
+  const resolvedAt = Number.isFinite(now) && now > 0 ? now : Date.now();
+  const bounds = resolvePresetBounds(presetId, resolvedAt);
+  return { presetId, ...bounds, kind: "preset", resolvedAt };
 }
 
 function resolveQuantityToken(token) {
@@ -320,7 +321,16 @@ function buildRelativeRange(quantityToken, unitToken, now) {
   } else if (unit === "month" && Math.abs(quantity - 1) < 0.001) {
     presetId = "last30";
   }
-  return { presetId, from, to };
+  return {
+    presetId,
+    from,
+    to,
+    kind: "relative",
+    resolvedAt: safeNow,
+    unit,
+    quantity,
+    durationMs: duration,
+  };
 }
 
 function parseRelativeTimeRange(normalized, now) {
@@ -359,7 +369,19 @@ function parseRelativeTimeRange(normalized, now) {
 
 function parseTimeRange(value, now = Date.now()) {
   const raw = sanitizeString(value);
-  const base = { raw, label: raw, presetId: null, from: null, to: null };
+  const referenceNow = Number.isFinite(now) && now > 0 ? now : Date.now();
+  const base = {
+    raw,
+    label: raw,
+    presetId: null,
+    from: null,
+    to: null,
+    kind: "freeform",
+    resolvedAt: referenceNow,
+    unit: null,
+    quantity: null,
+    durationMs: null,
+  };
   if (!raw) {
     return base;
   }
@@ -381,11 +403,11 @@ function parseTimeRange(value, now = Date.now()) {
     return token;
   });
   const canonicalNormalized = canonicalTokens.join(" ");
-  const preset = detectPresetRange(canonicalNormalized, now);
+  const preset = detectPresetRange(canonicalNormalized, referenceNow);
   if (preset) {
     return { ...base, ...preset };
   }
-  const relative = parseRelativeTimeRange(canonicalNormalized, now);
+  const relative = parseRelativeTimeRange(canonicalNormalized, referenceNow);
   if (relative) {
     return { ...base, ...relative };
   }
@@ -401,7 +423,23 @@ function buildTimeRangePayload(range) {
   const label = sanitizeString(range.label || raw);
   const from = Number.isFinite(range.from) && range.from >= 0 ? Math.floor(range.from) : null;
   const to = Number.isFinite(range.to) && range.to >= 0 ? Math.floor(range.to) : null;
-  if (!presetId && !raw && !label && from === null && to === null) {
+  const kind = typeof range.kind === "string" && range.kind ? range.kind : null;
+  const resolvedAt = Number.isFinite(range.resolvedAt) && range.resolvedAt >= 0 ? Math.floor(range.resolvedAt) : null;
+  const unit = typeof range.unit === "string" && range.unit ? range.unit : null;
+  const quantity = Number.isFinite(range.quantity) && range.quantity > 0 ? range.quantity : null;
+  const durationMs = Number.isFinite(range.durationMs) && range.durationMs > 0 ? Math.floor(range.durationMs) : null;
+  if (
+    !presetId &&
+    !raw &&
+    !label &&
+    from === null &&
+    to === null &&
+    !kind &&
+    resolvedAt === null &&
+    !unit &&
+    quantity === null &&
+    durationMs === null
+  ) {
     return null;
   }
   const payload = {
@@ -414,6 +452,21 @@ function buildTimeRangePayload(range) {
   }
   if (to !== null) {
     payload.to = to;
+  }
+  if (kind) {
+    payload.kind = kind;
+  }
+  if (resolvedAt !== null) {
+    payload.resolvedAt = resolvedAt;
+  }
+  if (unit) {
+    payload.unit = unit;
+  }
+  if (quantity !== null) {
+    payload.quantity = quantity;
+  }
+  if (durationMs !== null) {
+    payload.durationMs = durationMs;
   }
   return payload;
 }

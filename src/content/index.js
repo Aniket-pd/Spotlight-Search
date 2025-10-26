@@ -719,7 +719,25 @@ function sanitizeHistoryAssistantTimeRange(range) {
   const label = labelCandidate || raw || fallbackPresetLabel;
   const from = Number.isFinite(range.from) && range.from >= 0 ? range.from : null;
   const to = Number.isFinite(range.to) && range.to >= 0 ? range.to : null;
-  if (!presetId && !raw && !label && from === null && to === null) {
+  const kind = typeof range.kind === "string" && range.kind ? range.kind : null;
+  const resolvedAt = Number.isFinite(range.resolvedAt) && range.resolvedAt >= 0 ? range.resolvedAt : null;
+  const unit = typeof range.unit === "string" ? range.unit.trim() : "";
+  const normalizedUnit = unit ? unit.toLowerCase() : "";
+  const safeUnit = normalizedUnit ? normalizedUnit.replace(/[^a-z]/g, "") : "";
+  const quantity = Number.isFinite(range.quantity) && range.quantity > 0 ? range.quantity : null;
+  const durationMs = Number.isFinite(range.durationMs) && range.durationMs > 0 ? range.durationMs : null;
+  if (
+    !presetId &&
+    !raw &&
+    !label &&
+    from === null &&
+    to === null &&
+    !kind &&
+    resolvedAt === null &&
+    !safeUnit &&
+    quantity === null &&
+    durationMs === null
+  ) {
     return null;
   }
   return {
@@ -728,15 +746,128 @@ function sanitizeHistoryAssistantTimeRange(range) {
     label,
     from,
     to,
+    kind,
+    resolvedAt,
+    unit: safeUnit || null,
+    quantity,
+    durationMs,
   };
+}
+
+const HISTORY_ASSISTANT_SECOND_MS = 1000;
+const HISTORY_ASSISTANT_MINUTE_MS = 60 * HISTORY_ASSISTANT_SECOND_MS;
+const HISTORY_ASSISTANT_HOUR_MS = 60 * HISTORY_ASSISTANT_MINUTE_MS;
+const HISTORY_ASSISTANT_DAY_MS = 24 * HISTORY_ASSISTANT_HOUR_MS;
+const HISTORY_ASSISTANT_WEEK_MS = 7 * HISTORY_ASSISTANT_DAY_MS;
+const HISTORY_ASSISTANT_MONTH_MS = 30 * HISTORY_ASSISTANT_DAY_MS;
+
+function toHistoryAssistantStartOfDay(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function resolveHistoryAssistantPresetBounds(presetId, now) {
+  const reference = Number.isFinite(now) ? now : Date.now();
+  const safeNow = reference > 0 ? reference : Date.now();
+  if (presetId === "all") {
+    return { from: null, to: null };
+  }
+  if (presetId === "today") {
+    const startToday = toHistoryAssistantStartOfDay(safeNow);
+    return { from: startToday, to: safeNow };
+  }
+  if (presetId === "yesterday") {
+    const startToday = toHistoryAssistantStartOfDay(safeNow);
+    const startYesterday = startToday - HISTORY_ASSISTANT_DAY_MS;
+    return { from: startYesterday, to: startToday };
+  }
+  if (presetId === "last7") {
+    return { from: Math.max(0, safeNow - 7 * HISTORY_ASSISTANT_DAY_MS), to: safeNow };
+  }
+  if (presetId === "last30") {
+    return { from: Math.max(0, safeNow - 30 * HISTORY_ASSISTANT_DAY_MS), to: safeNow };
+  }
+  if (presetId === "older") {
+    return { from: 0, to: Math.max(0, safeNow - 30 * HISTORY_ASSISTANT_DAY_MS) };
+  }
+  return { from: null, to: null };
+}
+
+function resolveHistoryAssistantRelativeBounds(range, now) {
+  const reference = Number.isFinite(now) && now > 0 ? now : Date.now();
+  const duration = Number.isFinite(range?.durationMs) && range.durationMs > 0 ? range.durationMs : null;
+  if (!duration) {
+    const unit = typeof range?.unit === "string" && range.unit ? range.unit.toLowerCase() : null;
+    const quantity = Number.isFinite(range?.quantity) && range.quantity > 0 ? range.quantity : null;
+    if (!unit || !quantity) {
+      return { from: null, to: null };
+    }
+    const unitMap = {
+      second: HISTORY_ASSISTANT_SECOND_MS,
+      minute: HISTORY_ASSISTANT_MINUTE_MS,
+      hour: HISTORY_ASSISTANT_HOUR_MS,
+      day: HISTORY_ASSISTANT_DAY_MS,
+      week: HISTORY_ASSISTANT_WEEK_MS,
+      month: HISTORY_ASSISTANT_MONTH_MS,
+      year: 365 * HISTORY_ASSISTANT_DAY_MS,
+    };
+    const unitMs = unitMap[unit] || null;
+    if (!unitMs) {
+      return { from: null, to: null };
+    }
+    const computedDuration = quantity * unitMs;
+    if (!Number.isFinite(computedDuration) || computedDuration <= 0) {
+      return { from: null, to: null };
+    }
+    const to = reference;
+    const from = Math.max(0, Math.floor(to - computedDuration));
+    return { from, to };
+  }
+  const to = reference;
+  const from = Math.max(0, Math.floor(to - duration));
+  return { from, to };
+}
+
+function resolveHistoryAssistantBounds(range, now = Date.now()) {
+  if (!range || typeof range !== "object") {
+    return { from: null, to: null };
+  }
+  const presetId = typeof range.presetId === "string" && range.presetId ? range.presetId : null;
+  const kind = typeof range.kind === "string" ? range.kind : null;
+  const reference = Number.isFinite(now) && now > 0 ? now : Date.now();
+
+  if (kind === "preset" && presetId) {
+    return resolveHistoryAssistantPresetBounds(presetId, reference);
+  }
+
+  if (kind === "relative") {
+    const bounds = resolveHistoryAssistantRelativeBounds(range, reference);
+    if (bounds.from !== null || bounds.to !== null) {
+      return bounds;
+    }
+  }
+
+  if (presetId) {
+    const presetBounds = resolveHistoryAssistantPresetBounds(presetId, reference);
+    if (presetBounds.from !== null || presetBounds.to !== null) {
+      return presetBounds;
+    }
+  }
+
+  const from = Number.isFinite(range.from) && range.from >= 0 ? range.from : null;
+  const to = Number.isFinite(range.to) && range.to >= 0 ? range.to : null;
+  if (from !== null || to !== null) {
+    return { from, to };
+  }
+  return { from: null, to: null };
 }
 
 function filterHistoryResultsByTimeRange(results, range) {
   if (!Array.isArray(results) || !results.length || !range || typeof range !== "object") {
     return Array.isArray(results) ? results : [];
   }
-  const from = Number.isFinite(range.from) ? range.from : null;
-  const to = Number.isFinite(range.to) ? range.to : null;
+  const { from, to } = resolveHistoryAssistantBounds(range);
   if (from === null && to === null) {
     return results;
   }
