@@ -38,6 +38,32 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+const SMART_HISTORY_ASSISTANT_ENABLED = (() => {
+  if (typeof globalThis === "undefined") {
+    return true;
+  }
+  const flags = globalThis.SpotlightFeatureFlags;
+  if (flags && typeof flags.smartHistoryAssistant === "boolean") {
+    return flags.smartHistoryAssistant;
+  }
+  if (globalThis.SpotlightFeatureFlagUtils && typeof globalThis.SpotlightFeatureFlagUtils.isSmartHistoryAssistantEnabled === "function") {
+    try {
+      return Boolean(globalThis.SpotlightFeatureFlagUtils.isSmartHistoryAssistantEnabled());
+    } catch (err) {
+      return true;
+    }
+  }
+  return true;
+})();
+let historyAssistantContainerEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantSubmitEl = null;
+let historyAssistantMessageEl = null;
+let historyAssistantVisible = false;
+let historyAssistantLoading = false;
+let historyAssistantPlan = null;
+let historyAssistantRequestId = 0;
+let pendingHistoryAssistantSubfilter = null;
 let pointerNavigationSuspended = false;
 let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
@@ -381,6 +407,10 @@ function createOverlay() {
   inputWrapper.appendChild(subfilterContainerEl);
   ensureBookmarkOrganizerControl();
 
+  if (SMART_HISTORY_ASSISTANT_ENABLED) {
+    createHistoryAssistantUI(inputWrapper);
+  }
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -494,6 +524,436 @@ function installOverlayGuards() {
       shadowRootEl.addEventListener(type, stopKeys);
     });
   }
+}
+
+function createHistoryAssistantUI(parent) {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || historyAssistantContainerEl || !parent) {
+    return;
+  }
+  const container = document.createElement("div");
+  container.className = "spotlight-history-assistant";
+  container.hidden = true;
+  container.setAttribute("aria-hidden", "true");
+
+  const form = document.createElement("form");
+  form.className = "spotlight-history-assistant-form";
+  form.setAttribute("role", "group");
+  form.setAttribute("aria-label", "Smart history assistant");
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "spotlight-history-assistant-input";
+  input.setAttribute("placeholder", "Ask Spotlight about your history…");
+  input.setAttribute("spellcheck", "false");
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "spotlight-history-assistant-submit";
+  button.textContent = "Ask";
+
+  form.appendChild(input);
+  form.appendChild(button);
+  container.appendChild(form);
+
+  const message = document.createElement("div");
+  message.className = "spotlight-history-assistant-message";
+  message.setAttribute("aria-live", "polite");
+  container.appendChild(message);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    handleHistoryAssistantSubmit();
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.metaKey) {
+      event.preventDefault();
+      handleHistoryAssistantSubmit();
+    }
+    if (event.key === "Escape" && historyAssistantVisible) {
+      input.value = "";
+      setHistoryAssistantMessage("");
+    }
+  });
+
+  parent.appendChild(container);
+
+  historyAssistantContainerEl = container;
+  historyAssistantInputEl = input;
+  historyAssistantSubmitEl = button;
+  historyAssistantMessageEl = message;
+}
+
+function sendRuntimeMessage(payload) {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(payload, (response) => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message || "Runtime message failed"));
+          return;
+        }
+        resolve(response);
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function setHistoryAssistantLoading(loading) {
+  historyAssistantLoading = Boolean(loading);
+  if (historyAssistantContainerEl) {
+    historyAssistantContainerEl.classList.toggle("loading", historyAssistantLoading);
+  }
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.disabled = historyAssistantLoading;
+  }
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.disabled = historyAssistantLoading;
+  }
+}
+
+function setHistoryAssistantMessage(message, options = {}) {
+  if (!historyAssistantMessageEl) {
+    return;
+  }
+  const text = typeof message === "string" ? message : "";
+  historyAssistantMessageEl.textContent = text;
+  const tone = typeof options.tone === "string" ? options.tone : "";
+  historyAssistantMessageEl.classList.toggle("error", tone === "error");
+  historyAssistantMessageEl.classList.toggle("success", tone === "success");
+  historyAssistantMessageEl.classList.toggle("muted", tone === "muted");
+}
+
+function resetHistoryAssistantState() {
+  historyAssistantPlan = null;
+  pendingHistoryAssistantSubfilter = null;
+  setHistoryAssistantLoading(false);
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  setHistoryAssistantMessage("");
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantContainerEl) {
+    return;
+  }
+  const shouldShow = isOpen && activeFilter === "history";
+  if (historyAssistantVisible === shouldShow) {
+    return;
+  }
+  historyAssistantVisible = shouldShow;
+  historyAssistantContainerEl.hidden = !shouldShow;
+  historyAssistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    resetHistoryAssistantState();
+  } else if (!historyAssistantMessageEl?.textContent) {
+    setHistoryAssistantMessage("Try natural requests like “Show videos from yesterday.”", { tone: "muted" });
+  }
+}
+
+function handleHistoryAssistantSubmit() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantInputEl) {
+    return;
+  }
+  const text = historyAssistantInputEl.value.trim();
+  if (!text) {
+    setHistoryAssistantMessage("Ask about your browsing history to get started.", { tone: "muted" });
+    return;
+  }
+  runHistoryAssistantRequest(text);
+}
+
+async function runHistoryAssistantRequest(text) {
+  const requestId = ++historyAssistantRequestId;
+  setHistoryAssistantLoading(true);
+  setHistoryAssistantMessage("Understanding your request…", { tone: "muted" });
+  try {
+    const response = await sendRuntimeMessage({
+      type: "SPOTLIGHT_HISTORY_ASSISTANT",
+      text,
+    });
+    if (requestId !== historyAssistantRequestId) {
+      return;
+    }
+    if (!response || !response.success || !response.plan) {
+      const errorMessage = response && typeof response.error === "string" ? response.error : "Assistant unavailable";
+      setHistoryAssistantMessage(errorMessage, { tone: "error" });
+      return;
+    }
+    applyHistoryAssistantPlan(response.plan, requestId);
+  } catch (error) {
+    if (requestId !== historyAssistantRequestId) {
+      return;
+    }
+    const errorMessage = error?.message || "Assistant unavailable";
+    setHistoryAssistantMessage(errorMessage, { tone: "error" });
+  } finally {
+    if (requestId === historyAssistantRequestId) {
+      setHistoryAssistantLoading(false);
+    }
+  }
+}
+
+function applyHistoryAssistantPlan(plan, requestId) {
+  if (!plan || typeof plan !== "object") {
+    setHistoryAssistantMessage("Assistant returned an empty plan", { tone: "error" });
+    return;
+  }
+  const intent = typeof plan.intent === "string" ? plan.intent : "show";
+  const message = typeof plan.message === "string" ? plan.message : "";
+  const query = typeof plan.query === "string" ? plan.query.trim() : "";
+  const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
+  const limit = Number.isFinite(plan.limit) ? plan.limit : null;
+
+  historyAssistantPlan = {
+    intent,
+    message,
+    subfilterId,
+    limit,
+    requestId,
+  };
+
+  if (message) {
+    setHistoryAssistantMessage(message);
+  } else {
+    setHistoryAssistantMessage("Assistant ready.", { tone: "muted" });
+  }
+
+  if (subfilterId) {
+    pendingHistoryAssistantSubfilter = { type: "history", id: subfilterId };
+    selectedSubfilter = { type: "history", id: subfilterId };
+  } else {
+    pendingHistoryAssistantSubfilter = null;
+  }
+
+  if (intent === "info") {
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (inputEl) {
+    const nextQuery = query || "history:";
+    inputEl.value = nextQuery;
+    inputEl.setSelectionRange(nextQuery.length, nextQuery.length);
+    handleInputChange();
+  }
+}
+
+function formatCountLabel(count, singular, plural = null) {
+  const value = Number.isFinite(count) ? count : 0;
+  const labelPlural = plural || `${singular}s`;
+  return `${value} ${value === 1 ? singular : labelPlural}`;
+}
+
+function buildHistorySummary(results, limit = 20) {
+  if (!Array.isArray(results) || !results.length) {
+    return "No matching history found.";
+  }
+  const slice = results.slice(0, Math.max(1, Math.min(limit, results.length)));
+  const domainCounts = new Map();
+  const dayCounts = new Map();
+  let newestTime = 0;
+  let oldestTime = Number.POSITIVE_INFINITY;
+
+  slice.forEach((entry) => {
+    const url = typeof entry?.url === "string" ? entry.url : "";
+    if (url) {
+      try {
+        const domain = new URL(url).hostname.toLowerCase();
+        if (domain) {
+          domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1);
+        }
+      } catch (err) {
+        const sanitized = url.replace(/^https?:\/\//i, "");
+        const fallback = sanitized.split("/")[0];
+        if (fallback) {
+          domainCounts.set(fallback.toLowerCase(), (domainCounts.get(fallback.toLowerCase()) || 0) + 1);
+        }
+      }
+    }
+    const timestamp = typeof entry?.timeStamp === "number" ? entry.timeStamp : typeof entry?.lastVisitTime === "number" ? entry.lastVisitTime : 0;
+    if (timestamp > 0) {
+      newestTime = Math.max(newestTime, timestamp);
+      oldestTime = Math.min(oldestTime, timestamp);
+      const dayLabel = new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      dayCounts.set(dayLabel, (dayCounts.get(dayLabel) || 0) + 1);
+    }
+  });
+
+  const totalLabel = formatCountLabel(results.length, "match");
+  const topDomains = Array.from(domainCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([domain, count]) => `${domain} (${count})`)
+    .join(", ");
+  const peakDays = Array.from(dayCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([day, count]) => `${day} (${count})`)
+    .join(", ");
+
+  let rangeLabel = "";
+  if (Number.isFinite(oldestTime) && newestTime && newestTime >= oldestTime) {
+    const start = new Date(oldestTime).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const end = new Date(newestTime).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    rangeLabel = start === end ? `on ${start}` : `from ${start} to ${end}`;
+  }
+
+  let summary = `Found ${totalLabel}`;
+  if (rangeLabel) {
+    summary = `${summary} ${rangeLabel}`.trim();
+  }
+  if (topDomains) {
+    summary = `${summary} · Top sites: ${topDomains}`;
+  }
+  if (peakDays) {
+    summary = `${summary} · Peak days: ${peakDays}`;
+  }
+  return summary;
+}
+
+function applyHistoryAssistantPlanAfterResults() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantPlan) {
+    return;
+  }
+  if (historyAssistantPlan.requestId !== historyAssistantRequestId) {
+    return;
+  }
+  const intent = historyAssistantPlan.intent || "show";
+  if (intent === "info") {
+    historyAssistantPlan = null;
+    return;
+  }
+  const historyResults = Array.isArray(resultsState)
+    ? resultsState.filter((result) => result && result.type === "history")
+    : [];
+
+  if (intent === "show") {
+    const countLabel = formatCountLabel(historyResults.length, "match");
+    if (historyResults.length) {
+      const message = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · ${countLabel}`
+        : `Found ${countLabel}.`;
+      setHistoryAssistantMessage(message);
+    } else {
+      const message = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matches found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(message, { tone: "muted" });
+    }
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (intent === "summarize") {
+    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 20;
+    const summary = buildHistorySummary(historyResults, limit);
+    const message = historyAssistantPlan.message ? `${historyAssistantPlan.message} · ${summary}` : summary;
+    setHistoryAssistantMessage(message);
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (intent === "open") {
+    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 1;
+    openHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
+    return;
+  }
+
+  if (intent === "delete") {
+    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 3;
+    deleteHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
+    return;
+  }
+
+  historyAssistantPlan = null;
+}
+
+async function deleteHistoryEntries(results, limit, planId) {
+  const max = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 3, Array.isArray(results) ? results.length : 0));
+  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+  const urls = targets.map((entry) => (typeof entry?.url === "string" ? entry.url : "")).filter(Boolean);
+  if (!urls.length) {
+    setHistoryAssistantMessage("No matching history to delete.", { tone: "muted" });
+    historyAssistantPlan = null;
+    return;
+  }
+  setHistoryAssistantLoading(true);
+  try {
+    const response = await sendRuntimeMessage({ type: "SPOTLIGHT_HISTORY_DELETE", urls });
+    if (planId !== historyAssistantRequestId) {
+      return;
+    }
+    if (!response || !response.success) {
+      const errorMessage = typeof response?.error === "string" ? response.error : "Failed to delete history.";
+      setHistoryAssistantMessage(errorMessage, { tone: "error" });
+      historyAssistantPlan = null;
+      return;
+    }
+    const count = Number.isFinite(response.count) ? response.count : urls.length;
+    const countLabel = formatCountLabel(count, "entry");
+    setHistoryAssistantMessage(`Removed ${countLabel} from history.`, { tone: "success" });
+    historyAssistantPlan = null;
+    setTimeout(() => {
+      if (isOpen && inputEl) {
+        requestResults(inputEl.value);
+      }
+    }, 200);
+  } catch (error) {
+    if (planId !== historyAssistantRequestId) {
+      return;
+    }
+    const message = error?.message || "Failed to delete history.";
+    setHistoryAssistantMessage(message, { tone: "error" });
+    historyAssistantPlan = null;
+  } finally {
+    if (planId === historyAssistantRequestId) {
+      setHistoryAssistantLoading(false);
+    }
+  }
+}
+
+async function openHistoryEntries(results, limit, planId) {
+  const max = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 1, Array.isArray(results) ? results.length : 0));
+  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+  if (!targets.length) {
+    setHistoryAssistantMessage("No matching history to open.", { tone: "muted" });
+    historyAssistantPlan = null;
+    return;
+  }
+  const outcomes = await Promise.all(
+    targets.map(
+      (entry) =>
+        new Promise((resolve) => {
+          if (!entry || typeof entry.id === "undefined") {
+            resolve(false);
+            return;
+          }
+          chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: entry.id }, () => {
+            if (chrome.runtime.lastError) {
+              console.warn("Spotlight: failed to open history result", chrome.runtime.lastError);
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          });
+        })
+    )
+  );
+  if (planId !== historyAssistantRequestId) {
+    return;
+  }
+  const opened = outcomes.filter(Boolean).length;
+  if (opened <= 0) {
+    setHistoryAssistantMessage("Unable to open the requested history entries.", { tone: "error" });
+  } else {
+    const countLabel = formatCountLabel(opened, "tab");
+    setHistoryAssistantMessage(`Opened ${countLabel} in the background.`, { tone: "success" });
+  }
+  historyAssistantPlan = null;
 }
 
 function resetSlashMenuState() {
@@ -985,6 +1445,7 @@ function applySlashSelection(option) {
 function resetSubfilterState() {
   subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
   selectedSubfilter = null;
+  pendingHistoryAssistantSubfilter = null;
   renderSubfilters();
 }
 
@@ -1030,6 +1491,19 @@ function updateSubfilterState(payload) {
     selectedSubfilter = { type, id: resolvedActiveId };
   } else {
     selectedSubfilter = null;
+  }
+  if (
+    pendingHistoryAssistantSubfilter &&
+    pendingHistoryAssistantSubfilter.type === type &&
+    typeof pendingHistoryAssistantSubfilter.id === "string"
+  ) {
+    const desiredId = pendingHistoryAssistantSubfilter.id;
+    const match = sanitizedOptions.find((option) => option && option.id === desiredId);
+    if (match) {
+      subfilterState = { ...subfilterState, activeId: desiredId };
+      selectedSubfilter = desiredId === "all" ? null : { type, id: desiredId };
+    }
+    pendingHistoryAssistantSubfilter = null;
   }
   renderSubfilters();
 }
@@ -1307,6 +1781,7 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  updateHistoryAssistantVisibility();
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -1524,9 +1999,11 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantVisibility();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
+      applyHistoryAssistantPlanAfterResults();
 
       if (response.webSearch && typeof response.webSearch.engineId === "string") {
         const api = getWebSearchApi();
