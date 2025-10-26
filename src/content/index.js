@@ -60,6 +60,28 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const SMART_HISTORY_ASSISTANT_FLAG_KEY = "spotlight.smartHistoryAssistantEnabled";
+const HISTORY_ASSISTANT_MAX_ITEMS = 12;
+let featureFlags = { smartHistoryAssistant: false };
+let historyAssistantContainerEl = null;
+let historyAssistantFormEl = null;
+let historyAssistantQueryInputEl = null;
+let historyAssistantPromptInputEl = null;
+let historyAssistantSubmitButtonEl = null;
+let historyAssistantStatusEl = null;
+let historyAssistantResultsEl = null;
+let historyAssistantHintEl = null;
+let historyAssistantActive = false;
+let historyAssistantRequestCounter = 0;
+let historyAssistantPendingRequestId = null;
+let historyAssistantLoading = false;
+let historyAssistantLastAction = null;
+const historyAssistantTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -111,6 +133,432 @@ const lazyList = createLazyList(
     });
   }
 );
+
+function extractHostname(url = "") {
+  if (!url) {
+    return "";
+  }
+  try {
+    const hostname = new URL(url).hostname || "";
+    return hostname.replace(/^www\./, "");
+  } catch (error) {
+    return "";
+  }
+}
+
+function formatHistoryAssistantTimestamp(timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+  try {
+    return historyAssistantTimeFormatter.format(new Date(timestamp));
+  } catch (error) {
+    return "";
+  }
+}
+
+function setHistoryAssistantLoading(isLoading) {
+  historyAssistantLoading = Boolean(isLoading);
+  if (historyAssistantContainerEl) {
+    historyAssistantContainerEl.classList.toggle("loading", historyAssistantLoading);
+  }
+  if (historyAssistantSubmitButtonEl) {
+    historyAssistantSubmitButtonEl.disabled = historyAssistantLoading;
+    if (historyAssistantLoading) {
+      historyAssistantSubmitButtonEl.setAttribute("aria-busy", "true");
+    } else {
+      historyAssistantSubmitButtonEl.removeAttribute("aria-busy");
+    }
+  }
+  if (historyAssistantQueryInputEl) {
+    historyAssistantQueryInputEl.readOnly = historyAssistantLoading;
+  }
+  if (historyAssistantPromptInputEl) {
+    historyAssistantPromptInputEl.readOnly = historyAssistantLoading;
+  }
+}
+
+function updateHistoryAssistantStatus(message, options = {}) {
+  if (!historyAssistantStatusEl) {
+    return;
+  }
+  const { error = false, subtle = false } = typeof options === "object" && options ? options : {};
+  historyAssistantStatusEl.textContent = message || "";
+  historyAssistantStatusEl.classList.toggle("error", Boolean(error));
+  historyAssistantStatusEl.classList.toggle("subtle", Boolean(subtle));
+}
+
+function clearHistoryAssistantResults() {
+  if (historyAssistantResultsEl) {
+    historyAssistantResultsEl.innerHTML = "";
+  }
+  if (historyAssistantHintEl) {
+    historyAssistantHintEl.classList.remove("hidden");
+  }
+}
+
+function openHistoryAssistantUrl(url) {
+  if (!url) {
+    return;
+  }
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_ASSISTANT_OPEN_URL", url }, (response) => {
+    if (chrome.runtime.lastError) {
+      updateHistoryAssistantStatus(chrome.runtime.lastError.message || "Unable to open link", { error: true });
+      return;
+    }
+    if (!response || response.success !== true) {
+      updateHistoryAssistantStatus(response?.error || "Unable to open link", { error: true });
+    }
+  });
+}
+
+function buildHistoryAssistantList(items = []) {
+  const list = document.createElement("ul");
+  list.className = "spotlight-history-assistant-list";
+  items.slice(0, HISTORY_ASSISTANT_MAX_ITEMS).forEach((item) => {
+    if (!item || typeof item.url !== "string") {
+      return;
+    }
+    const li = document.createElement("li");
+    li.className = "spotlight-history-assistant-item";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-history-assistant-link";
+    button.textContent = item.title || item.url;
+    button.addEventListener("click", () => {
+      openHistoryAssistantUrl(item.url);
+    });
+    li.appendChild(button);
+
+    const meta = document.createElement("div");
+    meta.className = "spotlight-history-assistant-meta";
+    const parts = [];
+    const hostname = extractHostname(item.url);
+    if (hostname) {
+      parts.push(hostname);
+    }
+    const timestamp = formatHistoryAssistantTimestamp(item.lastVisitTime);
+    if (timestamp) {
+      parts.push(timestamp);
+    }
+    meta.textContent = parts.join(" · ");
+    li.appendChild(meta);
+
+    list.appendChild(li);
+  });
+  return list;
+}
+
+function renderHistoryAssistantItems(items = []) {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  if (!Array.isArray(items) || !items.length) {
+    const empty = document.createElement("div");
+    empty.className = "spotlight-history-assistant-empty";
+    empty.textContent = "No matching history entries.";
+    historyAssistantResultsEl.appendChild(empty);
+    return;
+  }
+  const list = buildHistoryAssistantList(items);
+  historyAssistantResultsEl.appendChild(list);
+  if (historyAssistantHintEl) {
+    historyAssistantHintEl.classList.add("hidden");
+  }
+}
+
+function renderHistoryAssistantSummary(summary, items = []) {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  const summaryEl = document.createElement("div");
+  summaryEl.className = "spotlight-history-assistant-summary";
+  summaryEl.textContent = summary || "No summary available.";
+  historyAssistantResultsEl.appendChild(summaryEl);
+  if (Array.isArray(items) && items.length) {
+    const divider = document.createElement("div");
+    divider.className = "spotlight-history-assistant-divider";
+    historyAssistantResultsEl.appendChild(divider);
+    const list = buildHistoryAssistantList(items);
+    historyAssistantResultsEl.appendChild(list);
+  }
+  if (historyAssistantHintEl) {
+    historyAssistantHintEl.classList.add("hidden");
+  }
+}
+
+function renderHistoryAssistantInfo(message) {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  const info = document.createElement("div");
+  info.className = "spotlight-history-assistant-info";
+  info.textContent = message || "Ask about your browsing history.";
+  historyAssistantResultsEl.appendChild(info);
+}
+
+function handleHistoryAssistantResponse(response) {
+  if (!historyAssistantActive) {
+    return;
+  }
+  if (!response) {
+    historyAssistantPendingRequestId = null;
+    setHistoryAssistantLoading(false);
+    updateHistoryAssistantStatus("Assistant request failed", { error: true });
+    return;
+  }
+  if (historyAssistantPendingRequestId !== null && response.requestId !== historyAssistantPendingRequestId) {
+    return;
+  }
+  historyAssistantPendingRequestId = null;
+  setHistoryAssistantLoading(false);
+  if (response.success !== true) {
+    updateHistoryAssistantStatus(response?.error || "Assistant request failed", { error: true });
+    return;
+  }
+  historyAssistantLastAction = response.action || null;
+  if (response.message) {
+    updateHistoryAssistantStatus(response.message, { subtle: true });
+  } else {
+    updateHistoryAssistantStatus("", { subtle: true });
+  }
+  switch (response.action) {
+    case "show":
+      renderHistoryAssistantItems(Array.isArray(response.items) ? response.items : []);
+      break;
+    case "open":
+      renderHistoryAssistantItems(Array.isArray(response.items) ? response.items : []);
+      break;
+    case "delete":
+      renderHistoryAssistantItems(Array.isArray(response.items) ? response.items : []);
+      break;
+    case "summarize":
+      renderHistoryAssistantSummary(response.summary || "", Array.isArray(response.items) ? response.items : []);
+      break;
+    case "meta":
+    default:
+      renderHistoryAssistantInfo(response.message || "I'm here to help with history requests.");
+      break;
+  }
+}
+
+function handleHistoryAssistantProgress(message) {
+  if (!historyAssistantActive) {
+    return;
+  }
+  if (!message || historyAssistantPendingRequestId === null || message.requestId !== historyAssistantPendingRequestId) {
+    return;
+  }
+  const stage = typeof message.stage === "string" ? message.stage : "";
+  let statusMessage = "Working…";
+  switch (stage) {
+    case "interpreting":
+      statusMessage = "Understanding your request…";
+      break;
+    case "command":
+      statusMessage = "Planning an action…";
+      break;
+    case "history-query":
+      statusMessage = "Searching your history…";
+      break;
+    case "opening":
+      statusMessage = message.count ? `Opening ${message.count} tabs…` : "Opening matching tabs…";
+      break;
+    case "deleting":
+      statusMessage = message.count ? `Removing ${message.count} entries…` : "Removing history entries…";
+      break;
+    case "summarizing":
+      statusMessage = message.count ? `Summarizing ${message.count} entries…` : "Summarizing history…";
+      break;
+    default:
+      break;
+  }
+  updateHistoryAssistantStatus(statusMessage, { subtle: true });
+}
+
+function resetHistoryAssistantUI() {
+  historyAssistantPendingRequestId = null;
+  historyAssistantLastAction = null;
+  setHistoryAssistantLoading(false);
+  updateHistoryAssistantStatus("", { subtle: true });
+  clearHistoryAssistantResults();
+}
+
+function sendHistoryAssistantRequest(query, prompt) {
+  if (historyAssistantLoading) {
+    return;
+  }
+  const trimmedQuery = typeof query === "string" ? query.trim() : "";
+  const trimmedPrompt = typeof prompt === "string" ? prompt.trim() : "";
+  if (!trimmedQuery) {
+    updateHistoryAssistantStatus("Enter a request about your history.", { error: true });
+    return;
+  }
+  historyAssistantRequestCounter += 1;
+  historyAssistantPendingRequestId = historyAssistantRequestCounter;
+  setHistoryAssistantLoading(true);
+  updateHistoryAssistantStatus("Understanding your request…", { subtle: true });
+  chrome.runtime.sendMessage(
+    {
+      type: "SPOTLIGHT_HISTORY_ASSISTANT",
+      query: trimmedQuery,
+      prompt: trimmedPrompt || undefined,
+      requestId: historyAssistantPendingRequestId,
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        setHistoryAssistantLoading(false);
+        historyAssistantPendingRequestId = null;
+        updateHistoryAssistantStatus(chrome.runtime.lastError.message || "Assistant unavailable", { error: true });
+        return;
+      }
+      handleHistoryAssistantResponse(response);
+    }
+  );
+}
+
+function handleHistoryAssistantSubmit(event) {
+  event.preventDefault();
+  if (!historyAssistantQueryInputEl) {
+    return;
+  }
+  const query = historyAssistantQueryInputEl.value || "";
+  const prompt = historyAssistantPromptInputEl ? historyAssistantPromptInputEl.value || "" : "";
+  sendHistoryAssistantRequest(query, prompt);
+}
+
+function ensureHistoryAssistantElements(parent) {
+  if (!parent) {
+    return;
+  }
+  if (historyAssistantContainerEl && !parent.contains(historyAssistantContainerEl)) {
+    parent.appendChild(historyAssistantContainerEl);
+    return;
+  }
+  if (historyAssistantContainerEl) {
+    return;
+  }
+  historyAssistantContainerEl = document.createElement("section");
+  historyAssistantContainerEl.className = "spotlight-history-assistant";
+  historyAssistantContainerEl.setAttribute("aria-hidden", "true");
+
+  const header = document.createElement("div");
+  header.className = "spotlight-history-assistant-header";
+
+  const title = document.createElement("div");
+  title.className = "spotlight-history-assistant-title";
+  title.textContent = "Smart History Assistant";
+  header.appendChild(title);
+
+  const badge = document.createElement("span");
+  badge.className = "spotlight-history-assistant-badge";
+  badge.textContent = "AI";
+  header.appendChild(badge);
+
+  historyAssistantContainerEl.appendChild(header);
+
+  historyAssistantFormEl = document.createElement("form");
+  historyAssistantFormEl.className = "spotlight-history-assistant-form";
+  historyAssistantFormEl.addEventListener("submit", handleHistoryAssistantSubmit);
+
+  historyAssistantQueryInputEl = document.createElement("input");
+  historyAssistantQueryInputEl.type = "text";
+  historyAssistantQueryInputEl.className = "spotlight-history-assistant-query";
+  historyAssistantQueryInputEl.setAttribute("placeholder", "Ask anything about your history…");
+  historyAssistantQueryInputEl.setAttribute("aria-label", "History assistant request");
+  historyAssistantFormEl.appendChild(historyAssistantQueryInputEl);
+
+  historyAssistantPromptInputEl = document.createElement("textarea");
+  historyAssistantPromptInputEl.className = "spotlight-history-assistant-prompt";
+  historyAssistantPromptInputEl.rows = 2;
+  historyAssistantPromptInputEl.setAttribute("placeholder", "Optional context or guidance for the assistant");
+  historyAssistantPromptInputEl.setAttribute("aria-label", "Additional assistant context");
+  historyAssistantFormEl.appendChild(historyAssistantPromptInputEl);
+
+  const controls = document.createElement("div");
+  controls.className = "spotlight-history-assistant-controls";
+
+  historyAssistantSubmitButtonEl = document.createElement("button");
+  historyAssistantSubmitButtonEl.type = "submit";
+  historyAssistantSubmitButtonEl.className = "spotlight-history-assistant-submit";
+  historyAssistantSubmitButtonEl.textContent = "Ask";
+  controls.appendChild(historyAssistantSubmitButtonEl);
+
+  historyAssistantFormEl.appendChild(controls);
+  historyAssistantContainerEl.appendChild(historyAssistantFormEl);
+
+  historyAssistantStatusEl = document.createElement("div");
+  historyAssistantStatusEl.className = "spotlight-history-assistant-status";
+  historyAssistantStatusEl.setAttribute("role", "status");
+  historyAssistantStatusEl.setAttribute("aria-live", "polite");
+  historyAssistantContainerEl.appendChild(historyAssistantStatusEl);
+
+  historyAssistantHintEl = document.createElement("div");
+  historyAssistantHintEl.className = "spotlight-history-assistant-hint";
+  historyAssistantHintEl.textContent = "Examples: \"Show Google searches from yesterday\" or \"Summarize the past 3 days\".";
+  historyAssistantContainerEl.appendChild(historyAssistantHintEl);
+
+  historyAssistantResultsEl = document.createElement("div");
+  historyAssistantResultsEl.className = "spotlight-history-assistant-results";
+  historyAssistantResultsEl.setAttribute("role", "region");
+  historyAssistantResultsEl.setAttribute("aria-live", "polite");
+  historyAssistantContainerEl.appendChild(historyAssistantResultsEl);
+
+  parent.appendChild(historyAssistantContainerEl);
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!historyAssistantContainerEl) {
+    return;
+  }
+  const enabled = Boolean(featureFlags.smartHistoryAssistant);
+  const shouldShow = Boolean(enabled && isOpen && activeFilter === "history");
+  historyAssistantActive = shouldShow;
+  historyAssistantContainerEl.classList.toggle("visible", shouldShow);
+  historyAssistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    resetHistoryAssistantUI();
+  }
+}
+
+function refreshFeatureFlags() {
+  if (!chrome?.storage?.local || typeof chrome.storage.local.get !== "function") {
+    featureFlags.smartHistoryAssistant = false;
+    updateHistoryAssistantVisibility();
+    return;
+  }
+  try {
+    chrome.storage.local.get([SMART_HISTORY_ASSISTANT_FLAG_KEY], (values) => {
+      if (chrome.runtime.lastError) {
+        featureFlags.smartHistoryAssistant = false;
+      } else {
+        featureFlags.smartHistoryAssistant = Boolean(values?.[SMART_HISTORY_ASSISTANT_FLAG_KEY]);
+      }
+      updateHistoryAssistantVisibility();
+    });
+  } catch (error) {
+    featureFlags.smartHistoryAssistant = false;
+    updateHistoryAssistantVisibility();
+  }
+}
+
+if (chrome?.storage?.onChanged && typeof chrome.storage.onChanged.addListener === "function") {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, SMART_HISTORY_ASSISTANT_FLAG_KEY)) {
+      featureFlags.smartHistoryAssistant = Boolean(
+        changes[SMART_HISTORY_ASSISTANT_FLAG_KEY]?.newValue
+      );
+      updateHistoryAssistantVisibility();
+    }
+  });
+}
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -387,6 +835,8 @@ function createOverlay() {
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
+  ensureHistoryAssistantElements(inputWrapper);
+
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
@@ -404,6 +854,7 @@ function createOverlay() {
   }
 
   renderSubfilters();
+  refreshFeatureFlags();
 
   overlayEl.addEventListener("click", (event) => {
     if (event.target !== overlayEl) {
@@ -1281,6 +1732,7 @@ async function openOverlay() {
   document.body.style.overflow = "hidden";
 
   requestResults("");
+  updateHistoryAssistantVisibility();
   setTimeout(() => {
     inputEl.focus({ preventScroll: true });
     inputEl.select();
@@ -1315,6 +1767,7 @@ function closeOverlay() {
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  updateHistoryAssistantVisibility();
 }
 
 function handleGlobalKeydown(event) {
@@ -1524,6 +1977,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantVisibility();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
@@ -3087,6 +3541,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "SPOTLIGHT_SUMMARY_PROGRESS") {
     handleSummaryProgress(message);
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS") {
+    handleHistoryAssistantProgress(message);
     return undefined;
   }
   if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {

@@ -16,6 +16,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Close-all-audio command to instantly silence every tab that's currently playing sound.
 - Contextual subfilters that surface history date ranges, open tab domains, and bookmark folders directly under the query bar for quick refinement.
 - Web search fallback that offers Google results when no local matches remain, with a "-" engine picker for Google, Bing, DuckDuckGo, Brave, Yahoo, and YouTube (all rendered with favicons).
+- Experimental Smart History Assistant (feature-flagged) that interprets natural language requests like "Show me yesterday's Google searches". Enable by setting `chrome.storage.local.set({ "spotlight.smartHistoryAssistantEnabled": true })` in the extension's background console. All processing stays local through Chrome's Prompt, Summarizer, history, and tabs APIs.
 
 
 ## Contextual Subfilters

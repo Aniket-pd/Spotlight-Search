@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -186,6 +187,71 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      if (!historyAssistant || typeof historyAssistant.handleRequest !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const requestId =
+        typeof message.requestId === "number" && Number.isFinite(message.requestId)
+          ? message.requestId
+          : null;
+      const requesterTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      const notifyProgress = (payload) => {
+        if (requestId === null || requesterTabId === null) {
+          return;
+        }
+        const data = {
+          type: "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS",
+          requestId,
+          stage: typeof payload?.stage === "string" ? payload.stage : undefined,
+          command: payload?.command,
+          text: typeof payload?.text === "string" ? payload.text : undefined,
+          startTime: Number.isFinite(payload?.startTime) ? payload.startTime : undefined,
+          endTime: Number.isFinite(payload?.endTime) ? payload.endTime : undefined,
+          count: Number.isFinite(payload?.count) ? payload.count : undefined,
+        };
+        try {
+          const maybePromise = chrome.tabs.sendMessage(requesterTabId, data);
+          if (maybePromise && typeof maybePromise.catch === "function") {
+            maybePromise.catch((error) => {
+              console.warn("Spotlight: failed to post history assistant progress", error);
+            });
+          }
+        } catch (error) {
+          console.warn("Spotlight: unable to send history assistant progress", error);
+        }
+      };
+      historyAssistant
+        .handleRequest({ query: message.query, prompt: message.prompt, onProgress: notifyProgress })
+        .then((result) => {
+          sendResponse({ success: true, requestId, ...result });
+        })
+        .catch((error) => {
+          const messageText = error?.message || "Assistant request failed";
+          const payload = { success: false, error: messageText, requestId };
+          if (error?.code === "DISABLED") {
+            payload.disabled = true;
+          }
+          sendResponse(payload);
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_OPEN_URL") {
+      if (!historyAssistant || typeof historyAssistant.openUrl !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .openUrl(message.url)
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => {
+          sendResponse({ success: false, error: error?.message || "Unable to open URL" });
         });
       return true;
     }
