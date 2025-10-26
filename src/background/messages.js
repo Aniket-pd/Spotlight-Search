@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -21,7 +22,7 @@ export function registerMessageHandlers({
         : { tabId: senderTabId, back: [], forward: [] };
       context
         .ensureIndex()
-        .then((data) => {
+        .then(async (data) => {
           const payload =
             runSearch(message.query || "", data, {
               subfilter: message.subfilter,
@@ -31,6 +32,45 @@ export function registerMessageHandlers({
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
           }
+
+          const queryText = typeof message.query === "string" ? message.query : "";
+          let assistantPayload = null;
+          if (historyAssistant && typeof historyAssistant.processQuery === "function" && queryText) {
+            assistantPayload = await new Promise((resolve) => {
+              let settled = false;
+              const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+              };
+              const timer = setTimeout(() => finish(null), 500);
+              Promise.resolve(historyAssistant.processQuery(queryText))
+                .then((result) => {
+                  clearTimeout(timer);
+                  finish(result);
+                })
+                .catch((err) => {
+                  clearTimeout(timer);
+                  console.warn("Spotlight: history assistant processing failed", err);
+                  finish(null);
+                });
+            });
+          }
+
+          if (assistantPayload) {
+            if (Array.isArray(assistantPayload.results) && assistantPayload.results.length) {
+              payload.results = assistantPayload.results.concat(payload.results);
+            }
+            if (assistantPayload.filter && !message.subfilter) {
+              payload.filter = assistantPayload.filter;
+            }
+            if (assistantPayload.answer) {
+              payload.answer = payload.answer
+                ? `${payload.answer} · ${assistantPayload.answer}`
+                : assistantPayload.answer;
+            }
+          }
+
           sendResponse({ ...payload, requestId: message.requestId });
         })
         .catch((err) => {
@@ -220,6 +260,23 @@ export function registerMessageHandlers({
         .catch((error) => {
           console.error("Spotlight: bookmark organizer failed", error);
           sendResponse({ success: false, error: error?.message || "Unable to organize bookmarks" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_ACTION") {
+      if (!historyAssistant || typeof historyAssistant.handleAction !== "function") {
+        sendResponse({ success: false, error: "Assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .handleAction(message.action)
+        .then((result) => {
+          sendResponse(result || { success: false });
+        })
+        .catch((err) => {
+          console.error("Spotlight: assistant action failed", err);
+          sendResponse({ success: false, error: err?.message || "Assistant action failed" });
         });
       return true;
     }

@@ -1754,6 +1754,22 @@ function triggerWebSearch(engineIdOverride = null) {
 
 function openResult(result) {
   if (!result) return;
+  if (result.assistantAction) {
+    chrome.runtime.sendMessage(
+      { type: "SPOTLIGHT_HISTORY_ASSISTANT_ACTION", action: result.assistantAction },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Spotlight assistant action error", chrome.runtime.lastError);
+          return;
+        }
+        if (response && !response.success && response.error) {
+          setStatus(response.error, { force: true });
+        }
+      }
+    );
+    closeOverlay();
+    return;
+  }
   if (result.type === "command") {
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
@@ -2321,6 +2337,9 @@ function renderResults() {
     if (isWebSearch) {
       li.classList.add("spotlight-result-web-search");
     }
+    if (typeof result.assistantTag === "string" && result.assistantTag) {
+      li.classList.add("spotlight-result-assistant");
+    }
     const canSummarize = shouldSummarizeResult(result);
 
     const title = document.createElement("div");
@@ -2394,6 +2413,13 @@ function renderResults() {
       type.className = `spotlight-result-type type-${result.type}`;
       type.textContent = formatTypeLabel(result.type, result);
       meta.appendChild(type);
+
+      if (typeof result.assistantTag === "string" && result.assistantTag) {
+        const tag = document.createElement("span");
+        tag.className = "spotlight-result-tag spotlight-result-tag-assistant";
+        tag.textContent = result.assistantTag;
+        meta.appendChild(tag);
+      }
 
       if (canSummarize && resultUrl) {
         const summaryButton = document.createElement("button");

@@ -687,6 +687,10 @@
   font-weight: 500;
 }
 
+.spotlight-result.spotlight-result-assistant {
+  border-left: 2px solid rgba(96, 165, 250, 0.6);
+}
+
 .spotlight-result-type {
   text-transform: uppercase;
   font-size: 10px;
@@ -728,6 +732,11 @@
 .spotlight-result-tag.download-state-paused {
   background: rgba(249, 115, 22, 0.28);
   color: #fed7aa;
+}
+
+.spotlight-result-tag.spotlight-result-tag-assistant {
+  background: rgba(96, 165, 250, 0.24);
+  color: #bfdbfe;
 }
 
 .spotlight-result-tag.spotlight-result-tag-topsite {
