@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  focus,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -19,14 +20,14 @@ export function registerMessageHandlers({
       const navigationState = navigation
         ? navigation.getStateForTab(senderTabId)
         : { tabId: senderTabId, back: [], forward: [] };
-      context
-        .ensureIndex()
-        .then((data) => {
+      Promise.all([context.ensureIndex(), focus?.getState?.()])
+        .then(([data, focusState]) => {
           const payload =
             runSearch(message.query || "", data, {
               subfilter: message.subfilter,
               navigation: navigationState,
               webSearch: message.webSearch,
+              focus: focusState || null,
             }) || {};
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
@@ -94,6 +95,43 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_FOCUS_QUERY") {
+      if (!focus) {
+        sendResponse({ success: false, active: false });
+        return true;
+      }
+      const tabId =
+        typeof message.tabId === "number"
+          ? message.tabId
+          : typeof sender?.tab?.id === "number"
+          ? sender.tab.id
+          : null;
+      if (tabId === null) {
+        sendResponse({ success: false, active: false });
+        return true;
+      }
+      focus
+        .getStateForTab(tabId)
+        .then((info) => {
+          if (!info || !info.active || !info.state) {
+            sendResponse({ success: true, active: false });
+            return;
+          }
+          sendResponse({
+            success: true,
+            active: true,
+            titlePrefix: info.state.titlePrefix,
+            accentColor: info.state.accentColor,
+            label: info.state.label,
+          });
+        })
+        .catch((err) => {
+          console.warn("Spotlight: focus query failed", err);
+          sendResponse({ success: false, active: false });
         });
       return true;
     }

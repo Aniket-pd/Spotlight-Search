@@ -8,6 +8,7 @@ import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
 import { createSummarizerService } from "./summarizer.js";
 import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
+import { createFocusService } from "./focus.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -18,10 +19,12 @@ import {
 const context = createBackgroundContext({ buildIndex });
 const tabActions = createTabActions();
 const organizer = createBookmarkOrganizerService({ scheduleRebuild: context.scheduleRebuild });
+const focus = createFocusService();
 const executeCommand = createCommandExecutor({
   tabActions,
   scheduleRebuild: context.scheduleRebuild,
   bookmarkOrganizer: organizer,
+  focus,
 });
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
@@ -37,6 +40,7 @@ registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  focus,
 });
 
 registerLifecycleEvents(context);

@@ -31,6 +31,34 @@
   text-rendering: optimizeLegibility;
 }
 
+.spotlight-focus-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 6px;
+  pointer-events: none;
+  z-index: 2147483646;
+  background: linear-gradient(90deg, rgba(249, 115, 22, 0.85), rgba(249, 115, 22, 0.35));
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.spotlight-focus-banner-label {
+  margin-right: 16px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.4);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
 #spotlight-overlay,
 .spotlight-overlay {
   position: fixed;
@@ -707,6 +735,7 @@
   background: rgba(148, 163, 184, 0.25);
   color: rgba(241, 245, 249, 0.82);
   flex-shrink: 0;
+  border: 1px solid transparent;
 }
 
 .spotlight-result-tag.download-state-complete {
@@ -733,6 +762,21 @@
 .spotlight-result-tag.spotlight-result-tag-topsite {
   background: rgba(250, 204, 21, 0.26);
   color: #fef08a;
+}
+
+.spotlight-result-tag.spotlight-result-tag-focus {
+  background: rgba(249, 115, 22, 0.18);
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.42);
+}
+
+.spotlight-result-focused {
+  background: rgba(249, 115, 22, 0.08);
+  border-left: 3px solid rgba(249, 115, 22, 0.55);
+}
+
+.spotlight-result-focused .spotlight-result-content {
+  background: transparent;
 }
 
 .spotlight-result-timestamp {

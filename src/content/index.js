@@ -60,6 +60,11 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const FOCUS_BANNER_ID = "spotlight-focus-banner";
+let focusBannerEl = null;
+let focusOriginalTitle = null;
+let focusActiveState = false;
+let focusTitlePrefix = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -133,6 +138,50 @@ const PLACEHOLDER_COLORS = [
   "#F97316",
   "#FBBF24",
 ];
+
+function parseHexColor(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = value.trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!match) {
+    return null;
+  }
+  const int = parseInt(match[1], 16);
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+  };
+}
+
+function toFocusRgba(value, alpha) {
+  const rgb = parseHexColor(value);
+  if (!rgb) {
+    return null;
+  }
+  const clamped = Math.max(0, Math.min(alpha, 1));
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clamped})`;
+}
+
+function applyFocusAccentStyle(element, accent) {
+  if (!element || typeof accent !== "string") {
+    return;
+  }
+  const rgbaFill = toFocusRgba(accent, 0.18);
+  const rgbaBorder = toFocusRgba(accent, 0.45);
+  if (rgbaFill) {
+    element.style.backgroundColor = rgbaFill;
+  } else {
+    element.style.backgroundColor = accent;
+  }
+  if (rgbaBorder) {
+    element.style.borderColor = rgbaBorder;
+  } else {
+    element.style.borderColor = accent;
+  }
+  element.style.color = accent;
+}
 
 const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
@@ -2296,6 +2345,9 @@ function renderResults() {
     li.id = `${RESULT_OPTION_ID_PREFIX}${displayIndex}`;
     li.dataset.resultId = String(result.id);
     li.dataset.index = String(displayIndex);
+    if (result.focused) {
+      li.classList.add("spotlight-result-focused");
+    }
     const origin = getResultOrigin(result);
     if (origin) {
       li.dataset.origin = origin;
@@ -2394,6 +2446,16 @@ function renderResults() {
       type.className = `spotlight-result-type type-${result.type}`;
       type.textContent = formatTypeLabel(result.type, result);
       meta.appendChild(type);
+
+      if (result.badge) {
+        const badgeEl = document.createElement("span");
+        badgeEl.className = "spotlight-result-tag spotlight-result-tag-focus";
+        badgeEl.textContent = result.badge;
+        if (result.focusAccent) {
+          applyFocusAccentStyle(badgeEl, result.focusAccent);
+        }
+        meta.appendChild(badgeEl);
+      }
 
       if (canSummarize && resultUrl) {
         const summaryButton = document.createElement("button");
@@ -3073,6 +3135,112 @@ function collectPageTextForSummary() {
   }
 }
 
+function ensureFocusBanner() {
+  if (focusBannerEl && focusBannerEl.isConnected) {
+    return focusBannerEl;
+  }
+  const banner = document.createElement("div");
+  banner.id = FOCUS_BANNER_ID;
+  banner.className = "spotlight-focus-banner";
+  const label = document.createElement("span");
+  label.className = "spotlight-focus-banner-label";
+  label.textContent = "Focus";
+  banner.appendChild(label);
+  document.documentElement.appendChild(banner);
+  focusBannerEl = banner;
+  return banner;
+}
+
+function removeFocusBanner() {
+  if (focusBannerEl) {
+    focusBannerEl.remove();
+    focusBannerEl = null;
+  }
+}
+
+function applyFocusVisuals({ accentColor, label, titlePrefix }) {
+  focusActiveState = true;
+  document.documentElement.classList.add("spotlight-focus-active");
+  const banner = ensureFocusBanner();
+  const bannerLabel = banner.querySelector(".spotlight-focus-banner-label");
+  if (bannerLabel) {
+    bannerLabel.textContent = label || "Focus";
+  }
+  const accent = typeof accentColor === "string" && accentColor ? accentColor : "#f97316";
+  const gradientStart = toFocusRgba(accent, 0.82) || accent;
+  const gradientEnd = toFocusRgba(accent, 0.25) || accent;
+  banner.style.background = `linear-gradient(90deg, ${gradientStart}, ${gradientEnd})`;
+  if (bannerLabel) {
+    bannerLabel.style.backgroundColor = toFocusRgba(accent, 0.95) || accent;
+    bannerLabel.style.color = "#ffffff";
+  }
+
+  if (titlePrefix && typeof titlePrefix === "string") {
+    if (!focusOriginalTitle) {
+      focusOriginalTitle = document.title.startsWith(titlePrefix)
+        ? document.title.slice(titlePrefix.length)
+        : document.title;
+    }
+    focusTitlePrefix = titlePrefix;
+    if (focusOriginalTitle && !document.title.startsWith(titlePrefix)) {
+      document.title = `${titlePrefix}${focusOriginalTitle}`;
+    }
+  }
+}
+
+function clearFocusVisuals(titlePrefix) {
+  if (!focusActiveState) {
+    removeFocusBanner();
+    return;
+  }
+  focusActiveState = false;
+  document.documentElement.classList.remove("spotlight-focus-active");
+  removeFocusBanner();
+  const prefix = typeof titlePrefix === "string" && titlePrefix ? titlePrefix : focusTitlePrefix;
+  if (prefix && focusOriginalTitle && document.title.startsWith(prefix)) {
+    document.title = focusOriginalTitle;
+  }
+  focusOriginalTitle = null;
+  focusTitlePrefix = null;
+}
+
+function handleFocusStateMessage(message) {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  if (message.active) {
+    applyFocusVisuals({
+      accentColor: message.accentColor,
+      label: message.label,
+      titlePrefix: message.titlePrefix,
+    });
+  } else {
+    clearFocusVisuals(message.titlePrefix);
+  }
+}
+
+function requestInitialFocusState() {
+  try {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_FOCUS_QUERY" }, (response) => {
+      if (chrome.runtime.lastError) {
+        return;
+      }
+      if (response && response.success && response.active) {
+        handleFocusStateMessage({
+          active: true,
+          accentColor: response.accentColor,
+          label: response.label,
+          titlePrefix: response.titlePrefix,
+        });
+      } else {
+        handleFocusStateMessage({ active: false });
+      }
+    });
+  } catch (err) {
+    // Ignore failures when messaging is unavailable.
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
     return undefined;
@@ -3100,6 +3268,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }, 0);
     return true;
   }
+  if (message.type === "SPOTLIGHT_FOCUS_STATE") {
+    handleFocusStateMessage(message);
+    return undefined;
+  }
   return undefined;
 });
 
@@ -3108,9 +3280,11 @@ if (document.readyState === "loading") {
     "DOMContentLoaded",
     () => {
       ensureShadowRoot();
+      requestInitialFocusState();
     },
     { once: true }
   );
 } else {
   ensureShadowRoot();
+  requestInitialFocusState();
 }

@@ -7,7 +7,7 @@ const REBUILD_DELAYS = {
   "tab-close-audio": 400,
 };
 
-export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer }) {
+export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer, focus }) {
   const {
     sortAllTabsByDomainAndTitle,
     shuffleTabs,
@@ -48,6 +48,30 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
           throw new Error("Bookmark organizer unavailable");
         }
         await bookmarkOrganizer.organizeBookmarks();
+        return;
+      case "tab-focus": {
+        if (!focus) {
+          throw new Error("Focus service unavailable");
+        }
+        const tabId = typeof args.tabId === "number" ? args.tabId : null;
+        if (tabId === null) {
+          await focus.focusActiveTab();
+        } else {
+          await focus.focusTab(tabId);
+        }
+        return;
+      }
+      case "tab-focus-clear":
+        if (!focus) {
+          throw new Error("Focus service unavailable");
+        }
+        await focus.clearFocus();
+        return;
+      case "tab-focus-jump":
+        if (!focus) {
+          throw new Error("Focus service unavailable");
+        }
+        await focus.jumpToFocus();
         return;
       default:
         throw new Error(`Unknown command: ${commandId}`);
