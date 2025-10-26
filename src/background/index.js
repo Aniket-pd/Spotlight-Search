@@ -7,6 +7,7 @@ import { createFaviconService } from "./favicons.js";
 import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
 import { createSummarizerService } from "./summarizer.js";
+import { createHistoryAssistantService } from "./history-assistant.js";
 import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
 import {
   registerLifecycleEvents,
@@ -26,6 +27,7 @@ const executeCommand = createCommandExecutor({
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
+const historyAssistant = createHistoryAssistantService();
 
 registerNavigationListeners(navigation);
 
@@ -37,6 +39,7 @@ registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 });
 
 registerLifecycleEvents(context);

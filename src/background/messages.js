@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -186,6 +187,59 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_STATUS") {
+      if (!historyAssistant || typeof historyAssistant.getStatus !== "function") {
+        sendResponse({ success: true, enabled: false, available: false, state: "unsupported", reason: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .getStatus()
+        .then((status) => {
+          sendResponse({ success: true, ...status });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant status failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to check assistant status" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_REQUEST") {
+      if (!historyAssistant || typeof historyAssistant.handleRequest !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .handleRequest({ text: message.text || "" })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant request failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to process request" });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_OPERATE") {
+      if (!historyAssistant || typeof historyAssistant.operate !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      const operation = typeof message.operation === "string" ? message.operation : "";
+      const url = typeof message.url === "string" ? message.url : "";
+      historyAssistant
+        .operate({ operation, url })
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history assistant operation failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to complete action" });
         });
       return true;
     }

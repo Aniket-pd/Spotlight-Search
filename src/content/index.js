@@ -61,6 +61,49 @@ const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
 
+const HISTORY_ASSISTANT_CLASS = "spotlight-history-assistant";
+const HISTORY_ASSISTANT_RESULTS_CLASS = "spotlight-history-assistant-results";
+const HISTORY_ASSISTANT_ITEM_CLASS = "spotlight-history-assistant-item";
+const HISTORY_ASSISTANT_META_CLASS = "spotlight-history-assistant-meta";
+const HISTORY_ASSISTANT_ACTIONS_CLASS = "spotlight-history-assistant-actions";
+const HISTORY_ASSISTANT_SUMMARY_CLASS = "spotlight-history-assistant-summary";
+const HISTORY_ASSISTANT_HIDDEN_CLASS = "hidden";
+
+let historyAssistantEl = null;
+let historyAssistantFormEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantSubmitEl = null;
+let historyAssistantStatusEl = null;
+let historyAssistantOutputEl = null;
+let historyAssistantTipsEl = null;
+let historyAssistantState = null;
+let historyAssistantAvailability = {
+  loaded: false,
+  enabled: false,
+  available: false,
+  state: "unknown",
+  reason: "",
+};
+let historyAssistantStatusPromise = null;
+let historyAssistantStatusFetched = false;
+let historyAssistantRequestId = 0;
+
+function getInitialHistoryAssistantState() {
+  return {
+    busy: false,
+    error: "",
+    message: "",
+    action: "",
+    items: [],
+    summary: null,
+    stats: null,
+    query: "",
+    timeLabel: "",
+  };
+}
+
+historyAssistantState = getInitialHistoryAssistantState();
+
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
   if (!api || typeof api !== "object") {
@@ -76,6 +119,514 @@ function resetWebSearchSelection() {
     ? api.getDefaultSearchEngine()
     : null;
   webSearchPreviewResult = null;
+}
+
+function shouldShowHistoryAssistant() {
+  return isOpen && activeFilter === "history";
+}
+
+function ensureHistoryAssistantPanel() {
+  if (!containerEl) {
+    return;
+  }
+  if (!historyAssistantEl) {
+    historyAssistantEl = document.createElement("section");
+    historyAssistantEl.className = `${HISTORY_ASSISTANT_CLASS} ${HISTORY_ASSISTANT_HIDDEN_CLASS}`;
+    historyAssistantEl.setAttribute("aria-label", "Smart history assistant");
+
+    const header = document.createElement("div");
+    header.className = `${HISTORY_ASSISTANT_CLASS}-header`;
+
+    const title = document.createElement("span");
+    title.className = `${HISTORY_ASSISTANT_CLASS}-title`;
+    title.textContent = "Smart History Assistant";
+    header.appendChild(title);
+
+    const badge = document.createElement("span");
+    badge.className = `${HISTORY_ASSISTANT_CLASS}-badge`;
+    badge.textContent = "Beta";
+    header.appendChild(badge);
+
+    const description = document.createElement("p");
+    description.className = `${HISTORY_ASSISTANT_CLASS}-description`;
+    description.textContent = "Ask in natural language to search, reopen, delete, or summarize your history.";
+
+    historyAssistantFormEl = document.createElement("form");
+    historyAssistantFormEl.className = `${HISTORY_ASSISTANT_CLASS}-form`;
+    historyAssistantFormEl.addEventListener("submit", (event) => {
+      event.preventDefault();
+      handleHistoryAssistantSubmit();
+    });
+
+    historyAssistantInputEl = document.createElement("textarea");
+    historyAssistantInputEl.className = `${HISTORY_ASSISTANT_CLASS}-input`;
+    historyAssistantInputEl.rows = 2;
+    historyAssistantInputEl.placeholder = "Ask things like “Open my YouTube tabs from the last week”.";
+    historyAssistantInputEl.setAttribute("aria-label", "Smart history assistant request");
+    historyAssistantInputEl.setAttribute("spellcheck", "false");
+    historyAssistantInputEl.addEventListener("keydown", (event) => {
+      handleHistoryAssistantKeydown(event);
+    });
+
+    historyAssistantSubmitEl = document.createElement("button");
+    historyAssistantSubmitEl.type = "submit";
+    historyAssistantSubmitEl.className = `${HISTORY_ASSISTANT_CLASS}-submit`;
+    historyAssistantSubmitEl.textContent = "Run";
+
+    const controls = document.createElement("div");
+    controls.className = `${HISTORY_ASSISTANT_CLASS}-controls`;
+    controls.appendChild(historyAssistantSubmitEl);
+
+    historyAssistantFormEl.appendChild(historyAssistantInputEl);
+    historyAssistantFormEl.appendChild(controls);
+
+    historyAssistantStatusEl = document.createElement("div");
+    historyAssistantStatusEl.className = `${HISTORY_ASSISTANT_CLASS}-status`;
+
+    historyAssistantTipsEl = document.createElement("ul");
+    historyAssistantTipsEl.className = `${HISTORY_ASSISTANT_CLASS}-tips`;
+    const tips = [
+      "Open my YouTube tabs from the last week",
+      "Show me all Google searches from yesterday",
+      "Summarize what I did in the past 3 days",
+    ];
+    tips.forEach((tip) => {
+      const li = document.createElement("li");
+      li.textContent = tip;
+      historyAssistantTipsEl.appendChild(li);
+    });
+
+    historyAssistantOutputEl = document.createElement("div");
+    historyAssistantOutputEl.className = `${HISTORY_ASSISTANT_CLASS}-output`;
+
+    historyAssistantEl.appendChild(header);
+    historyAssistantEl.appendChild(description);
+    historyAssistantEl.appendChild(historyAssistantFormEl);
+    historyAssistantEl.appendChild(historyAssistantStatusEl);
+    historyAssistantEl.appendChild(historyAssistantTipsEl);
+    historyAssistantEl.appendChild(historyAssistantOutputEl);
+  }
+  if (!historyAssistantEl.parentElement) {
+    containerEl.appendChild(historyAssistantEl);
+  }
+}
+
+function resetHistoryAssistantState(options = {}) {
+  historyAssistantState = getInitialHistoryAssistantState();
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  if (options && options.resetAvailability) {
+    historyAssistantAvailability = {
+      loaded: false,
+      enabled: false,
+      available: false,
+      state: "unknown",
+      reason: "",
+    };
+    historyAssistantStatusFetched = false;
+  }
+  renderHistoryAssistantState();
+}
+
+function setHistoryAssistantAvailability(update) {
+  historyAssistantAvailability = {
+    ...historyAssistantAvailability,
+    ...update,
+    loaded: true,
+  };
+  renderHistoryAssistantState();
+}
+
+function formatHistoryAssistantStatusText() {
+  const parts = [];
+  if (!historyAssistantAvailability.loaded) {
+    parts.push("Checking assistant availability…");
+    return parts.join(" · ");
+  }
+  if (!historyAssistantAvailability.enabled) {
+    parts.push("Smart History Assistant is disabled");
+  } else if (!historyAssistantAvailability.available) {
+    parts.push(historyAssistantAvailability.reason || "Smart History Assistant unavailable");
+  } else if (historyAssistantState.error) {
+    parts.push(historyAssistantState.error);
+  } else if (historyAssistantState.busy) {
+    parts.push("Working…");
+  } else if (historyAssistantState.message) {
+    parts.push(historyAssistantState.message);
+  } else if (historyAssistantAvailability.reason) {
+    parts.push(historyAssistantAvailability.reason);
+  } else {
+    parts.push("Ask anything about your recent browsing");
+  }
+  if (
+    historyAssistantAvailability.available &&
+    historyAssistantAvailability.enabled &&
+    !historyAssistantState.error &&
+    !historyAssistantState.busy &&
+    historyAssistantState.timeLabel
+  ) {
+    parts.push(historyAssistantState.timeLabel);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function renderHistoryAssistantSummary(summary) {
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+  const { highlights, text } = summary;
+  if (!Array.isArray(highlights) && !text) {
+    return null;
+  }
+  const container = document.createElement("div");
+  container.className = HISTORY_ASSISTANT_SUMMARY_CLASS;
+
+  const title = document.createElement("div");
+  title.className = `${HISTORY_ASSISTANT_SUMMARY_CLASS}-title`;
+  title.textContent = "Summary";
+  container.appendChild(title);
+
+  if (Array.isArray(highlights) && highlights.length) {
+    const list = document.createElement("ul");
+    list.className = `${HISTORY_ASSISTANT_SUMMARY_CLASS}-list`;
+    highlights.forEach((item) => {
+      if (!item) {
+        return;
+      }
+      const li = document.createElement("li");
+      li.textContent = item;
+      list.appendChild(li);
+    });
+    container.appendChild(list);
+  } else if (typeof text === "string" && text.trim()) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text.trim();
+    container.appendChild(paragraph);
+  }
+  return container;
+}
+
+function performHistoryAssistantOperation(operation, url) {
+  if (!url) {
+    return;
+  }
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_ASSISTANT_OPERATE", operation, url },
+    (response) => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        const message =
+          (response && response.error) ||
+          (chrome.runtime.lastError && chrome.runtime.lastError.message) ||
+          "Action unavailable";
+        historyAssistantState = { ...historyAssistantState, error: message };
+        renderHistoryAssistantState();
+        return;
+      }
+      if (operation === "delete") {
+        historyAssistantState = {
+          ...historyAssistantState,
+          items: historyAssistantState.items.filter((item) => item.url !== url),
+          message: "Deleted 1 history item",
+        };
+        renderHistoryAssistantState();
+      } else if (operation === "open") {
+        historyAssistantState = {
+          ...historyAssistantState,
+          message: "Opened history item",
+        };
+        renderHistoryAssistantState();
+      }
+    }
+  );
+}
+
+function createHistoryAssistantItem(item) {
+  const wrapper = document.createElement("div");
+  wrapper.className = HISTORY_ASSISTANT_ITEM_CLASS;
+
+  const titleButton = document.createElement("button");
+  titleButton.type = "button";
+  titleButton.className = `${HISTORY_ASSISTANT_ITEM_CLASS}-title`;
+  titleButton.textContent = item.title || item.url;
+  titleButton.title = item.url || item.title || "";
+  titleButton.addEventListener("click", () => {
+    performHistoryAssistantOperation("open", item.url);
+  });
+
+  const meta = document.createElement("div");
+  meta.className = HISTORY_ASSISTANT_META_CLASS;
+  const metaParts = [];
+  if (item.hostname) {
+    metaParts.push(item.hostname);
+  }
+  const timestamp = formatResultTimestamp(item);
+  if (timestamp) {
+    metaParts.push(timestamp);
+  }
+  const visitLabel = formatVisitCount(item.visitCount);
+  if (visitLabel) {
+    metaParts.push(visitLabel);
+  }
+  metaParts.forEach((value) => {
+    if (!value) {
+      return;
+    }
+    const span = document.createElement("span");
+    span.textContent = value;
+    meta.appendChild(span);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = HISTORY_ASSISTANT_ACTIONS_CLASS;
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = `${HISTORY_ASSISTANT_ACTIONS_CLASS}-open`;
+  openButton.textContent = "Open";
+  openButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    performHistoryAssistantOperation("open", item.url);
+  });
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = `${HISTORY_ASSISTANT_ACTIONS_CLASS}-delete`;
+  deleteButton.textContent = "Delete";
+  deleteButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    performHistoryAssistantOperation("delete", item.url);
+  });
+
+  actions.appendChild(openButton);
+  actions.appendChild(deleteButton);
+
+  wrapper.appendChild(titleButton);
+  wrapper.appendChild(meta);
+  wrapper.appendChild(actions);
+  return wrapper;
+}
+
+function renderHistoryAssistantResults(items) {
+  if (!historyAssistantOutputEl) {
+    return;
+  }
+  historyAssistantOutputEl.innerHTML = "";
+  if (!Array.isArray(items) || !items.length) {
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = HISTORY_ASSISTANT_RESULTS_CLASS;
+  items.forEach((item) => {
+    if (!item || !item.url) {
+      return;
+    }
+    list.appendChild(createHistoryAssistantItem(item));
+  });
+  historyAssistantOutputEl.appendChild(list);
+}
+
+function renderHistoryAssistantState() {
+  if (!historyAssistantEl) {
+    return;
+  }
+  const visible = shouldShowHistoryAssistant();
+  historyAssistantEl.classList.toggle(HISTORY_ASSISTANT_HIDDEN_CLASS, !visible);
+  if (!visible) {
+    return;
+  }
+
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.disabled = historyAssistantState.busy || !historyAssistantAvailability.available || !historyAssistantAvailability.enabled;
+  }
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.disabled = historyAssistantState.busy || !historyAssistantAvailability.available || !historyAssistantAvailability.enabled;
+  }
+
+  if (historyAssistantStatusEl) {
+    historyAssistantStatusEl.textContent = formatHistoryAssistantStatusText();
+  }
+
+  if (historyAssistantEl) {
+    historyAssistantEl.classList.toggle("loading", historyAssistantState.busy);
+    historyAssistantEl.classList.toggle("unavailable", historyAssistantAvailability.enabled && !historyAssistantAvailability.available);
+    historyAssistantEl.classList.toggle("disabled", !historyAssistantAvailability.enabled);
+  }
+
+  if (
+    historyAssistantAvailability.loaded &&
+    (!historyAssistantAvailability.available || !historyAssistantAvailability.enabled)
+  ) {
+    if (historyAssistantOutputEl) {
+      historyAssistantOutputEl.innerHTML = "";
+    }
+    if (historyAssistantTipsEl) {
+      historyAssistantTipsEl.classList.add(HISTORY_ASSISTANT_HIDDEN_CLASS);
+    }
+    return;
+  }
+
+  if (historyAssistantTipsEl) {
+    const shouldShowTips =
+      historyAssistantAvailability.loaded &&
+      historyAssistantAvailability.available &&
+      historyAssistantAvailability.enabled &&
+      !historyAssistantState.busy &&
+      !historyAssistantState.error &&
+      !historyAssistantState.message &&
+      (!historyAssistantState.items || historyAssistantState.items.length === 0) &&
+      (!historyAssistantState.summary || !historyAssistantState.summary.text);
+    historyAssistantTipsEl.classList.toggle(HISTORY_ASSISTANT_HIDDEN_CLASS, !shouldShowTips);
+  }
+
+  if (historyAssistantState.error) {
+    if (historyAssistantOutputEl) {
+      historyAssistantOutputEl.innerHTML = "";
+    }
+    return;
+  }
+
+  if (historyAssistantOutputEl) {
+    historyAssistantOutputEl.innerHTML = "";
+    const summaryEl = renderHistoryAssistantSummary(historyAssistantState.summary);
+    if (summaryEl) {
+      historyAssistantOutputEl.appendChild(summaryEl);
+    }
+    if (Array.isArray(historyAssistantState.items) && historyAssistantState.items.length) {
+      renderHistoryAssistantResults(historyAssistantState.items);
+    } else if (historyAssistantState.message && historyAssistantState.action === "meta") {
+      const metaEl = document.createElement("div");
+      metaEl.className = `${HISTORY_ASSISTANT_CLASS}-meta`;
+      metaEl.textContent = historyAssistantState.message;
+      historyAssistantOutputEl.appendChild(metaEl);
+    }
+  }
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!containerEl) {
+    return;
+  }
+  ensureHistoryAssistantPanel();
+  renderHistoryAssistantState();
+  if (shouldShowHistoryAssistant() && !historyAssistantStatusFetched) {
+    requestHistoryAssistantStatus();
+  }
+}
+
+function requestHistoryAssistantStatus(force = false) {
+  if (historyAssistantStatusPromise && !force) {
+    return historyAssistantStatusPromise;
+  }
+  historyAssistantStatusFetched = true;
+  historyAssistantStatusPromise = new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_ASSISTANT_STATUS" }, (response) => {
+      historyAssistantStatusPromise = null;
+      if (chrome.runtime.lastError) {
+        setHistoryAssistantAvailability({
+          enabled: false,
+          available: false,
+          state: "error",
+          reason: chrome.runtime.lastError.message || "Assistant unavailable",
+        });
+        resolve(historyAssistantAvailability);
+        return;
+      }
+      if (!response || response.success === false) {
+        setHistoryAssistantAvailability({
+          enabled: Boolean(response && response.enabled),
+          available: Boolean(response && response.available),
+          state: (response && response.state) || "error",
+          reason: (response && response.error) || response?.reason || "Assistant unavailable",
+        });
+        resolve(historyAssistantAvailability);
+        return;
+      }
+      setHistoryAssistantAvailability({
+        enabled: Boolean(response.enabled),
+        available: Boolean(response.available),
+        state: typeof response.state === "string" ? response.state : "unknown",
+        reason: typeof response.reason === "string" ? response.reason : "",
+      });
+      resolve(historyAssistantAvailability);
+    });
+  });
+  return historyAssistantStatusPromise;
+}
+
+function handleHistoryAssistantKeydown(event) {
+  if (!event) {
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    if (historyAssistantFormEl) {
+      historyAssistantFormEl.requestSubmit();
+    }
+  }
+}
+
+function handleHistoryAssistantSubmit() {
+  if (!historyAssistantAvailability.enabled) {
+    setHistoryAssistantAvailability(historyAssistantAvailability);
+    return;
+  }
+  if (!historyAssistantAvailability.available) {
+    setHistoryAssistantAvailability(historyAssistantAvailability);
+    return;
+  }
+  const value = historyAssistantInputEl ? historyAssistantInputEl.value.trim() : "";
+  if (!value) {
+    historyAssistantState = { ...historyAssistantState, error: "Enter a request to continue" };
+    renderHistoryAssistantState();
+    return;
+  }
+  sendHistoryAssistantRequest(value);
+}
+
+function sendHistoryAssistantRequest(text) {
+  historyAssistantState = { ...historyAssistantState, busy: true, error: "", message: "" };
+  renderHistoryAssistantState();
+  const requestId = ++historyAssistantRequestId;
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_ASSISTANT_REQUEST", text }, (response) => {
+    if (requestId !== historyAssistantRequestId) {
+      return;
+    }
+    historyAssistantState = { ...historyAssistantState, busy: false };
+    if (chrome.runtime.lastError) {
+      historyAssistantState = {
+        ...historyAssistantState,
+        error: chrome.runtime.lastError.message || "Assistant unavailable",
+      };
+      renderHistoryAssistantState();
+      return;
+    }
+    if (!response || response.success === false) {
+      historyAssistantState = {
+        ...historyAssistantState,
+        error: (response && response.error) || "Assistant unavailable",
+      };
+      renderHistoryAssistantState();
+      return;
+    }
+    historyAssistantState = {
+      busy: false,
+      error: "",
+      message: typeof response.message === "string" ? response.message : "",
+      action: typeof response.action === "string" ? response.action : "",
+      items: Array.isArray(response.items) ? response.items.slice() : [],
+      summary: typeof response.summary === "object" && response.summary !== null ? response.summary : null,
+      stats: typeof response.stats === "object" && response.stats !== null ? response.stats : null,
+      query: typeof response.query === "string" ? response.query : "",
+      timeLabel: typeof response.timeLabel === "string" ? response.timeLabel : "",
+    };
+    if (historyAssistantInputEl) {
+      historyAssistantInputEl.setSelectionRange(0, text.length);
+    }
+    renderHistoryAssistantState();
+  });
 }
 
 function getActiveWebSearchEngineId() {
@@ -396,6 +947,7 @@ function createOverlay() {
   resultsEl.addEventListener("pointermove", handleResultsPointerMove);
 
   containerEl.appendChild(inputWrapper);
+  ensureHistoryAssistantPanel();
   containerEl.appendChild(resultsEl);
   overlayEl.appendChild(containerEl);
 
@@ -404,6 +956,7 @@ function createOverlay() {
   }
 
   renderSubfilters();
+  updateHistoryAssistantVisibility();
 
   overlayEl.addEventListener("click", (event) => {
     if (event.target !== overlayEl) {
@@ -1270,6 +1823,8 @@ async function openOverlay() {
   resetEngineMenuState();
   resetWebSearchSelection();
   pointerNavigationSuspended = true;
+  resetHistoryAssistantState({ resetAvailability: true });
+  updateHistoryAssistantVisibility();
 
   if (!shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
@@ -1315,6 +1870,7 @@ function closeOverlay() {
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  updateHistoryAssistantVisibility();
 }
 
 function handleGlobalKeydown(event) {
@@ -2456,6 +3012,8 @@ function renderResults() {
   scheduleIdleWork(() => {
     lazyList.maybeFill();
   });
+
+  updateHistoryAssistantVisibility();
 }
 
 function getFilterStatusLabel(type) {
