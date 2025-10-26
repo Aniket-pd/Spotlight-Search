@@ -60,6 +60,62 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const SMART_HISTORY_ASSISTANT_FLAG_KEY = "smartHistoryAssistantEnabled";
+const HISTORY_ASSISTANT_SCHEMA = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["show", "open", "summarize", "delete", "meta"] },
+    scope: { type: "string" },
+    query: { type: "string" },
+    timeframe: {
+      type: "object",
+      properties: {
+        preset: {
+          type: "string",
+          enum: [
+            "all",
+            "today",
+            "yesterday",
+            "last7days",
+            "last7",
+            "last30days",
+            "last30",
+            "past3days",
+            "last3days",
+            "past24hours",
+            "last24hours",
+            "custom",
+          ],
+        },
+        start: { type: "string" },
+        end: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    includeDomains: {
+      type: "array",
+      items: { type: "string" },
+    },
+    limit: { type: "integer", minimum: 1, maximum: 50 },
+    metaAnswer: { type: "string" },
+  },
+  required: ["action"],
+  additionalProperties: false,
+};
+let smartHistoryAssistantEnabled = false;
+let historyAssistantContainerEl = null;
+let historyAssistantFormEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantButtonEl = null;
+let historyAssistantStatusEl = null;
+let historyAssistantResultsEl = null;
+let historyAssistantSession = null;
+let historyAssistantSessionPromise = null;
+let historyAssistantBusy = false;
+let historyAssistantRequestCounter = 0;
+let historyAssistantActiveRequestId = 0;
+let historyAssistantSummarizer = null;
+let historyAssistantSummarizerPromise = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -111,6 +167,41 @@ const lazyList = createLazyList(
     });
   }
 );
+
+function applyHistoryAssistantFlag(value) {
+  const enabled = Boolean(value);
+  if (smartHistoryAssistantEnabled === enabled) {
+    return;
+  }
+  smartHistoryAssistantEnabled = enabled;
+  updateHistoryAssistantVisibility();
+}
+
+function initializeHistoryAssistantFlag() {
+  if (!chrome?.storage?.local?.get) {
+    return;
+  }
+  chrome.storage.local
+    .get(SMART_HISTORY_ASSISTANT_FLAG_KEY)
+    .then((stored) => {
+      const enabled = stored ? stored[SMART_HISTORY_ASSISTANT_FLAG_KEY] : false;
+      applyHistoryAssistantFlag(enabled);
+    })
+    .catch(() => {
+      applyHistoryAssistantFlag(false);
+    });
+
+  if (chrome?.storage?.onChanged && typeof chrome.storage.onChanged.addListener === "function") {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes || !(SMART_HISTORY_ASSISTANT_FLAG_KEY in changes)) {
+        return;
+      }
+      applyHistoryAssistantFlag(changes[SMART_HISTORY_ASSISTANT_FLAG_KEY]?.newValue);
+    });
+  }
+}
+
+initializeHistoryAssistantFlag();
 
 const iconCache = new Map();
 const pendingIconOrigins = new Set();
@@ -381,6 +472,56 @@ function createOverlay() {
   inputWrapper.appendChild(subfilterContainerEl);
   ensureBookmarkOrganizerControl();
 
+  historyAssistantContainerEl = document.createElement("section");
+  historyAssistantContainerEl.className = "spotlight-assistant-panel";
+  historyAssistantContainerEl.setAttribute("aria-hidden", "true");
+
+  const assistantHeaderEl = document.createElement("div");
+  assistantHeaderEl.className = "spotlight-assistant-header";
+  assistantHeaderEl.textContent = "Smart History Assistant";
+  historyAssistantContainerEl.appendChild(assistantHeaderEl);
+
+  const assistantDescriptionEl = document.createElement("p");
+  assistantDescriptionEl.className = "spotlight-assistant-description";
+  assistantDescriptionEl.textContent =
+    "Ask in natural language to search, reopen, delete, or summarize your recent browsing.";
+  historyAssistantContainerEl.appendChild(assistantDescriptionEl);
+
+  historyAssistantFormEl = document.createElement("form");
+  historyAssistantFormEl.className = "spotlight-assistant-form";
+  historyAssistantFormEl.setAttribute("role", "group");
+  historyAssistantFormEl.addEventListener("submit", handleHistoryAssistantSubmit);
+
+  const assistantInputRowEl = document.createElement("div");
+  assistantInputRowEl.className = "spotlight-assistant-input-row";
+  historyAssistantInputEl = document.createElement("input");
+  historyAssistantInputEl.type = "text";
+  historyAssistantInputEl.className = "spotlight-assistant-input";
+  historyAssistantInputEl.setAttribute("placeholder", "Ask about your history…");
+  historyAssistantInputEl.setAttribute("spellcheck", "false");
+  historyAssistantInputEl.setAttribute("aria-label", "Smart history assistant");
+  assistantInputRowEl.appendChild(historyAssistantInputEl);
+
+  historyAssistantButtonEl = document.createElement("button");
+  historyAssistantButtonEl.type = "submit";
+  historyAssistantButtonEl.className = "spotlight-assistant-submit";
+  historyAssistantButtonEl.textContent = "Ask";
+  assistantInputRowEl.appendChild(historyAssistantButtonEl);
+
+  historyAssistantFormEl.appendChild(assistantInputRowEl);
+  historyAssistantContainerEl.appendChild(historyAssistantFormEl);
+
+  historyAssistantStatusEl = document.createElement("div");
+  historyAssistantStatusEl.className = "spotlight-assistant-status";
+  historyAssistantStatusEl.textContent = "";
+  historyAssistantContainerEl.appendChild(historyAssistantStatusEl);
+
+  historyAssistantResultsEl = document.createElement("div");
+  historyAssistantResultsEl.className = "spotlight-assistant-results";
+  historyAssistantContainerEl.appendChild(historyAssistantResultsEl);
+
+  inputWrapper.appendChild(historyAssistantContainerEl);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -438,6 +579,551 @@ function createOverlay() {
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
+}
+
+function getLanguageModelApi() {
+  if (typeof globalThis !== "undefined") {
+    if (typeof globalThis.LanguageModel !== "undefined") {
+      return globalThis.LanguageModel;
+    }
+    if (globalThis.ai && typeof globalThis.ai.languageModel !== "undefined") {
+      return globalThis.ai.languageModel;
+    }
+  }
+  return null;
+}
+
+function getSummarizerApi() {
+  if (typeof globalThis !== "undefined") {
+    if (typeof globalThis.Summarizer !== "undefined") {
+      return globalThis.Summarizer;
+    }
+    if (globalThis.ai && typeof globalThis.ai.summarizer !== "undefined") {
+      return globalThis.ai.summarizer;
+    }
+  }
+  return null;
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!historyAssistantContainerEl) {
+    return;
+  }
+  const shouldShow = Boolean(smartHistoryAssistantEnabled && activeFilter === "history");
+  historyAssistantContainerEl.classList.toggle("visible", shouldShow);
+  historyAssistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    resetHistoryAssistantUI({ preserveInput: true });
+  }
+}
+
+function setHistoryAssistantStatus(message, options = {}) {
+  if (!historyAssistantStatusEl) {
+    return;
+  }
+  const tone = typeof options.tone === "string" ? options.tone : "info";
+  if (message) {
+    historyAssistantStatusEl.textContent = message;
+    historyAssistantStatusEl.setAttribute("data-tone", tone);
+  } else {
+    historyAssistantStatusEl.textContent = "";
+    historyAssistantStatusEl.removeAttribute("data-tone");
+  }
+}
+
+function setHistoryAssistantBusy(busy, message) {
+  historyAssistantBusy = Boolean(busy);
+  if (historyAssistantContainerEl) {
+    historyAssistantContainerEl.classList.toggle("busy", historyAssistantBusy);
+  }
+  if (historyAssistantButtonEl) {
+    historyAssistantButtonEl.disabled = historyAssistantBusy;
+  }
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.readOnly = historyAssistantBusy;
+    historyAssistantInputEl.classList.toggle("readonly", historyAssistantBusy);
+  }
+  if (typeof message === "string") {
+    setHistoryAssistantStatus(message);
+  }
+}
+
+function clearHistoryAssistantResults() {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  historyAssistantResultsEl.setAttribute("data-empty", "true");
+}
+
+function resetHistoryAssistantUI({ preserveInput = false } = {}) {
+  if (!preserveInput && historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  clearHistoryAssistantResults();
+  setHistoryAssistantStatus("");
+  historyAssistantActiveRequestId = 0;
+}
+
+function formatAssistantTimestamp(timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+  try {
+    return new Date(timestamp).toLocaleString([], {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch (err) {
+    return "";
+  }
+}
+
+function formatAssistantTimeframe(range) {
+  if (!range || typeof range !== "object") {
+    return "";
+  }
+  if (typeof range.label === "string" && range.label) {
+    return range.label;
+  }
+  const start = Number.isFinite(range.start) ? new Date(range.start) : null;
+  const end = Number.isFinite(range.end) ? new Date(range.end) : null;
+  if (start && end) {
+    return `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`;
+  }
+  if (start && !end) {
+    return `since ${start.toLocaleDateString()}`;
+  }
+  if (!start && end) {
+    return `until ${end.toLocaleDateString()}`;
+  }
+  return "";
+}
+
+function renderHistoryAssistantList(items, { append = false, limit = null } = {}) {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  const subset = Array.isArray(items)
+    ? limit && Number.isFinite(limit)
+      ? items.slice(0, Math.max(1, Math.floor(limit)))
+      : items
+    : [];
+  if (!append) {
+    historyAssistantResultsEl.innerHTML = "";
+  }
+  if (!subset.length) {
+    if (!append) {
+      historyAssistantResultsEl.setAttribute("data-empty", "true");
+    }
+    return;
+  }
+  historyAssistantResultsEl.removeAttribute("data-empty");
+  const listEl = document.createElement("ul");
+  listEl.className = "spotlight-assistant-list";
+  subset.forEach((item) => {
+    if (!item) return;
+    const entryEl = document.createElement("li");
+    entryEl.className = "spotlight-assistant-item";
+    const titleEl = document.createElement("div");
+    titleEl.className = "spotlight-assistant-item-title";
+    const title = typeof item.title === "string" && item.title.trim() ? item.title.trim() : item.url || "(untitled)";
+    titleEl.textContent = title;
+    entryEl.appendChild(titleEl);
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "spotlight-assistant-item-meta";
+    const timeText = formatAssistantTimestamp(item.lastVisitTime);
+    if (timeText) {
+      const timeSpan = document.createElement("span");
+      timeSpan.className = "spotlight-assistant-item-time";
+      timeSpan.textContent = timeText;
+      metaEl.appendChild(timeSpan);
+    }
+    if (item.url) {
+      if (metaEl.childNodes.length) {
+        const separator = document.createElement("span");
+        separator.className = "spotlight-assistant-item-separator";
+        separator.textContent = "·";
+        metaEl.appendChild(separator);
+      }
+      const urlSpan = document.createElement("span");
+      urlSpan.className = "spotlight-assistant-item-url";
+      urlSpan.textContent = item.url;
+      metaEl.appendChild(urlSpan);
+    }
+    entryEl.appendChild(metaEl);
+    listEl.appendChild(entryEl);
+  });
+  historyAssistantResultsEl.appendChild(listEl);
+}
+
+function parseSummaryLines(text) {
+  if (!text || typeof text !== "string") {
+    return [];
+  }
+  const lines = text.split(/\r?\n/);
+  const bullets = [];
+  for (const line of lines) {
+    const bulletMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (bulletMatch && bulletMatch[1]) {
+      bullets.push(bulletMatch[1].trim());
+    }
+  }
+  if (bullets.length) {
+    return bullets;
+  }
+  const fallback = text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return fallback;
+}
+
+function renderHistoryAssistantSummary(items, summaryText) {
+  if (!historyAssistantResultsEl) {
+    return;
+  }
+  historyAssistantResultsEl.innerHTML = "";
+  historyAssistantResultsEl.removeAttribute("data-empty");
+
+  const summarySection = document.createElement("div");
+  summarySection.className = "spotlight-assistant-summary";
+
+  const summaryTitle = document.createElement("div");
+  summaryTitle.className = "spotlight-assistant-summary-title";
+  summaryTitle.textContent = "Summary";
+  summarySection.appendChild(summaryTitle);
+
+  const summaryBody = document.createElement("div");
+  summaryBody.className = "spotlight-assistant-summary-body";
+  const lines = parseSummaryLines(summaryText);
+  if (lines.length > 1) {
+    const list = document.createElement("ul");
+    list.className = "spotlight-assistant-summary-list";
+    lines.slice(0, 7).forEach((line) => {
+      const itemEl = document.createElement("li");
+      itemEl.textContent = line;
+      list.appendChild(itemEl);
+    });
+    summaryBody.appendChild(list);
+  } else {
+    summaryBody.textContent = lines[0] || summaryText || "No summary available.";
+  }
+  summarySection.appendChild(summaryBody);
+  historyAssistantResultsEl.appendChild(summarySection);
+
+  if (Array.isArray(items) && items.length) {
+    const basedOnTitle = document.createElement("div");
+    basedOnTitle.className = "spotlight-assistant-based-on";
+    basedOnTitle.textContent = "Based on:";
+    historyAssistantResultsEl.appendChild(basedOnTitle);
+    renderHistoryAssistantList(items, { append: true, limit: 6 });
+  }
+}
+
+async function ensureHistoryAssistantSession() {
+  if (historyAssistantSession) {
+    return historyAssistantSession;
+  }
+  if (historyAssistantSessionPromise) {
+    return historyAssistantSessionPromise;
+  }
+  const LanguageModel = getLanguageModelApi();
+  if (!LanguageModel || typeof LanguageModel.create !== "function") {
+    throw new Error("Prompt API unavailable");
+  }
+
+  historyAssistantSessionPromise = (async () => {
+    const availability = typeof LanguageModel.availability === "function" ? await LanguageModel.availability() : "unknown";
+    if (availability === "unavailable") {
+      throw new Error("Smart History Assistant requires Gemini Nano in Chrome");
+    }
+
+    const systemPrompt = [
+      "You are the Smart History Assistant for the Spotlight Chrome extension.",
+      "Convert user requests about browsing history into JSON commands.",
+      "Supported actions: show, open, summarize, delete, meta.",
+      "Use action 'meta' only for questions about the assistant itself.",
+      "Default scope is 'history'.",
+      "Populate timeframe.preset with one of: today, yesterday, last7days, last30days, past3days, past24hours, all, custom.",
+      "When the user provides specific dates, use preset 'custom' and include ISO-8601 dates in timeframe.start and timeframe.end (YYYY-MM-DD).",
+      "Set includeDomains to an array of hostnames (lowercase) when the user mentions specific sites; otherwise use an empty array.",
+      "Set limit to the number of items to act on (default 10).",
+      "Always respond with valid JSON conforming to the provided schema.",
+    ].join(" ");
+
+    const session = await LanguageModel.create({
+      initialPrompts: [
+        { role: "system", content: systemPrompt },
+      ],
+      expectedInputs: [{ type: "text", languages: ["en"] }],
+      expectedOutputs: [{ type: "text", languages: ["en"] }],
+      monitor(monitor) {
+        if (!monitor) {
+          return;
+        }
+        monitor.addEventListener("downloadprogress", (event) => {
+          if (!event) return;
+          const loaded = typeof event.loaded === "number" ? Math.floor(event.loaded * 100) : 0;
+          if (historyAssistantBusy) {
+            setHistoryAssistantStatus(`Downloading on-device model… ${loaded}%`);
+          }
+        });
+      },
+    });
+
+    historyAssistantSession = session;
+    return session;
+  })();
+
+  try {
+    const session = await historyAssistantSessionPromise;
+    historyAssistantSessionPromise = null;
+    return session;
+  } catch (error) {
+    historyAssistantSessionPromise = null;
+    throw error;
+  }
+}
+
+async function interpretHistoryAssistantPrompt(promptText) {
+  const session = await ensureHistoryAssistantSession();
+  if (!session || typeof session.prompt !== "function") {
+    throw new Error("Assistant session unavailable");
+  }
+  const trimmed = promptText.trim();
+  if (!trimmed) {
+    throw new Error("Enter a request for the assistant");
+  }
+  const promptMessage = `User request: ${trimmed}`;
+  const responseText = await session.prompt(promptMessage, {
+    responseConstraint: HISTORY_ASSISTANT_SCHEMA,
+    omitResponseConstraintInput: true,
+  });
+  try {
+    return JSON.parse(responseText);
+  } catch (err) {
+    console.warn("Spotlight: failed to parse assistant response", err, responseText);
+    throw new Error("Assistant returned an unexpected response");
+  }
+}
+
+async function runHistoryAssistantCommand(command, requestId) {
+  const payload = {
+    type: "SPOTLIGHT_HISTORY_ASSISTANT",
+    command,
+    requestId,
+  };
+  try {
+    const response = await chrome.runtime.sendMessage(payload);
+    return response || { success: false, requestId };
+  } catch (err) {
+    console.warn("Spotlight: history assistant request failed", err);
+    return { success: false, error: err?.message || "Unable to reach background", requestId };
+  }
+}
+
+async function ensureHistorySummarizer() {
+  if (historyAssistantSummarizer) {
+    return historyAssistantSummarizer;
+  }
+  if (historyAssistantSummarizerPromise) {
+    return historyAssistantSummarizerPromise;
+  }
+  const Summarizer = getSummarizerApi();
+  if (!Summarizer || typeof Summarizer.create !== "function") {
+    throw new Error("Summarizer API unavailable");
+  }
+  historyAssistantSummarizerPromise = (async () => {
+    const availability = typeof Summarizer.availability === "function" ? await Summarizer.availability() : "unknown";
+    if (availability === "unavailable") {
+      throw new Error("Summaries require Gemini Nano");
+    }
+    const summarizer = await Summarizer.create({
+      type: "key-points",
+      format: "markdown",
+      length: "short",
+      expectedInputLanguages: ["en"],
+      outputLanguage: "en",
+      monitor(monitor) {
+        if (!monitor) {
+          return;
+        }
+        monitor.addEventListener("downloadprogress", (event) => {
+          if (!event) return;
+          const loaded = typeof event.loaded === "number" ? Math.floor(event.loaded * 100) : 0;
+          if (historyAssistantBusy) {
+            setHistoryAssistantStatus(`Preparing summarizer… ${loaded}%`);
+          }
+        });
+      },
+    });
+    historyAssistantSummarizer = summarizer;
+    historyAssistantSummarizerPromise = null;
+    return summarizer;
+  })();
+
+  try {
+    return await historyAssistantSummarizerPromise;
+  } catch (error) {
+    historyAssistantSummarizerPromise = null;
+    historyAssistantSummarizer = null;
+    throw error;
+  }
+}
+
+async function summarizeHistoryItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    throw new Error("Nothing to summarize");
+  }
+  const summarizer = await ensureHistorySummarizer();
+  if (!summarizer || typeof summarizer.summarize !== "function") {
+    throw new Error("Summarizer unavailable");
+  }
+  const lines = items
+    .map((item) => {
+      const time = formatAssistantTimestamp(item.lastVisitTime);
+      const title = typeof item.title === "string" && item.title.trim() ? item.title.trim() : item.url;
+      return `- ${time ? `${time}: ` : ""}${title} (${item.url || "unknown URL"})`;
+    })
+    .join("\n");
+  return summarizer.summarize(lines, {
+    context: "Summarize the key things the user did while browsing. Keep it factual and concise.",
+  });
+}
+
+async function handleHistoryAssistantSubmit(event) {
+  event.preventDefault();
+  if (!smartHistoryAssistantEnabled) {
+    setHistoryAssistantStatus("Enable Smart History Assistant in settings first.", { tone: "warning" });
+    return;
+  }
+  if (historyAssistantBusy) {
+    return;
+  }
+  if (!historyAssistantInputEl) {
+    return;
+  }
+  const promptText = historyAssistantInputEl.value || "";
+  if (!promptText.trim()) {
+    setHistoryAssistantStatus("Describe what you want to find in your history.", { tone: "warning" });
+    return;
+  }
+
+  const requestId = ++historyAssistantRequestCounter;
+  historyAssistantActiveRequestId = requestId;
+  clearHistoryAssistantResults();
+  setHistoryAssistantBusy(true, "Understanding request…");
+
+  try {
+    const command = await interpretHistoryAssistantPrompt(promptText);
+    if (historyAssistantActiveRequestId !== requestId || !command) {
+      return;
+    }
+
+    if (!command.scope || typeof command.scope !== "string") {
+      command.scope = "history";
+    }
+    if (!Array.isArray(command.includeDomains)) {
+      command.includeDomains = [];
+    } else {
+      command.includeDomains = command.includeDomains
+        .map((entry) => (typeof entry === "string" ? entry.trim().toLowerCase() : ""))
+        .filter(Boolean);
+    }
+    if (!command.timeframe || typeof command.timeframe !== "object") {
+      command.timeframe = {};
+    }
+    if (typeof command.limit !== "number" || !Number.isFinite(command.limit)) {
+      delete command.limit;
+    }
+    if (typeof command.query !== "string") {
+      command.query = "";
+    }
+
+    const action = typeof command.action === "string" ? command.action.toLowerCase() : "";
+    if (action === "meta") {
+      const answer = typeof command.metaAnswer === "string" && command.metaAnswer.trim()
+        ? command.metaAnswer.trim()
+        : "I'm Spotlight's Smart History Assistant. I can search, reopen, summarize, or delete history items for you.";
+      setHistoryAssistantStatus(answer, { tone: "info" });
+      clearHistoryAssistantResults();
+      setHistoryAssistantBusy(false);
+      return;
+    }
+
+    setHistoryAssistantStatus("Looking up history…");
+    const response = await runHistoryAssistantCommand(command, requestId);
+    if (!response || response.requestId !== requestId) {
+      return;
+    }
+
+    const items = Array.isArray(response.items) ? response.items : [];
+    if (!response.success) {
+      const errorMessage = response.error || response.message || "No matching history entries found.";
+      setHistoryAssistantStatus(errorMessage, { tone: "error" });
+      if (items.length) {
+        renderHistoryAssistantList(items);
+      } else {
+        clearHistoryAssistantResults();
+      }
+      return;
+    }
+
+    const timeframeLabel = formatAssistantTimeframe(response.resolvedTimeframe);
+
+    if (response.action === "show") {
+      const label = items.length === 1 ? "result" : "results";
+      const scope = timeframeLabel ? ` (${timeframeLabel})` : "";
+      setHistoryAssistantStatus(`Found ${items.length} ${label}${scope}.`, { tone: "success" });
+      renderHistoryAssistantList(items);
+    } else if (response.action === "open") {
+      const count = Number.isFinite(response.openedCount) ? response.openedCount : items.length;
+      const label = count === 1 ? "tab" : "tabs";
+      const scope = timeframeLabel ? ` (${timeframeLabel})` : "";
+      setHistoryAssistantStatus(`Opened ${count} ${label}${scope}.`, { tone: count ? "success" : "warning" });
+      renderHistoryAssistantList(items);
+    } else if (response.action === "delete") {
+      const count = Number.isFinite(response.deletedCount) ? response.deletedCount : items.length;
+      const label = count === 1 ? "entry" : "entries";
+      const scope = timeframeLabel ? ` (${timeframeLabel})` : "";
+      setHistoryAssistantStatus(`Deleted ${count} history ${label}${scope}.`, {
+        tone: count ? "success" : "warning",
+      });
+      renderHistoryAssistantList(items);
+    } else if (response.action === "summarize") {
+      const count = items.length;
+      const scope = timeframeLabel ? ` (${timeframeLabel})` : "";
+      setHistoryAssistantStatus(`Summarizing ${count} visits${scope}…`);
+      try {
+        const summaryText = await summarizeHistoryItems(items);
+        if (historyAssistantActiveRequestId !== requestId) {
+          return;
+        }
+        setHistoryAssistantStatus(`Summary ready${scope ? ` ${scope}` : ""}.`, { tone: "success" });
+        renderHistoryAssistantSummary(items, summaryText);
+      } catch (err) {
+        console.warn("Spotlight: failed to summarize history", err);
+        setHistoryAssistantStatus(err?.message || "Unable to summarize right now.", { tone: "error" });
+        renderHistoryAssistantList(items);
+      }
+    } else {
+      setHistoryAssistantStatus("Unsupported assistant action.", { tone: "error" });
+      clearHistoryAssistantResults();
+    }
+  } catch (error) {
+    if (historyAssistantActiveRequestId !== requestId) {
+      return;
+    }
+    setHistoryAssistantStatus(error?.message || "Assistant failed to understand the request.", { tone: "error" });
+    clearHistoryAssistantResults();
+  } finally {
+    if (historyAssistantActiveRequestId === requestId) {
+      setHistoryAssistantBusy(false);
+    }
+  }
 }
 
 function installOverlayGuards() {
@@ -1074,6 +1760,7 @@ function renderSubfilters() {
 
   subfilterScrollerEl.innerHTML = "";
   refreshBookmarkOrganizerControlState();
+  updateHistoryAssistantVisibility();
   if (!shouldShow || !hasNonAllOption) {
     return;
   }
@@ -1315,6 +2002,8 @@ function closeOverlay() {
   if (inputEl) {
     inputEl.removeAttribute("aria-activedescendant");
   }
+  setHistoryAssistantBusy(false);
+  resetHistoryAssistantUI();
 }
 
 function handleGlobalKeydown(event) {
@@ -1524,6 +2213,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantVisibility();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
