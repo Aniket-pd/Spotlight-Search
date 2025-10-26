@@ -42,7 +42,7 @@ Use these intents: show (just list results), open (user wants to immediately reo
 timeRange can be any concise natural-language window like 'today', 'yesterday', 'last 3 days', 'past 2 hours', or 'all'. Prefer phrasing that the UI can echo back and keep it short, and use 'all' when no timeframe is mentioned. \
 searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
 If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
-Limit defaults: show -> 10, summarize -> 20, open -> 3, delete -> 5 unless the user states otherwise. Clamp the limit between 1 and 50 for show/summarize, 1 and 10 for open, and 1 and 25 for delete. \
+Only include limit when the user specifies a quantity. When present, clamp the limit between 1 and 50 for show/summarize, 1 and 10 for open, and 1 and 25 for delete. \
 Always include a friendly message explaining what you interpreted. \
 If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
 Never include the history: prefix in searchQuery.`;
@@ -485,13 +485,6 @@ function sanitizeDomain(value) {
 }
 
 function clampLimit(intent, value) {
-  const defaults = {
-    show: 10,
-    summarize: 20,
-    open: 3,
-    delete: 5,
-    info: 0,
-  };
   const maxByIntentMap = {
     show: 50,
     summarize: 50,
@@ -501,9 +494,13 @@ function clampLimit(intent, value) {
   };
   const maxByIntent = maxByIntentMap[intent] ?? 50;
   if (!Number.isFinite(value)) {
-    return defaults[intent] ?? 10;
+    return null;
   }
-  const clamped = Math.max(1, Math.min(value, maxByIntent));
+  const normalized = Math.floor(value);
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+  const clamped = Math.max(1, Math.min(normalized, maxByIntent));
   return clamped;
 }
 

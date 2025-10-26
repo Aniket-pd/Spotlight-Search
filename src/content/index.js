@@ -949,11 +949,12 @@ function formatCountLabel(count, singular, plural = null) {
   return `${value} ${value === 1 ? singular : labelPlural}`;
 }
 
-function buildHistorySummary(results, limit = 20) {
+function buildHistorySummary(results, limit) {
   if (!Array.isArray(results) || !results.length) {
     return "No matching history found.";
   }
-  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 20, 50, results.length));
+  const baseLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : results.length;
+  const safeLimit = Math.max(1, Math.min(baseLimit, 50, results.length));
   const slice = results.slice(0, safeLimit);
   const domainCounts = new Map();
   const dayCounts = new Map();
@@ -1067,7 +1068,9 @@ function applyHistoryAssistantPlanAfterResults() {
   }
 
   if (intent === "summarize") {
-    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 20;
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
     const summary = buildHistorySummary(filteredHistoryResults, limit);
     let message = historyAssistantPlan.message ? `${historyAssistantPlan.message} · ${summary}` : summary;
     if (shouldAppendRange) {
@@ -1081,13 +1084,17 @@ function applyHistoryAssistantPlanAfterResults() {
   }
 
   if (intent === "open") {
-    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 3;
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
     openHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
     return;
   }
 
   if (intent === "delete") {
-    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 5;
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
     deleteHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
     return;
   }
@@ -1096,8 +1103,19 @@ function applyHistoryAssistantPlanAfterResults() {
 }
 
 async function deleteHistoryEntries(results, limit, planId) {
-  const desired = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 25)) : 5;
-  const max = Math.max(1, Math.min(desired, Array.isArray(results) ? results.length : 0));
+  const available = Array.isArray(results) ? results.length : 0;
+  let desired;
+  if (Number.isFinite(limit)) {
+    const normalized = Math.floor(limit);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      desired = available > 0 ? 1 : 0;
+    } else {
+      desired = Math.min(normalized, 25, available);
+    }
+  } else {
+    desired = Math.min(available, 25);
+  }
+  const max = Math.max(0, desired);
   const targets = Array.isArray(results) ? results.slice(0, max) : [];
   const urls = targets.map((entry) => (typeof entry?.url === "string" ? entry.url : "")).filter(Boolean);
   if (!urls.length) {
@@ -1141,8 +1159,19 @@ async function deleteHistoryEntries(results, limit, planId) {
 }
 
 async function openHistoryEntries(results, limit, planId) {
-  const desired = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 10)) : 3;
-  const max = Math.max(1, Math.min(desired, Array.isArray(results) ? results.length : 0));
+  const available = Array.isArray(results) ? results.length : 0;
+  let desired;
+  if (Number.isFinite(limit)) {
+    const normalized = Math.floor(limit);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      desired = available > 0 ? 1 : 0;
+    } else {
+      desired = Math.min(normalized, 10, available);
+    }
+  } else {
+    desired = Math.min(available, 10);
+  }
+  const max = Math.max(0, desired);
   const targets = Array.isArray(results) ? results.slice(0, max) : [];
   if (!targets.length) {
     setHistoryAssistantMessage("No matching history to open.", { tone: "muted" });
