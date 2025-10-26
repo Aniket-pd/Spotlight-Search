@@ -30,7 +30,7 @@ const RESPONSE_SCHEMA = {
     limit: {
       type: "integer",
       minimum: 1,
-      maximum: 20,
+      maximum: 50,
     },
   },
 };
@@ -42,7 +42,7 @@ Use these intents: show (just list results), open (user wants to immediately reo
 Allowed time ranges: all, today, yesterday, last7, last30, older. Map relative requests to the closest range (e.g. last week -> last7, past month -> last30, past few days -> last7). \
 searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
 If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
-Limit defaults: show -> 5, summarize -> 20, open -> 1, delete -> 3 unless the user states otherwise. Clamp the limit between 1 and 5. \
+Limit defaults: show -> 10, summarize -> 20, open -> 3, delete -> 5 unless the user states otherwise. Clamp the limit between 1 and 50 for show/summarize, 1 and 10 for open, and 1 and 25 for delete. \
 Always include a friendly message explaining what you interpreted. \
 If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
 Never include the history: prefix in searchQuery.`;
@@ -88,15 +88,22 @@ function sanitizeDomain(value) {
 
 function clampLimit(intent, value) {
   const defaults = {
-    show: 5,
+    show: 10,
     summarize: 20,
-    open: 1,
-    delete: 3,
+    open: 3,
+    delete: 5,
     info: 0,
   };
-  const maxByIntent = intent === "summarize" ? 20 : 5;
+  const maxByIntentMap = {
+    show: 50,
+    summarize: 50,
+    open: 10,
+    delete: 25,
+    info: 0,
+  };
+  const maxByIntent = maxByIntentMap[intent] ?? 50;
   if (!Number.isFinite(value)) {
-    return defaults[intent] ?? 5;
+    return defaults[intent] ?? 10;
   }
   const clamped = Math.max(1, Math.min(value, maxByIntent));
   return clamped;

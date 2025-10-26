@@ -752,7 +752,8 @@ function buildHistorySummary(results, limit = 20) {
   if (!Array.isArray(results) || !results.length) {
     return "No matching history found.";
   }
-  const slice = results.slice(0, Math.max(1, Math.min(limit, results.length)));
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 20, 50, results.length));
+  const slice = results.slice(0, safeLimit);
   const domainCounts = new Map();
   const dayCounts = new Map();
   let newestTime = 0;
@@ -858,13 +859,13 @@ function applyHistoryAssistantPlanAfterResults() {
   }
 
   if (intent === "open") {
-    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 1;
+    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 3;
     openHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
     return;
   }
 
   if (intent === "delete") {
-    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 3;
+    const limit = Number.isFinite(historyAssistantPlan.limit) ? historyAssistantPlan.limit : 5;
     deleteHistoryEntries(historyResults, limit, historyAssistantPlan.requestId);
     return;
   }
@@ -873,7 +874,8 @@ function applyHistoryAssistantPlanAfterResults() {
 }
 
 async function deleteHistoryEntries(results, limit, planId) {
-  const max = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 3, Array.isArray(results) ? results.length : 0));
+  const desired = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 25)) : 5;
+  const max = Math.max(1, Math.min(desired, Array.isArray(results) ? results.length : 0));
   const targets = Array.isArray(results) ? results.slice(0, max) : [];
   const urls = targets.map((entry) => (typeof entry?.url === "string" ? entry.url : "")).filter(Boolean);
   if (!urls.length) {
@@ -917,7 +919,8 @@ async function deleteHistoryEntries(results, limit, planId) {
 }
 
 async function openHistoryEntries(results, limit, planId) {
-  const max = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 1, Array.isArray(results) ? results.length : 0));
+  const desired = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 10)) : 3;
+  const max = Math.max(1, Math.min(desired, Array.isArray(results) ? results.length : 0));
   const targets = Array.isArray(results) ? results.slice(0, max) : [];
   if (!targets.length) {
     setHistoryAssistantMessage("No matching history to open.", { tone: "muted" });
