@@ -54,5 +54,6 @@ The shared web search utilities live in `src/shared/web-search.js` if you want t
 - Background orchestration is handled by the modules in `src/background/` with `src/background/index.js` wiring listeners together.
 - Web search configuration, engine metadata, and fallback helpers are centralized in `src/shared/web-search.js`.
 - A feature-flagged Smart History Assistant is enabled by default whenever Chrome's on-device Prompt API (Gemini Nano) is available. You can disable it by setting `globalThis.SpotlightFlags.smartHistoryAssistant = false` before the extension loads. The assistant communicates via `SPOTLIGHT_ASSISTANT_STATUS` and `SPOTLIGHT_ASSISTANT_REQUEST` message types, surfaces through the history scope in `src/content/index.js`, and leverages `src/background/assistant.js` plus the natural-language interpreter in `src/search/nlp/history-intent.js`.
+- Prompt API availability is revalidated with the same language options (`en` text input/output) used for live prompts. The assistant requires an explicit user gesture (Enter/click) before creating a session, surfaces download/interaction-required states in the overlay, and gracefully falls back to traditional history search when the model remains blocked or unavailable.
 
 Enjoy lightning-fast, private browsing search!

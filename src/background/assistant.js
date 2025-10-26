@@ -3,19 +3,42 @@ import { interpretHistoryQuery, buildHistoryFiltersFromIntent } from "../search/
 
 const CACHE_TTL = 60 * 1000;
 const AVAILABILITY_TTL = 15 * 1000;
-const DEFAULT_SESSION_OPTIONS = {
+const BASE_SESSION_OPTIONS = {
   model: "gemini-nano",
-  temperature: 0.1,
-  topK: 32,
-  topP: 0.9,
-  outputLanguage: "en",
+  expectedInputs: [{ type: "text", languages: ["en"] }],
+  expectedOutputs: [{ type: "text", languages: ["en"] }],
 };
+
+const READY_AVAILABILITY_STATES = new Set(["ready", "available", "downloaded", "succeeded"]);
+const DOWNLOAD_REQUIRED_STATES = new Set(["download_required", "downloadable"]);
+const DOWNLOADING_STATES = new Set(["downloading", "download_in_progress"]);
+const INTERACTION_REQUIRED_STATES = new Set([
+  "user_interaction_required",
+  "user_action_required",
+  "user_gesture_required",
+  "no_user_gesture",
+  "activation_required",
+]);
 
 function getLanguageModelApi() {
   if (typeof chrome === "undefined") {
     return null;
   }
   return chrome?.ai?.languageModel || null;
+}
+
+function broadcastRuntimeMessage(message) {
+  try {
+    if (!message) {
+      return;
+    }
+    if (typeof chrome === "undefined" || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
+      return;
+    }
+    chrome.runtime.sendMessage(message);
+  } catch (err) {
+    console.warn("Spotlight: assistant broadcast failed", err);
+  }
 }
 
 function now() {
@@ -33,15 +56,60 @@ function normalizeAvailabilityState(raw) {
   if (!raw) {
     return { status: "unavailable" };
   }
+  const details = { status: "unknown" };
+  let status = null;
   if (typeof raw === "string") {
-    return { status: raw };
+    status = raw;
+  } else if (typeof raw === "object") {
+    status = raw.availability || raw.status || raw.state || raw.result || null;
+    if (typeof raw.reason === "string") {
+      details.reason = raw.reason;
+    } else if (typeof raw.message === "string") {
+      details.reason = raw.message;
+    }
+    if (typeof raw.progress === "number") {
+      details.progress = raw.progress;
+    }
   }
-  if (typeof raw === "object") {
-    const status = typeof raw.availability === "string" ? raw.availability : raw.status || raw.state || "unknown";
-    const reason = raw.reason || raw.message || null;
-    return { status, reason };
+  if (typeof status !== "string" || !status) {
+    return { ...details, status: "unknown" };
   }
-  return { status: "unknown" };
+  const normalized = status.toLowerCase();
+  details.rawStatus = normalized;
+  if (READY_AVAILABILITY_STATES.has(normalized)) {
+    return { ...details, status: "ready", reason: details.reason || "" };
+  }
+  if (DOWNLOADING_STATES.has(normalized)) {
+    return {
+      ...details,
+      status: "downloading",
+      reason: details.reason || "Downloading on-device model…",
+    };
+  }
+  if (DOWNLOAD_REQUIRED_STATES.has(normalized)) {
+    return {
+      ...details,
+      status: "download-required",
+      reason: details.reason || "Model download required after activation",
+    };
+  }
+  if (INTERACTION_REQUIRED_STATES.has(normalized)) {
+    return {
+      ...details,
+      status: "interaction-required",
+      reason: details.reason || "Activate with a key press or click to continue",
+    };
+  }
+  if (normalized === "disabled") {
+    return { ...details, status: "disabled" };
+  }
+  if (normalized === "unavailable" || normalized === "blocked") {
+    return { ...details, status: normalized };
+  }
+  if (normalized === "error" || normalized === "failed") {
+    return { ...details, status: "error" };
+  }
+  return { ...details, status: normalized };
 }
 
 function createCacheEntry(response) {
@@ -79,7 +147,7 @@ export function createAssistantService({ context, runSearch }) {
       return availabilityCache.response;
     }
     try {
-      const raw = await api.availability(DEFAULT_SESSION_OPTIONS);
+      const raw = await api.availability({ ...BASE_SESSION_OPTIONS });
       const normalized = normalizeAvailabilityState(raw);
       availabilityCache = createCacheEntry(normalized);
       return normalized;
@@ -104,8 +172,8 @@ export function createAssistantService({ context, runSearch }) {
       return existing.session;
     }
     try {
-      const options = {
-        ...DEFAULT_SESSION_OPTIONS,
+      const session = await api.create({
+        ...BASE_SESSION_OPTIONS,
         initialPrompts: [
           {
             role: "system",
@@ -113,21 +181,28 @@ export function createAssistantService({ context, runSearch }) {
               "You are Spotlight's Smart History Assistant. Interpret natural language history requests and respond with structured filters, domains, and follow-up hints.",
           },
         ],
-      };
-      const session = await api.create(options);
-      sessions.set(kind, { session, createdAt: now(), destroyed: false });
-      if (session && typeof session.addEventListener === "function") {
-        try {
-          session.addEventListener("downloadprogress", (event) => {
-            chrome.runtime.sendMessage({
+        monitor(monitor) {
+          if (!monitor || typeof monitor.addEventListener !== "function") {
+            return;
+          }
+          monitor.addEventListener("downloadprogress", (event) => {
+            broadcastRuntimeMessage({
               type: "SPOTLIGHT_ASSISTANT_DOWNLOAD",
-              progress: event?.progress || 0,
-            }).catch(() => {});
+              progress: typeof event?.progress === "number" ? event.progress : 0,
+            });
           });
-        } catch (err) {
-          console.warn("Spotlight: assistant monitor registration failed", err);
-        }
-      }
+          monitor.addEventListener("statechange", (event) => {
+            const availability = normalizeAvailabilityState(event?.status || event?.state || event);
+            if (availability) {
+              broadcastRuntimeMessage({
+                type: "SPOTLIGHT_ASSISTANT_STATUS_EVENT",
+                availability,
+              });
+            }
+          });
+        },
+      });
+      sessions.set(kind, { session, createdAt: now(), destroyed: false });
       return session;
     } catch (err) {
       console.warn("Spotlight: unable to create Prompt API session", err);
@@ -168,8 +243,20 @@ export function createAssistantService({ context, runSearch }) {
     if (!trimmed) {
       return interpretHistoryQuery("", { now: now() });
     }
-    const availability = await checkAvailability();
-    if (!availability || availability.status === "unavailable" || availability.status === "disabled") {
+    let availability = await checkAvailability();
+    if (
+      availability &&
+      (availability.status === "interaction-required" || availability.status === "download-required")
+    ) {
+      availability = await checkAvailability(true);
+    }
+    if (
+      !availability ||
+      availability.status === "unavailable" ||
+      availability.status === "disabled" ||
+      availability.status === "blocked" ||
+      availability.status === "error"
+    ) {
       return interpretHistoryQuery(trimmed, { now: now() });
     }
     // Attempt to reuse a Prompt API session when available. If anything fails we fall back to heuristics.
@@ -187,21 +274,43 @@ export function createAssistantService({ context, runSearch }) {
           },
           additionalProperties: false,
         };
-        const response = await session.prompt({
-          prompt: `Convert the natural language history request into JSON. Return fields searchQuery, timeRange (today|yesterday|last7|last30|older|null), domain, actions, explanation. Query: ${trimmed}`,
-          responseSchema: schema,
-          outputLanguage: "en",
+        const promptText =
+          "Convert the natural language history request into JSON with fields searchQuery, timeRange (today|yesterday|last7|last30|older|null), domain, actions (array), explanation. Query: " +
+          trimmed;
+        const rawResponse = await session.prompt(promptText, {
+          responseConstraint: schema,
+          omitResponseConstraintInput: true,
         });
-        if (response && typeof response === "object") {
+        const responseObject =
+          typeof rawResponse === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(rawResponse);
+                } catch (parseError) {
+                  console.warn("Spotlight: Prompt API returned non-JSON response", parseError);
+                  return null;
+                }
+              })()
+            : rawResponse && typeof rawResponse === "object"
+            ? rawResponse
+            : null;
+        if (responseObject) {
           const intent = {
-            searchQuery: response.searchQuery || trimmed,
-            timeRange: response.timeRange
-              ? { id: String(response.timeRange), label: String(response.timeRange) }
+            searchQuery: typeof responseObject.searchQuery === "string" && responseObject.searchQuery.trim()
+              ? responseObject.searchQuery.trim()
+              : trimmed,
+            timeRange: responseObject.timeRange
+              ? { id: String(responseObject.timeRange), label: String(responseObject.timeRange) }
               : null,
-            domain: typeof response.domain === "string" ? response.domain.toLowerCase() : null,
-            actions: Array.isArray(response.actions) ? response.actions.filter(Boolean) : [],
-            answer: typeof response.explanation === "string" ? response.explanation : "",
-            explanation: typeof response.explanation === "string" ? response.explanation : "",
+            domain:
+              typeof responseObject.domain === "string" && responseObject.domain.trim()
+                ? responseObject.domain.trim().toLowerCase()
+                : null,
+            actions: Array.isArray(responseObject.actions) ? responseObject.actions.filter(Boolean) : [],
+            answer:
+              typeof responseObject.explanation === "string" ? responseObject.explanation : "",
+            explanation:
+              typeof responseObject.explanation === "string" ? responseObject.explanation : "",
             confidence: 0.6,
             originalQuery: trimmed,
             now: now(),

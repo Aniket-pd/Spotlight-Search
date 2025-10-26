@@ -65,7 +65,7 @@ let assistantInputEl = null;
 let assistantSendButton = null;
 let assistantStatusEl = null;
 let assistantAnswerEl = null;
-let assistantAvailabilityState = { status: "unknown" };
+let assistantAvailabilityState = { status: "unknown", progress: 0 };
 let assistantRequestCounter = 0;
 let assistantActiveRequestId = 0;
 let assistantPending = false;
@@ -297,9 +297,22 @@ function formatAssistantAvailability(state) {
   const status = typeof state.status === "string" ? state.status : "unknown";
   const reason = typeof state.reason === "string" ? state.reason : "";
   switch (status) {
-    case "available":
     case "ready":
       return "Smart History Assistant ready";
+    case "downloading": {
+      const progress = typeof state.progress === "number" ? Math.max(0, Math.min(1, state.progress)) : 0;
+      const percent = Math.round(progress * 100);
+      if (percent > 0 && percent < 100) {
+        return `Downloading Smart History Assistant… ${percent}%`;
+      }
+      return reason || "Downloading Smart History Assistant…";
+    }
+    case "download-required":
+      return reason || "Download Smart History Assistant after activation";
+    case "interaction-required":
+      return reason || "Press Enter or click Send to activate Smart History Assistant";
+    case "blocked":
+      return reason || "Smart History Assistant blocked by browser settings";
     case "unavailable":
       return reason || "Smart History Assistant requires on-device model";
     case "disabled":
@@ -307,7 +320,7 @@ function formatAssistantAvailability(state) {
     case "error":
       return reason ? `Assistant error: ${reason}` : "Assistant unavailable";
     default:
-      return "Preparing Smart History Assistant";
+      return reason || "Preparing Smart History Assistant";
   }
 }
 
@@ -317,6 +330,33 @@ function updateAssistantStatus(message, { loading = false } = {}) {
   }
   assistantStatusEl.textContent = message || "";
   assistantStatusEl.classList.toggle("loading", Boolean(loading));
+}
+
+function refreshAssistantStatus({ loadingOverride } = {}) {
+  const message = formatAssistantAvailability(assistantAvailabilityState);
+  const status = typeof assistantAvailabilityState.status === "string" ? assistantAvailabilityState.status : "unknown";
+  const loading = typeof loadingOverride === "boolean" ? loadingOverride : status !== "ready";
+  updateAssistantStatus(message, { loading });
+}
+
+function mergeAssistantAvailability(update) {
+  if (!update || typeof update !== "object") {
+    return;
+  }
+  const next = { ...assistantAvailabilityState };
+  if (typeof update.status === "string") {
+    next.status = update.status;
+  }
+  if (typeof update.reason === "string") {
+    next.reason = update.reason;
+  }
+  if (typeof update.rawStatus === "string") {
+    next.rawStatus = update.rawStatus;
+  }
+  if (typeof update.progress === "number" && Number.isFinite(update.progress)) {
+    next.progress = Math.max(0, Math.min(1, update.progress));
+  }
+  assistantAvailabilityState = next;
 }
 
 function setAssistantAnswer(answer) {
@@ -332,6 +372,7 @@ function clearAssistantState() {
   assistantPending = false;
   assistantActiveRequestId = 0;
   setAssistantAnswer("");
+  assistantAvailabilityState = { status: "unknown", progress: 0 };
   if (assistantStatusEl) {
     assistantStatusEl.textContent = "";
     assistantStatusEl.classList.remove("loading");
@@ -354,6 +395,7 @@ function updateAssistantVisibility() {
   if (assistantInputEl && !assistantInputEl.value) {
     assistantInputEl.focus({ preventScroll: true });
   }
+  refreshAssistantStatus({});
   fetchAssistantAvailability();
 }
 
@@ -363,16 +405,31 @@ function fetchAssistantAvailability() {
   }
   chrome.runtime.sendMessage({ type: "SPOTLIGHT_ASSISTANT_STATUS" }, (response) => {
     if (chrome.runtime.lastError) {
-      updateAssistantStatus("Assistant unavailable", { loading: false });
+      mergeAssistantAvailability({
+        status: "error",
+        reason: chrome.runtime.lastError.message || "Assistant unavailable",
+      });
+      refreshAssistantStatus({ loadingOverride: false });
       return;
     }
     if (!response || response.success === false) {
-      assistantAvailabilityState = { status: "error", reason: response?.error || null };
-      updateAssistantStatus(formatAssistantAvailability(assistantAvailabilityState));
+      const statusUpdate = {};
+      if (response && typeof response.status === "string") {
+        statusUpdate.status = response.status;
+      } else if (response && response.enabled === false) {
+        statusUpdate.status = "disabled";
+      } else {
+        statusUpdate.status = "error";
+      }
+      if (response && typeof response.error === "string") {
+        statusUpdate.reason = response.error;
+      }
+      mergeAssistantAvailability(statusUpdate);
+      refreshAssistantStatus({ loadingOverride: false });
       return;
     }
-    assistantAvailabilityState = response.availability || { status: "unknown" };
-    updateAssistantStatus(formatAssistantAvailability(assistantAvailabilityState));
+    mergeAssistantAvailability(response.availability || { status: "unknown" });
+    refreshAssistantStatus({});
   });
 }
 
@@ -414,7 +471,11 @@ function sendAssistantQuery(query) {
   chrome.runtime.sendMessage(message, (response) => {
     if (chrome.runtime.lastError) {
       assistantPending = false;
-      updateAssistantStatus("Assistant unavailable", { loading: false });
+      mergeAssistantAvailability({
+        status: "error",
+        reason: chrome.runtime.lastError.message || "Assistant unavailable",
+      });
+      refreshAssistantStatus({ loadingOverride: false });
       console.error("Spotlight assistant request error", chrome.runtime.lastError);
       return;
     }
@@ -424,11 +485,13 @@ function sendAssistantQuery(query) {
     assistantPending = false;
     if (!response.success) {
       const errorMessage = response.error || "Assistant request failed";
-      updateAssistantStatus(errorMessage, { loading: false });
+      mergeAssistantAvailability({ status: "error", reason: errorMessage });
+      refreshAssistantStatus({ loadingOverride: false });
       return;
     }
     setAssistantAnswer(response.answer || "");
-    updateAssistantStatus(formatAssistantAvailability(response.assistant?.availability), { loading: false });
+    mergeAssistantAvailability(response.assistant?.availability || null);
+    refreshAssistantStatus({ loadingOverride: false });
     applyQueryResponse(response);
   });
 }
@@ -1851,10 +1914,10 @@ function applyQueryResponse(response) {
     typeof response.answer === "string"
   ) {
     if (response.assistant.availability) {
-      assistantAvailabilityState = response.assistant.availability;
+      mergeAssistantAvailability(response.assistant.availability);
     }
     setAssistantAnswer(response.answer);
-    updateAssistantStatus(formatAssistantAvailability(response.assistant.availability || assistantAvailabilityState));
+    refreshAssistantStatus({ loadingOverride: false });
   }
 }
 
@@ -3394,6 +3457,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "SPOTLIGHT_SUMMARY_PROGRESS") {
     handleSummaryProgress(message);
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_ASSISTANT_DOWNLOAD") {
+    mergeAssistantAvailability({ status: "downloading", progress: message.progress });
+    refreshAssistantStatus({});
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_ASSISTANT_STATUS_EVENT") {
+    mergeAssistantAvailability(message.availability || null);
+    refreshAssistantStatus({});
     return undefined;
   }
   if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {
