@@ -1,6 +1,7 @@
 import { isSmartHistoryAssistantEnabled } from "../shared/feature-flags.js";
 
 const MAX_SUMMARY_ENTRIES = 40;
+const SUMMARY_PROMPT_TIMEOUT_MS = 10000;
 const MAX_TITLE_LENGTH = 160;
 const MAX_URL_LENGTH = 200;
 const SUMMARY_STOP_WORDS = new Set([
@@ -579,6 +580,79 @@ export function createHistorySummaryService() {
   let sessionInstance = null;
   let sessionPromise = null;
 
+  function buildTimeoutError() {
+    return new Error("History summary timed out");
+  }
+
+  function promptWithTimeout(session, prompt, timeoutMs = SUMMARY_PROMPT_TIMEOUT_MS) {
+    const hasAbortController = typeof AbortController === "function";
+    const controller = hasAbortController ? new AbortController() : null;
+    const requestPromise = controller
+      ? session.prompt(prompt, { signal: controller.signal })
+      : session.prompt(prompt);
+
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return requestPromise;
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timeoutId = null;
+
+      const cleanup = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
+      const handleResolve = (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleReject = (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      timeoutId = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (controller) {
+          try {
+            controller.abort();
+          } catch (abortError) {
+            console.warn("Spotlight: history summary abort failed", abortError);
+          }
+        }
+        cleanup();
+        reject(buildTimeoutError());
+      }, Math.max(0, timeoutMs));
+
+      requestPromise.then(handleResolve, (error) => {
+        if (
+          error &&
+          (error.name === "AbortError" || error.message === "The operation was aborted." || error.code === 20)
+        ) {
+          handleReject(buildTimeoutError());
+          return;
+        }
+        handleReject(error);
+      });
+    });
+  }
+
   async function ensureSession() {
     if (sessionInstance) {
       return sessionInstance;
@@ -673,7 +747,15 @@ export function createHistorySummaryService() {
     });
 
     const session = await ensureSession();
-    const result = await session.prompt(prompt);
+    let result;
+    try {
+      result = await promptWithTimeout(session, prompt);
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw buildTimeoutError();
+      }
+      throw error;
+    }
     const summary = typeof result === "string" ? result.trim() : "";
     if (!summary) {
       throw new Error("History summary unavailable");
