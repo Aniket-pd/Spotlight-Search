@@ -17,6 +17,8 @@ function sanitizeState(raw) {
   const groupId = typeof raw.groupId === "number" ? raw.groupId : null;
   const originalGroupId = typeof raw.originalGroupId === "number" ? raw.originalGroupId : null;
   const originalPinned = Boolean(raw.originalPinned);
+  const originalIndex = Number.isInteger(raw.originalIndex) ? raw.originalIndex : null;
+  const movedToFront = Boolean(raw.movedToFront);
   const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.now();
   return {
     tabId,
@@ -24,6 +26,8 @@ function sanitizeState(raw) {
     groupId,
     originalGroupId,
     originalPinned,
+    originalIndex,
+    movedToFront,
     timestamp,
   };
 }
@@ -157,20 +161,33 @@ export function createFocusManager({ onStateChanged } = {}) {
       await unfocusInternal();
     }
 
-    const tab = await ensureTab(targetTabId);
+    let tab = await ensureTab(targetTabId);
     if (!tab) {
       throw new Error("Tab unavailable");
     }
 
     const originalPinned = Boolean(tab.pinned);
     const originalGroupId = typeof tab.groupId === "number" && tab.groupId >= 0 ? tab.groupId : null;
+    const originalIndex = Number.isInteger(tab.index) ? tab.index : null;
     let groupId = null;
+    let movedToFront = false;
+    let unpinnedForGroup = false;
 
-    if (
-      chrome.tabGroups &&
+    const canUseTabGroups =
+      Boolean(chrome.tabGroups) &&
       typeof chrome.tabs.group === "function" &&
-      typeof chrome.tabGroups.update === "function"
-    ) {
+      typeof chrome.tabGroups.update === "function";
+
+    if (canUseTabGroups) {
+      if (tab.pinned) {
+        try {
+          await chrome.tabs.update(tab.id, { pinned: false });
+          unpinnedForGroup = true;
+          tab = (await ensureTab(tab.id)) || tab;
+        } catch (err) {
+          console.warn("Spotlight: unable to unpin focused tab for grouping", err);
+        }
+      }
       try {
         groupId = await chrome.tabs.group({ tabIds: [tab.id] });
         await chrome.tabGroups.update(groupId, {
@@ -184,14 +201,21 @@ export function createFocusManager({ onStateChanged } = {}) {
       }
     }
 
+    const updateOptions = { active: true, highlighted: true };
+    if (!canUseTabGroups || groupId === null) {
+      updateOptions.pinned = true;
+    }
+
     try {
-      await chrome.tabs.update(tab.id, { pinned: true, active: true, highlighted: true });
+      await chrome.tabs.update(tab.id, updateOptions);
     } catch (err) {
-      console.warn("Spotlight: unable to pin focused tab", err);
-      try {
-        await chrome.tabs.update(tab.id, { active: true, highlighted: true });
-      } catch (activateErr) {
-        console.warn("Spotlight: unable to activate focused tab", activateErr);
+      console.warn("Spotlight: unable to update focused tab", err);
+      if (updateOptions.pinned) {
+        try {
+          await chrome.tabs.update(tab.id, { active: true, highlighted: true });
+        } catch (activateErr) {
+          console.warn("Spotlight: unable to activate focused tab", activateErr);
+        }
       }
     }
 
@@ -203,11 +227,39 @@ export function createFocusManager({ onStateChanged } = {}) {
       }
     }
 
-    const refreshed = await ensureTab(tab.id);
-    if (refreshed && typeof refreshed.groupId === "number" && refreshed.groupId >= 0) {
-      groupId = refreshed.groupId;
-    } else if (refreshed && (typeof refreshed.groupId === "number" && refreshed.groupId < 0)) {
+    let refreshed = await ensureTab(tab.id);
+    if (canUseTabGroups) {
+      if (refreshed && typeof refreshed.groupId === "number" && refreshed.groupId >= 0) {
+        groupId = refreshed.groupId;
+      } else if (groupId !== null) {
+        try {
+          groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+          await chrome.tabGroups.update(groupId, {
+            title: GROUP_TITLE,
+            color: GROUP_COLOR,
+            collapsed: false,
+          });
+          refreshed = (await ensureTab(tab.id)) || refreshed;
+        } catch (err) {
+          console.warn("Spotlight: unable to refresh focus tab group after update", err);
+          groupId = null;
+        }
+      }
+    } else {
       groupId = null;
+    }
+
+    if (canUseTabGroups && groupId !== null && typeof chrome.tabs.move === "function") {
+      const shouldMoveToFront = unpinnedForGroup || !originalPinned;
+      if (shouldMoveToFront) {
+        try {
+          await chrome.tabs.move(tab.id, { index: 0 });
+          movedToFront = true;
+          refreshed = (await ensureTab(tab.id)) || refreshed;
+        } catch (err) {
+          console.warn("Spotlight: unable to move focused tab", err);
+        }
+      }
     }
 
     const state = sanitizeState({
@@ -216,6 +268,8 @@ export function createFocusManager({ onStateChanged } = {}) {
       groupId,
       originalGroupId,
       originalPinned,
+      originalIndex,
+      movedToFront,
       timestamp: Date.now(),
     });
 
@@ -256,10 +310,30 @@ export function createFocusManager({ onStateChanged } = {}) {
         }
       }
 
+      if (!state.originalPinned && state.movedToFront && state.originalIndex !== null) {
+        if (typeof chrome.tabs.move === "function") {
+          try {
+            await chrome.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
+          } catch (err) {
+            console.warn("Spotlight: unable to restore tab position", err);
+          }
+        }
+      }
+
       try {
         await chrome.tabs.update(tab.id, { pinned: state.originalPinned });
       } catch (err) {
         console.warn("Spotlight: unable to restore tab pin state", err);
+      }
+
+      if (state.originalPinned && state.movedToFront && state.originalIndex !== null) {
+        if (typeof chrome.tabs.move === "function") {
+          try {
+            await chrome.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
+          } catch (err) {
+            console.warn("Spotlight: unable to restore pinned tab position", err);
+          }
+        }
       }
 
       await notifyTab(tab.id, { type: "SPOTLIGHT_FOCUS_CLEAR" });
@@ -299,12 +373,77 @@ export function createFocusManager({ onStateChanged } = {}) {
   }
 
   async function applyVisuals(tabId) {
+    const state = await getState();
+    if (state?.tabId === tabId) {
+      const updatedState = await ensureGroupHighlightForState(state);
+      if (updatedState?.movedToFront && typeof chrome.tabs.move === "function") {
+        try {
+          await chrome.tabs.move(tabId, { index: 0 });
+        } catch (err) {
+          console.warn("Spotlight: unable to maintain focused tab position", err);
+        }
+      }
+    }
     await notifyTab(tabId, {
       type: "SPOTLIGHT_FOCUS_APPLY",
       accentColor: ACCENT_COLOR,
       titlePrefix: TITLE_PREFIX,
       label: FOCUS_LABEL,
     });
+  }
+
+  async function ensureGroupHighlightForState(state) {
+    const current = sanitizeState(state);
+    if (!current || current.groupId === null) {
+      return current;
+    }
+    const canUseTabGroups =
+      Boolean(chrome.tabGroups) &&
+      typeof chrome.tabGroups.update === "function" &&
+      typeof chrome.tabs.group === "function";
+    if (!canUseTabGroups) {
+      return current;
+    }
+    const tab = await ensureTab(current.tabId);
+    if (!tab) {
+      return current;
+    }
+    try {
+      await chrome.tabGroups.update(current.groupId, {
+        title: GROUP_TITLE,
+        color: GROUP_COLOR,
+        collapsed: false,
+      });
+      return current;
+    } catch (err) {
+      console.warn("Spotlight: unable to refresh focus tab group", err);
+    }
+
+    try {
+      const newGroupId = await chrome.tabs.group({ tabIds: [tab.id] });
+      await chrome.tabGroups.update(newGroupId, {
+        title: GROUP_TITLE,
+        color: GROUP_COLOR,
+        collapsed: false,
+      });
+      const updated = sanitizeState({
+        ...current,
+        groupId: newGroupId,
+        timestamp: Date.now(),
+      });
+      await saveState(updated);
+      return updated;
+    } catch (err) {
+      console.warn("Spotlight: unable to restore focus tab group", err);
+    }
+
+    const cleared = sanitizeState({
+      ...current,
+      groupId: null,
+      timestamp: Date.now(),
+    });
+    await saveState(cleared);
+    return cleared;
   }
 
   function attachEventListeners() {
@@ -333,13 +472,24 @@ export function createFocusManager({ onStateChanged } = {}) {
           if (!state || state.tabId !== tabId) {
             return;
           }
-          if (changeInfo.pinned === false) {
-            // Re-pin to keep the focus visual state aligned.
+          if (changeInfo.pinned === false && state.groupId === null) {
+            // Re-pin to keep the focus visual state aligned when tab groups are unavailable.
             try {
               await chrome.tabs.update(tabId, { pinned: true });
             } catch (err) {
               console.warn("Spotlight: unable to maintain focused tab pin", err);
             }
+            return;
+          }
+          if (changeInfo.pinned === true && state.groupId !== null) {
+            // The user pinned the tab manually; drop the group so visuals stay consistent.
+            const updatedState = sanitizeState({
+              ...state,
+              groupId: null,
+              movedToFront: false,
+              timestamp: Date.now(),
+            });
+            await saveState(updatedState);
           }
         });
       }
@@ -378,18 +528,14 @@ export function createFocusManager({ onStateChanged } = {}) {
       return;
     }
 
-    if (state.groupId !== null && chrome.tabGroups && typeof chrome.tabGroups.update === "function") {
+    const highlightedState = await ensureGroupHighlightForState(state);
+    if (highlightedState?.movedToFront && typeof chrome.tabs.move === "function") {
       try {
-        await chrome.tabGroups.update(state.groupId, {
-          title: GROUP_TITLE,
-          color: GROUP_COLOR,
-          collapsed: false,
-        });
+        await chrome.tabs.move(tab.id, { index: 0 });
       } catch (err) {
-        console.warn("Spotlight: unable to refresh focus tab group", err);
+        console.warn("Spotlight: unable to reapply focused tab position", err);
       }
     }
-
     await applyVisuals(tab.id);
   }
 
