@@ -1234,30 +1234,40 @@ function applyHistoryAssistantPlanAfterResults() {
       ? Math.max(1, Math.floor(historyAssistantPlan.limit))
       : null;
     const totalCount = filteredHistoryResults.length;
-    const displayCount = requestedLimit !== null ? Math.min(requestedLimit, totalCount) : totalCount;
-    const displayResults =
-      displayCount > 0 ? filteredHistoryResults.slice(0, displayCount) : filteredHistoryResults.slice(0, 0);
+    const displayResults = filteredHistoryResults.slice();
+    const displayCount = displayResults.length;
     const shownLabel = formatCountLabel(displayCount, "match");
-    const totalLabel = formatCountLabel(totalCount, "match");
 
-    let message;
+    const messageParts = [];
+    if (historyAssistantPlan.message) {
+      messageParts.push(historyAssistantPlan.message);
+    }
+
     if (displayCount > 0) {
-      message = historyAssistantPlan.message
-        ? `${historyAssistantPlan.message} · ${shownLabel}`
+      const foundMessage = historyAssistantPlan.message
+        ? `Found ${shownLabel}`
         : `Found ${shownLabel}.`;
-      if (requestedLimit !== null && totalCount > displayCount) {
-        message = `${message} Showing first ${shownLabel} of ${totalLabel}.`;
+      messageParts.push(foundMessage);
+      if (requestedLimit !== null && requestedLimit < totalCount) {
+        const requestedLabel = formatCountLabel(requestedLimit, "match");
+        messageParts.push(`Showing all matches (requested ${requestedLabel}).`);
       }
     } else {
-      message = historyAssistantPlan.message
-        ? `${historyAssistantPlan.message} · No matches found.`
-        : "No matching history found.";
-    }
-    if (shouldAppendRange) {
-      if (!message.toLowerCase().includes(normalizedRangeLabel)) {
-        message = `${message} · Time range: ${timeRangeLabel}`;
+      if (historyAssistantPlan.message) {
+        messageParts.push("No matches found.");
+      } else {
+        messageParts.push("No matching history found.");
       }
     }
+
+    let message = messageParts.join(" · ");
+    if (shouldAppendRange && timeRangeLabel) {
+      const normalizedMessage = message.toLowerCase();
+      if (!normalizedMessage.includes(normalizedRangeLabel)) {
+        message = message ? `${message} · Time range: ${timeRangeLabel}` : `Time range: ${timeRangeLabel}`;
+      }
+    }
+
     if (displayCount > 0) {
       setHistoryAssistantMessage(message);
     } else {
