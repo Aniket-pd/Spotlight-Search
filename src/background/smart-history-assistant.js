@@ -1,4 +1,10 @@
 import { isSmartHistoryAssistantEnabled } from "../shared/feature-flags.js";
+import {
+  NUMBER_WORD_DEFINITIONS,
+  QUANTITY_KEYWORD_DEFINITIONS,
+  TIME_PRESET_DEFINITIONS,
+  TIME_UNIT_DEFINITIONS,
+} from "../shared/time-range-definitions.js";
 
 const ALLOWED_INTENTS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
 const RESPONSE_SCHEMA = {
@@ -62,154 +68,63 @@ function sanitizeIntent(value) {
   return ALLOWED_INTENTS.has(normalized) ? normalized : "show";
 }
 
-const SECOND_MS = 1000;
-const MINUTE_MS = 60 * SECOND_MS;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-const WEEK_MS = 7 * DAY_MS;
-const MONTH_MS = 30 * DAY_MS;
-const YEAR_MS = 365 * DAY_MS;
+const UNIT_IN_MS = new Map(TIME_UNIT_DEFINITIONS.map((definition) => [definition.id, definition.ms]));
 
-const UNIT_IN_MS = new Map([
-  ["second", SECOND_MS],
-  ["minute", MINUTE_MS],
-  ["hour", HOUR_MS],
-  ["day", DAY_MS],
-  ["week", WEEK_MS],
-  ["month", MONTH_MS],
-  ["year", YEAR_MS],
-]);
+const UNIT_ALIASES = new Map();
+for (const definition of TIME_UNIT_DEFINITIONS) {
+  for (const label of definition.labels) {
+    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
+    if (normalized) {
+      UNIT_ALIASES.set(normalized, definition.id);
+    }
+  }
+  UNIT_ALIASES.set(definition.id, definition.id);
+}
 
-const UNIT_ALIASES = new Map([
-  ["sec", "second"],
-  ["secs", "second"],
-  ["second", "second"],
-  ["seconds", "second"],
-  ["s", "second"],
-  ["min", "minute"],
-  ["mins", "minute"],
-  ["minute", "minute"],
-  ["minutes", "minute"],
-  ["m", "minute"],
-  ["hr", "hour"],
-  ["hrs", "hour"],
-  ["hour", "hour"],
-  ["hours", "hour"],
-  ["h", "hour"],
-  ["day", "day"],
-  ["days", "day"],
-  ["d", "day"],
-  ["week", "week"],
-  ["weeks", "week"],
-  ["wk", "week"],
-  ["wks", "week"],
-  ["month", "month"],
-  ["months", "month"],
-  ["year", "year"],
-  ["years", "year"],
-  ["yr", "year"],
-  ["yrs", "year"],
-]);
+const NUMBER_WORDS = new Map();
+for (const definition of NUMBER_WORD_DEFINITIONS) {
+  for (const label of definition.labels) {
+    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
+    if (normalized) {
+      NUMBER_WORDS.set(normalized, definition.value);
+    }
+  }
+}
 
-const NUMBER_WORDS = new Map([
-  ["zero", 0],
-  ["one", 1],
-  ["two", 2],
-  ["three", 3],
-  ["four", 4],
-  ["five", 5],
-  ["six", 6],
-  ["seven", 7],
-  ["eight", 8],
-  ["nine", 9],
-  ["ten", 10],
-  ["eleven", 11],
-  ["twelve", 12],
-  ["thirteen", 13],
-  ["fourteen", 14],
-  ["fifteen", 15],
-  ["sixteen", 16],
-  ["seventeen", 17],
-  ["eighteen", 18],
-  ["nineteen", 19],
-  ["twenty", 20],
-  ["thirty", 30],
-  ["forty", 40],
-  ["fifty", 50],
-  ["sixty", 60],
-  ["seventy", 70],
-  ["eighty", 80],
-  ["ninety", 90],
-  ["hundred", 100],
-  ["thousand", 1000],
-  ["million", 1000000],
-  ["billion", 1000000000],
-  ["a", 1],
-  ["an", 1],
-  ["single", 1],
-]);
+const QUANTITY_KEYWORDS = new Map();
+for (const definition of QUANTITY_KEYWORD_DEFINITIONS) {
+  for (const label of definition.labels) {
+    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
+    if (normalized) {
+      QUANTITY_KEYWORDS.set(normalized, definition.value);
+    }
+  }
+}
 
-const PRESET_ALIASES = new Map([
-  ["all", "all"],
-  ["all time", "all"],
-  ["all history", "all"],
-  ["any time", "all"],
-  ["anytime", "all"],
-  ["entire history", "all"],
-  ["everything", "all"],
-  ["whole history", "all"],
-  ["today", "today"],
-  ["yesterday", "yesterday"],
-  ["last 7 days", "last7"],
-  ["past 7 days", "last7"],
-  ["previous 7 days", "last7"],
-  ["last seven days", "last7"],
-  ["past seven days", "last7"],
-  ["last week", "last7"],
-  ["past week", "last7"],
-  ["previous week", "last7"],
-  ["last 30 days", "last30"],
-  ["past 30 days", "last30"],
-  ["previous 30 days", "last30"],
-  ["last thirty days", "last30"],
-  ["past thirty days", "last30"],
-  ["last month", "last30"],
-  ["past month", "last30"],
-  ["previous month", "last30"],
-  ["older", "older"],
-]);
-
-function toStartOfDay(timestamp) {
-  const date = new Date(timestamp);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
+const PRESET_ALIASES = new Map();
+const PRESET_RESOLVERS = new Map();
+for (const definition of TIME_PRESET_DEFINITIONS) {
+  PRESET_RESOLVERS.set(definition.id, definition.resolveBounds);
+  for (const label of definition.labels) {
+    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
+    if (normalized) {
+      PRESET_ALIASES.set(normalized, definition.id);
+    }
+  }
+  PRESET_ALIASES.set(definition.id, definition.id);
 }
 
 function resolvePresetBounds(presetId, now) {
   const reference = Number.isFinite(now) ? now : Date.now();
   const safeNow = reference > 0 ? reference : Date.now();
-  if (presetId === "all") {
+  const resolver = PRESET_RESOLVERS.get(presetId);
+  if (typeof resolver !== "function") {
     return { from: null, to: null };
   }
-  if (presetId === "today") {
-    const startToday = toStartOfDay(safeNow);
-    return { from: startToday, to: safeNow };
-  }
-  if (presetId === "yesterday") {
-    const startToday = toStartOfDay(safeNow);
-    const startYesterday = startToday - DAY_MS;
-    return { from: startYesterday, to: startToday };
-  }
-  if (presetId === "last7") {
-    return { from: Math.max(0, safeNow - 7 * DAY_MS), to: safeNow };
-  }
-  if (presetId === "last30") {
-    return { from: Math.max(0, safeNow - 30 * DAY_MS), to: safeNow };
-  }
-  if (presetId === "older") {
-    return { from: 0, to: Math.max(0, safeNow - 30 * DAY_MS) };
-  }
-  return { from: null, to: null };
+  const bounds = resolver(safeNow) || {};
+  const from = Number.isFinite(bounds.from) && bounds.from >= 0 ? bounds.from : null;
+  const to = Number.isFinite(bounds.to) && bounds.to >= 0 ? bounds.to : null;
+  return { from, to };
 }
 
 function detectPresetRange(normalized, now) {
@@ -230,14 +145,8 @@ function resolveQuantityToken(token) {
     return null;
   }
   const normalized = token.trim().toLowerCase();
-  if (normalized === "few") {
-    return 3;
-  }
-  if (normalized === "couple") {
-    return 2;
-  }
-  if (normalized === "several") {
-    return 4;
+  if (QUANTITY_KEYWORDS.has(normalized)) {
+    return QUANTITY_KEYWORDS.get(normalized);
   }
   if (NUMBER_WORDS.has(normalized)) {
     return NUMBER_WORDS.get(normalized);
