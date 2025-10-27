@@ -1250,6 +1250,198 @@ function buildHistorySummaryFallback(entries, timeRangeLabel, totalCount) {
   return `In ${safeRange}, you mainly:\n\n${trimmedBullets.join("\n")}\n\n👉 Overall: ${overallLabel}`;
 }
 
+const DEFAULT_SUMMARY_FALLBACK_BULLETS = [
+  "Explored your browsing history.",
+  "Stayed active across several topics.",
+  "Checked in on favorite sites.",
+  "Looked up information that mattered to you.",
+  "Kept momentum going with your research.",
+];
+
+function looksStructuredHistorySummary(text) {
+  if (!text) {
+    return false;
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return false;
+  }
+  if (!/^in\s.+you mainly:/i.test(lines[0])) {
+    return false;
+  }
+  const bulletCount = lines.filter((line) => line.startsWith("• ")).length;
+  if (bulletCount < 3) {
+    return false;
+  }
+  return lines.some((line) => /^👉\s*overall:/i.test(line));
+}
+
+function stripSummaryBulletPrefix(text) {
+  if (!text) {
+    return "";
+  }
+  let sanitized = text.trim();
+  sanitized = sanitized.replace(/^[-*•]\s*/, "");
+  sanitized = sanitized.replace(/^\(?\d+[.)]\s*/, "");
+  return sanitized.trim();
+}
+
+function parseHistorySummaryParts(summaryText) {
+  const lines = typeof summaryText === "string" ? summaryText.split(/\r?\n/) : [];
+  const parts = { intro: "", bullets: [], overall: "" };
+  let encounteredOverall = false;
+
+  for (const rawLine of lines) {
+    const line = typeof rawLine === "string" ? rawLine.trim() : "";
+    if (!line) {
+      continue;
+    }
+    if (!parts.intro) {
+      parts.intro = line;
+      continue;
+    }
+    if (/^👉\s*overall/i.test(line)) {
+      parts.overall = line;
+      encounteredOverall = true;
+      continue;
+    }
+    if (!encounteredOverall && /overall/i.test(line) && !parts.overall) {
+      parts.overall = line;
+      encounteredOverall = true;
+      continue;
+    }
+    const bulletText = stripSummaryBulletPrefix(line);
+    if (bulletText) {
+      parts.bullets.push(bulletText);
+    }
+  }
+
+  return parts;
+}
+
+function extractRangeFromIntro(introLine) {
+  if (!introLine) {
+    return "";
+  }
+  const normalized = introLine.replace(/\s+/g, " ").trim();
+  const match = normalized.match(/in\s+(.+?)(?:,|\s+you\b|$)/i);
+  if (match && match[1]) {
+    return match[1].replace(/[:.]*$/, "").trim();
+  }
+  return "";
+}
+
+function formatHistorySummaryIntro(rawIntro, defaultRange, fallbackIntro) {
+  const rangeLabel =
+    extractRangeFromIntro(rawIntro) ||
+    extractRangeFromIntro(fallbackIntro) ||
+    defaultRange ||
+    "your recent activity";
+  return `In ${rangeLabel}, you mainly:`;
+}
+
+function ensureSentenceCase(text) {
+  if (!text) {
+    return "";
+  }
+  let sanitized = text.trim();
+  sanitized = sanitized.replace(/^👉\s*overall[:\s-]*/i, "");
+  sanitized = sanitized.replace(/^[-*•]\s*/, "");
+  sanitized = sanitized.replace(/^\(?\d+[.)]\s*/, "");
+  sanitized = sanitized.trim();
+  if (!sanitized) {
+    return "";
+  }
+  if (!/[.!?…]$/u.test(sanitized)) {
+    sanitized += ".";
+  }
+  return sanitized.charAt(0).toUpperCase() + sanitized.slice(1);
+}
+
+function normalizeHistorySummaryBullets(bullets, fallbackBullets, minCount = 3, maxCount = 5) {
+  const results = [];
+  const seen = new Set();
+
+  const appendBullet = (text) => {
+    const sentence = ensureSentenceCase(text);
+    if (!sentence) {
+      return;
+    }
+    const key = sentence.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    results.push(`• ${sentence}`);
+  };
+
+  bullets.forEach((bullet) => appendBullet(bullet));
+  fallbackBullets.forEach((bullet) => appendBullet(bullet));
+
+  let defaultIndex = 0;
+  while (results.length < minCount && defaultIndex < DEFAULT_SUMMARY_FALLBACK_BULLETS.length) {
+    appendBullet(DEFAULT_SUMMARY_FALLBACK_BULLETS[defaultIndex]);
+    defaultIndex += 1;
+  }
+
+  while (results.length < minCount) {
+    appendBullet(`Explored recent browsing activity ${results.length + 1}.`);
+  }
+
+  return maxCount > 0 ? results.slice(0, maxCount) : results;
+}
+
+function formatHistorySummaryOverall(rawOverall, fallbackOverall) {
+  if (rawOverall) {
+    const sentence = ensureSentenceCase(rawOverall);
+    if (sentence) {
+      return `👉 Overall: ${sentence}`;
+    }
+  }
+  if (fallbackOverall) {
+    const sentence = ensureSentenceCase(fallbackOverall);
+    if (sentence) {
+      return `👉 Overall: ${sentence}`;
+    }
+  }
+  return "👉 Overall: Here's what stood out.";
+}
+
+function ensureHistorySummaryStructure(summaryText, options = {}) {
+  const trimmed = typeof summaryText === "string" ? summaryText.trim() : "";
+  const fallbackBuilder = typeof options.buildFallback === "function" ? options.buildFallback : null;
+  const defaultRange = typeof options.defaultRangeLabel === "string" && options.defaultRangeLabel
+    ? options.defaultRangeLabel
+    : "your recent activity";
+
+  if (!trimmed) {
+    return fallbackBuilder ? fallbackBuilder() || "" : "";
+  }
+
+  if (looksStructuredHistorySummary(trimmed)) {
+    return trimmed;
+  }
+
+  let fallbackSummary = "";
+  let fallbackParts = { intro: "", bullets: [], overall: "" };
+  if (fallbackBuilder) {
+    fallbackSummary = fallbackBuilder() || "";
+    fallbackParts = parseHistorySummaryParts(fallbackSummary);
+  }
+
+  const parsed = parseHistorySummaryParts(trimmed);
+  const intro = formatHistorySummaryIntro(parsed.intro, defaultRange, fallbackParts.intro);
+  const bulletLines = normalizeHistorySummaryBullets(parsed.bullets, fallbackParts.bullets, 3, 5);
+  const fallbackOverall = fallbackParts.overall ? formatHistorySummaryOverall(fallbackParts.overall, "") : "";
+  const overall = formatHistorySummaryOverall(parsed.overall, fallbackOverall);
+  const finalOverall = overall || fallbackOverall || "👉 Overall: Here's what stood out.";
+
+  return `${intro}\n\n${bulletLines.join("\n")}\n\n${finalOverall}`;
+}
+
 async function requestHistoryAssistantSummary(options = {}) {
   const entries = Array.isArray(options.entries) ? options.entries : [];
   if (!entries.length) {
@@ -1506,9 +1698,13 @@ function applyHistoryAssistantPlanAfterResults() {
         if (summaryRequestId !== historyAssistantSummaryRequestId) {
           return;
         }
-        let message = summaryText;
+        const structuredSummary = ensureHistorySummaryStructure(summaryText, {
+          defaultRangeLabel: timeRangeLabel || "your recent activity",
+          buildFallback: () => buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount),
+        });
+        let message = structuredSummary;
         if (planMessage) {
-          message = `${planMessage}\n\n${summaryText}`;
+          message = `${planMessage}\n\n${structuredSummary}`;
         }
         if (shouldAppendRange) {
           const normalizedMessage = message.toLowerCase();
