@@ -1230,12 +1230,24 @@ function applyHistoryAssistantPlanAfterResults() {
   const shouldAppendRange = timeRangeLabel && normalizedRangeLabel !== "all time";
 
   if (intent === "show") {
-    const countLabel = formatCountLabel(filteredHistoryResults.length, "match");
+    const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
+      ? Math.max(1, Math.floor(historyAssistantPlan.limit))
+      : null;
+    const totalCount = filteredHistoryResults.length;
+    const displayCount = requestedLimit !== null ? Math.min(requestedLimit, totalCount) : totalCount;
+    const displayResults =
+      displayCount > 0 ? filteredHistoryResults.slice(0, displayCount) : filteredHistoryResults.slice(0, 0);
+    const shownLabel = formatCountLabel(displayCount, "match");
+    const totalLabel = formatCountLabel(totalCount, "match");
+
     let message;
-    if (filteredHistoryResults.length) {
+    if (displayCount > 0) {
       message = historyAssistantPlan.message
-        ? `${historyAssistantPlan.message} · ${countLabel}`
-        : `Found ${countLabel}.`;
+        ? `${historyAssistantPlan.message} · ${shownLabel}`
+        : `Found ${shownLabel}.`;
+      if (requestedLimit !== null && totalCount > displayCount) {
+        message = `${message} Showing first ${shownLabel} of ${totalLabel}.`;
+      }
     } else {
       message = historyAssistantPlan.message
         ? `${historyAssistantPlan.message} · No matches found.`
@@ -1246,11 +1258,20 @@ function applyHistoryAssistantPlanAfterResults() {
         message = `${message} · Time range: ${timeRangeLabel}`;
       }
     }
-    if (filteredHistoryResults.length) {
+    if (displayCount > 0) {
       setHistoryAssistantMessage(message);
     } else {
       setHistoryAssistantMessage(message, { tone: "muted" });
     }
+
+    resultsState = displayResults.slice();
+    lazyList.setItems(resultsState);
+    pruneSummaryState();
+    applyCachedFavicons(resultsState);
+    activeIndex = resultsState.length > 0 ? 0 : -1;
+    pointerNavigationSuspended = true;
+    renderResults();
+
     historyAssistantPlan = null;
     return;
   }
