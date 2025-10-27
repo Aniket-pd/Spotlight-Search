@@ -222,6 +222,9 @@ export function registerMessageHandlers({
       const topic = typeof message.topic === "string" ? message.topic : "";
       const site = typeof message.site === "string" ? message.site : "";
       const planMessage = typeof message.planMessage === "string" ? message.planMessage : "";
+      const tone = typeof message.tone === "string" ? message.tone : "";
+      const context = message.context && typeof message.context === "object" ? message.context : null;
+      const comparison = message.comparison && typeof message.comparison === "object" ? message.comparison : null;
       historySummaries
         .summarize({
           entries,
@@ -232,6 +235,9 @@ export function registerMessageHandlers({
           topic,
           site,
           planMessage,
+          tone,
+          context,
+          comparison,
         })
         .then((summary) => {
           sendResponse({ success: true, summary });
