@@ -33,8 +33,8 @@ Use the user's own words when possible. \
 When the request does not include a time range, respond with the string "all time".`;
 
 const HISTORY_ANALYSIS_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant. \
-You receive the user's request plus sanitized browsing history entries that fall inside the requested window. \
-Use only those entries to answer the request directly. \
+You will receive a JSON object that includes the user's original request and sanitized browsing history entries filtered to the requested time range. \
+Use only the provided history entries to answer the request directly. \
 If nothing in the history helps, clearly say that no relevant activity was found. \
 Keep the response under 120 words and write in English.`;
 
@@ -465,36 +465,26 @@ function buildTimeExtractionPrompt(text) {
 
 function buildAnalysisPrompt({ query, timeRangeLabel, entries }) {
   const safeLabel = timeRangeLabel || "all time";
-  const lines = [HISTORY_ANALYSIS_SYSTEM_PROMPT, `User request:\n"""${query}"""`, `Time range: ${safeLabel}`];
-  if (!entries.length) {
-    lines.push("History entries: none found in this range.");
-    return lines.join("\n\n");
-  }
-  lines.push("History entries (most recent first):");
   const limited = entries.slice(0, MAX_PROMPT_ENTRIES);
-  limited.forEach((entry, index) => {
-    const parts = [];
-    parts.push(`${index + 1}.`);
-    if (entry.domain) {
-      parts.push(entry.domain);
-    }
-    if (Number.isFinite(entry.visitCount) && entry.visitCount > 0) {
-      parts.push(`visits:${entry.visitCount}`);
-    }
-    if (Number.isFinite(entry.lastVisitTime)) {
-      parts.push(formatPromptDate(entry.lastVisitTime));
-    }
-    const headline = entry.title || entry.url;
-    parts.push(`— ${headline}`);
-    if (entry.url) {
-      parts.push(`(${entry.url})`);
-    }
-    lines.push(parts.join(" "));
-  });
-  if (entries.length > limited.length) {
-    lines.push(`…and ${entries.length - limited.length} more entries within the range.`);
-  }
-  return lines.join("\n");
+  const context = {
+    userRequest: query,
+    timeRange: safeLabel,
+    totalEntries: entries.length,
+    entries: limited.map((entry) => {
+      const hasTimestamp = Number.isFinite(entry.lastVisitTime);
+      const lastVisitTime = hasTimestamp ? entry.lastVisitTime : null;
+      return {
+        title: entry.title || null,
+        url: entry.url || null,
+        domain: entry.domain || null,
+        lastVisitTime,
+        lastVisitLabel: hasTimestamp ? formatPromptDate(lastVisitTime) : null,
+        visitCount: Number.isFinite(entry.visitCount) ? entry.visitCount : null,
+      };
+    }),
+  };
+  const serializedContext = JSON.stringify(context, null, 2);
+  return `${HISTORY_ANALYSIS_SYSTEM_PROMPT}\n\nContext:\n${serializedContext}`;
 }
 
 async function extractTimeRange(session, text) {
