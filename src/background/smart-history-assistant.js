@@ -16,30 +16,95 @@ function sanitizeString(value) {
 const TIME_EXTRACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["timeRange"],
+  required: ["understood", "label"],
   properties: {
-    timeRange: {
+    understood: { type: "boolean" },
+    label: {
       type: "string",
       minLength: 0,
       maxLength: 160,
     },
+    from: { type: "number" },
+    to: { type: "number" },
   },
 };
 
-const TIME_EXTRACTION_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant living inside a local Chrome extension. \
-Your only job is to identify the time range mentioned in the user's request. \
-Return concise JSON that matches the provided schema. \
-Use the user's own words when possible. \
-When the request does not include a time range, respond with the string "all time".`;
+const TIME_EXTRACTION_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant running inside a local Chrome extension. \
+Extract only the time span mentioned in the user's request. \
+Respond with strict JSON that matches the schema: {"understood": boolean, "label": string, "from"?: number, "to"?: number}. \
+- Use epoch milliseconds for "from"/"to" when the request provides a clear range. \
+- Keep "label" short and based on the user's wording. \
+- When no explicit range exists, set "understood" to false, use an empty "label", and omit "from"/"to".`;
 
-const HISTORY_ANALYSIS_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant. \
-You will receive a JSON object that includes the user's original request and sanitized browsing history entries filtered to the requested time range. \
-Use only the provided history entries to answer the request directly. \
-If nothing in the history helps, clearly say that no relevant activity was found. \
-Keep the response under 120 words and write in English.`;
+const HISTORY_REASONING_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant. \
+You will receive JSON context with the user's request, resolved time bounds, and sanitized browsing history entries from that window. \
+Decide how to respond using only the provided entries. \
+Return strict JSON that matches the provided schema. \
+Choose an intent (show, open, delete, summarize, frequent, or info). \
+When listing entries, reference them by their "entryId" exactly as given. \
+Only choose entries that were supplied. \
+If nothing is relevant, use intent "info" with an explanatory reason.`;
 
 const MAX_HISTORY_RESULTS = 200;
 const MAX_PROMPT_ENTRIES = 60;
+
+const HISTORY_REASONING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["intent", "items"],
+  properties: {
+    intent: {
+      type: "string",
+      enum: ["show", "open", "delete", "summarize", "frequent", "info"],
+    },
+    reason: {
+      type: "string",
+      minLength: 0,
+      maxLength: 400,
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_PROMPT_ENTRIES,
+    },
+    site: {
+      type: "string",
+      minLength: 0,
+      maxLength: 120,
+    },
+    topic: {
+      type: "string",
+      minLength: 0,
+      maxLength: 120,
+    },
+    items: {
+      type: "array",
+      maxItems: MAX_PROMPT_ENTRIES,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["entryId"],
+        properties: {
+          entryId: {
+            type: "string",
+            minLength: 1,
+            maxLength: 64,
+          },
+          note: {
+            type: "string",
+            minLength: 0,
+            maxLength: 200,
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+        },
+      },
+    },
+  },
+};
 
 const UNIT_IN_MS = new Map(TIME_UNIT_DEFINITIONS.map((definition) => [definition.id, definition.ms]));
 
@@ -310,6 +375,7 @@ function buildTimeRangePayload(range) {
   const unit = typeof range.unit === "string" && range.unit ? range.unit : null;
   const quantity = Number.isFinite(range.quantity) && range.quantity > 0 ? range.quantity : null;
   const durationMs = Number.isFinite(range.durationMs) && range.durationMs > 0 ? Math.floor(range.durationMs) : null;
+  const understood = typeof range.understood === "boolean" ? range.understood : null;
   if (
     !presetId &&
     !raw &&
@@ -350,6 +416,9 @@ function buildTimeRangePayload(range) {
   if (durationMs !== null) {
     payload.durationMs = durationMs;
   }
+  if (understood !== null) {
+    payload.understood = understood;
+  }
   return payload;
 }
 
@@ -380,6 +449,7 @@ function sanitizeHistoryEntry(entry) {
   if (!entry || typeof entry !== "object") {
     return null;
   }
+  const id = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
   const rawTitle = typeof entry.title === "string" ? entry.title.trim() : "";
   const title = rawTitle.slice(0, 160);
   const rawUrl = typeof entry.url === "string" ? entry.url.trim() : "";
@@ -406,6 +476,7 @@ function sanitizeHistoryEntry(entry) {
     }
   }
   return {
+    id,
     title,
     url,
     domain,
@@ -443,6 +514,116 @@ function sanitizeHistoryEntries(entries, bounds) {
   return sanitized;
 }
 
+function assignHistoryEntryIds(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries.map((entry, index) => ({
+    ...entry,
+    entryId: `entry-${index + 1}`,
+    index: index + 1,
+  }));
+}
+
+const SITE_HINT_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "from",
+  "history",
+  "last",
+  "list",
+  "my",
+  "of",
+  "open",
+  "past",
+  "show",
+  "tab",
+  "tabs",
+  "the",
+  "to",
+  "week",
+  "weeks",
+  "day",
+  "days",
+  "month",
+  "months",
+  "delete",
+]);
+
+function deriveSiteHintTokens(query) {
+  const normalized = sanitizeString(query).toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+  const tokens = new Set();
+  const domainMatches = normalized.match(/[a-z0-9.-]+\.[a-z]{2,}/g);
+  if (domainMatches) {
+    for (const match of domainMatches) {
+      const cleaned = match.replace(/^https?:\/\//, "").replace(/^www\./, "").trim();
+      if (cleaned) {
+        tokens.add(cleaned);
+      }
+    }
+  }
+  const wordTokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const token of wordTokens) {
+    if (token.length < 4) {
+      continue;
+    }
+    if (SITE_HINT_STOP_WORDS.has(token)) {
+      continue;
+    }
+    tokens.add(token);
+  }
+  return Array.from(tokens);
+}
+
+function domainMatchesHint(domain, tokens) {
+  if (!domain) {
+    return false;
+  }
+  const normalizedDomain = domain.trim().toLowerCase();
+  if (!normalizedDomain) {
+    return false;
+  }
+  for (const token of tokens) {
+    const normalizedToken = sanitizeString(token).toLowerCase();
+    if (!normalizedToken) {
+      continue;
+    }
+    if (normalizedToken.includes(".")) {
+      const stripped = normalizedToken.replace(/^www\./, "");
+      if (normalizedDomain === stripped || normalizedDomain.endsWith(`.${stripped}`)) {
+        return true;
+      }
+      continue;
+    }
+    if (normalizedDomain.includes(normalizedToken)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function filterEntriesBySiteHint(entries, query, tokensOverride = null) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return Array.isArray(entries) ? entries : [];
+  }
+  const tokens = Array.isArray(tokensOverride) && tokensOverride.length
+    ? tokensOverride
+    : deriveSiteHintTokens(query);
+  if (!tokens.length) {
+    return entries;
+  }
+  const filtered = entries.filter((entry) => domainMatchesHint(entry?.domain, tokens));
+  if (!filtered.length) {
+    return entries;
+  }
+  return filtered;
+}
+
 function formatPromptDate(timestamp) {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return "unknown";
@@ -463,17 +644,26 @@ function buildTimeExtractionPrompt(text) {
   return `${TIME_EXTRACTION_SYSTEM_PROMPT}\n\nUser request:\n"""${text}"""`;
 }
 
-function buildAnalysisPrompt({ query, timeRangeLabel, entries }) {
-  const safeLabel = timeRangeLabel || "all time";
+function buildReasoningPrompt({ query, timeRange, entries }) {
+  const safeQuery = sanitizeString(query);
   const limited = entries.slice(0, MAX_PROMPT_ENTRIES);
+  const bounds = {
+    label: sanitizeString(timeRange?.label) || "all time",
+    raw: sanitizeString(timeRange?.raw) || "",
+    from: Number.isFinite(timeRange?.from) ? Math.floor(timeRange.from) : null,
+    to: Number.isFinite(timeRange?.to) ? Math.floor(timeRange.to) : null,
+    understood: Boolean(timeRange?.understood),
+  };
   const context = {
-    userRequest: query,
-    timeRange: safeLabel,
+    userRequest: safeQuery,
+    bounds,
     totalEntries: entries.length,
     entries: limited.map((entry) => {
       const hasTimestamp = Number.isFinite(entry.lastVisitTime);
       const lastVisitTime = hasTimestamp ? entry.lastVisitTime : null;
       return {
+        entryId: entry.entryId,
+        index: entry.index,
         title: entry.title || null,
         url: entry.url || null,
         domain: entry.domain || null,
@@ -484,7 +674,57 @@ function buildAnalysisPrompt({ query, timeRangeLabel, entries }) {
     }),
   };
   const serializedContext = JSON.stringify(context, null, 2);
-  return `${HISTORY_ANALYSIS_SYSTEM_PROMPT}\n\nContext:\n${serializedContext}`;
+  return `${HISTORY_REASONING_SYSTEM_PROMPT}\n\nContext:\n${serializedContext}`;
+}
+
+function sanitizeReasonerPlan(plan, entries) {
+  const allowedIntents = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
+  const intent = typeof plan?.intent === "string" && allowedIntents.has(plan.intent) ? plan.intent : "show";
+  const reason = sanitizeAssistantResponse(plan?.reason);
+  const limit = Number.isFinite(plan?.limit)
+    ? Math.max(1, Math.min(MAX_PROMPT_ENTRIES, Math.floor(plan.limit)))
+    : null;
+  const site = sanitizeString(plan?.site).slice(0, 120);
+  const topic = sanitizeString(plan?.topic).slice(0, 120);
+
+  const entryMap = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry && typeof entry.entryId === "string") {
+      entryMap.set(entry.entryId, entry);
+    }
+  }
+
+  const itemNotes = [];
+  const selectedEntries = [];
+  const seen = new Set();
+  if (Array.isArray(plan?.items)) {
+    for (const rawItem of plan.items) {
+      const entryId = sanitizeString(rawItem?.entryId);
+      if (!entryId || seen.has(entryId)) {
+        continue;
+      }
+      const entry = entryMap.get(entryId);
+      if (!entry) {
+        continue;
+      }
+      seen.add(entryId);
+      selectedEntries.push(entry);
+      const note = sanitizeAssistantResponse(rawItem?.note);
+      if (note) {
+        itemNotes.push({ entryId, note });
+      }
+    }
+  }
+
+  return {
+    intent,
+    reason,
+    limit,
+    site,
+    topic,
+    entries: selectedEntries,
+    notes: itemNotes,
+  };
 }
 
 async function extractTimeRange(session, text) {
@@ -496,8 +736,16 @@ async function extractTimeRange(session, text) {
   } catch (error) {
     throw new Error("Assistant returned an invalid time range");
   }
-  const extracted = sanitizeString(parsed?.timeRange);
-  return extracted || "all time";
+  const label = sanitizeString(parsed?.label || parsed?.timeRange);
+  const understood = Boolean(parsed?.understood);
+  const from = Number.isFinite(parsed?.from) && parsed.from >= 0 ? Math.floor(parsed.from) : null;
+  const to = Number.isFinite(parsed?.to) && parsed.to >= 0 ? Math.floor(parsed.to) : null;
+  return {
+    label,
+    understood,
+    from,
+    to,
+  };
 }
 
 async function fetchHistoryEntries(bounds) {
@@ -518,17 +766,16 @@ async function fetchHistoryEntries(bounds) {
   return sanitizeHistoryEntries(results, bounds);
 }
 
-async function analyzeHistory(session, { query, timeRangeLabel, entries }) {
-  const prompt = buildAnalysisPrompt({ query, timeRangeLabel, entries });
-  const response = await session.prompt(prompt);
-  const answer = sanitizeAssistantResponse(response);
-  if (answer) {
-    return answer;
+async function analyzeHistory(session, { query, timeRange, entries }) {
+  const prompt = buildReasoningPrompt({ query, timeRange, entries });
+  const raw = await session.prompt(prompt, { responseConstraint: HISTORY_REASONING_SCHEMA });
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error("Assistant returned an invalid plan");
   }
-  if (!entries.length) {
-    return "I couldn't find any browsing history in that time range.";
-  }
-  return "I couldn't interpret the browsing history for that request.";
+  return sanitizeReasonerPlan(parsed, entries);
 }
 
 export function createSmartHistoryAssistant() {
@@ -578,12 +825,35 @@ export function createSmartHistoryAssistant() {
     }
     const session = await ensureSession();
     const now = Date.now();
-    const extractedRangeText = await extractTimeRange(session, text);
-    const parsedRange = parseTimeRange(extractedRangeText, now);
-    const bounds = resolveBoundsForRange(parsedRange, now);
-    const entries = await fetchHistoryEntries(bounds);
-    const fallbackLabel = extractedRangeText || "all time";
-    const timeRangePayload = buildTimeRangePayload(parsedRange) || {
+    const extractedRange = await extractTimeRange(session, text);
+    const extractedLabel = sanitizeString(extractedRange?.label);
+    const parsedRange = parseTimeRange(extractedLabel, now);
+    const combinedRange = {
+      ...parsedRange,
+      label: extractedLabel || parsedRange.label,
+      raw: extractedLabel || parsedRange.raw,
+    };
+    if (Number.isFinite(extractedRange?.from)) {
+      combinedRange.from = extractedRange.from;
+    }
+    if (Number.isFinite(extractedRange?.to)) {
+      combinedRange.to = extractedRange.to;
+    }
+    if (typeof extractedRange?.understood === "boolean") {
+      combinedRange.understood = extractedRange.understood;
+    }
+    const bounds = resolveBoundsForRange(combinedRange, now);
+    const rawEntries = await fetchHistoryEntries(bounds);
+    const siteHintTokens = deriveSiteHintTokens(text);
+    const filteredEntries = filterEntriesBySiteHint(rawEntries, text, siteHintTokens);
+    const entriesWithIds = assignHistoryEntryIds(filteredEntries);
+    const fallbackLabel = combinedRange.label || combinedRange.raw || "all time";
+    const baseTimeRange = {
+      ...combinedRange,
+      from: bounds.from,
+      to: bounds.to,
+    };
+    const timeRangePayload = buildTimeRangePayload(baseTimeRange) || {
       raw: fallbackLabel,
       label: fallbackLabel,
     };
@@ -593,22 +863,98 @@ export function createSmartHistoryAssistant() {
     if (timeRangePayload && !timeRangePayload.raw) {
       timeRangePayload.raw = fallbackLabel;
     }
-    const answer = await analyzeHistory(session, {
-      query: text,
-      timeRangeLabel: timeRangePayload?.label || fallbackLabel,
-      entries,
-    });
-    return {
-      intent: "show",
-      query: "history:",
-      message: answer,
-      site: "",
-      topic: "",
-      timeRange: timeRangePayload || null,
-      analysis: {
-        extractedTimeRange: fallbackLabel,
-        analyzedEntryCount: entries.length,
+    if (typeof combinedRange.understood === "boolean") {
+      timeRangePayload.understood = combinedRange.understood;
+    }
+
+    const reasoningRange = {
+      ...timeRangePayload,
+      from: Number.isFinite(bounds.from) ? bounds.from : null,
+      to: Number.isFinite(bounds.to) ? bounds.to : null,
+      understood:
+        typeof timeRangePayload.understood === "boolean"
+          ? timeRangePayload.understood
+          : Boolean(extractedRange?.understood),
+    };
+
+    let reasonerPlan;
+    try {
+      reasonerPlan = await analyzeHistory(session, {
+        query: text,
+        timeRange: reasoningRange,
+        entries: entriesWithIds,
+      });
+    } catch (error) {
+      const fallbackMessage = entriesWithIds.length
+        ? "I couldn't interpret the browsing history for that request."
+        : "I couldn't find any browsing history in that time range.";
+      return {
+        intent: "info",
+        query: "history:",
+        message: fallbackMessage,
+        site: "",
+        topic: "",
+        timeRange: timeRangePayload || null,
+        analysis: {
+          extractedTimeRange: fallbackLabel,
+          assistantUnderstoodRange: Boolean(extractedRange?.understood),
+          analyzedEntryCount: entriesWithIds.length,
+          availableEntryCount: rawEntries.length,
+          selectedEntryCount: 0,
+          siteHintApplied: filteredEntries.length !== rawEntries.length,
+          siteHintTokens,
+          error: error?.message || "reasoner_failed",
+        },
+      };
+    }
+
+    const planItems = reasonerPlan.entries.map((entry) => ({
+      entryId: entry.entryId,
+      url: entry.url,
+      title: entry.title,
+      domain: entry.domain,
+      lastVisitTime: entry.lastVisitTime,
+      visitCount: entry.visitCount,
+      historyId: entry.id || null,
+      index: entry.index,
+    }));
+
+    const itemCount = planItems.length;
+    const defaultMessage = itemCount
+      ? `Found ${itemCount} matching history ${itemCount === 1 ? "entry" : "entries"}.`
+      : "No relevant browsing activity found in that time range.";
+    const message = reasonerPlan.reason || defaultMessage;
+    const limit = reasonerPlan.limit ?? (itemCount ? itemCount : null);
+
+    const analysis = {
+      extractedTimeRange: fallbackLabel,
+      assistantUnderstoodRange: Boolean(extractedRange?.understood),
+      resolvedBounds: {
+        from: Number.isFinite(bounds.from) ? bounds.from : null,
+        to: Number.isFinite(bounds.to) ? bounds.to : null,
       },
+      analyzedEntryCount: entriesWithIds.length,
+      availableEntryCount: rawEntries.length,
+      siteHintApplied: filteredEntries.length !== rawEntries.length,
+      siteHintTokens,
+      selectedEntryCount: itemCount,
+      selectedEntryIds: planItems.map((item) => item.entryId),
+      notes: Array.isArray(reasonerPlan.notes) && reasonerPlan.notes.length ? reasonerPlan.notes : [],
+      modelIntent: reasonerPlan.intent,
+      modelLimit: reasonerPlan.limit,
+    };
+
+    return {
+      intent: reasonerPlan.intent,
+      query: "history:",
+      message,
+      site: reasonerPlan.site,
+      topic: reasonerPlan.topic,
+      limit,
+      timeRange: timeRangePayload || null,
+      items: planItems,
+      reason: reasonerPlan.reason,
+      analysis,
     };
   }
 

@@ -970,6 +970,132 @@ function filterHistoryResultsByTimeRange(results, range) {
   });
 }
 
+const HISTORY_ASSISTANT_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
+
+function sanitizeHistoryAssistantPlanItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  const seen = new Set();
+  const sanitized = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!url) {
+      continue;
+    }
+    const key = `${url}#${Number.isFinite(item.lastVisitTime) ? Math.floor(item.lastVisitTime) : ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    sanitized.push({
+      entryId: typeof item.entryId === "string" ? item.entryId.trim() : "",
+      url,
+      title: typeof item.title === "string" ? item.title.trim() : "",
+      domain: typeof item.domain === "string" ? item.domain.trim().toLowerCase() : "",
+      lastVisitTime: Number.isFinite(item.lastVisitTime) ? Math.floor(item.lastVisitTime) : null,
+      visitCount: Number.isFinite(item.visitCount) ? Math.floor(item.visitCount) : null,
+      historyId: typeof item.historyId === "string" ? item.historyId.trim() : "",
+      index: Number.isFinite(item.index) ? Math.floor(item.index) : null,
+    });
+  }
+  return sanitized;
+}
+
+function normalizeHistoryAssistantUrl(url) {
+  if (typeof url !== "string") {
+    return "";
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.href.replace(/\/?$/, "");
+  } catch (error) {
+    return url.trim().replace(/\/?$/, "");
+  }
+}
+
+function matchHistoryResultsToPlanItems(results, planItems) {
+  if (!Array.isArray(results) || !Array.isArray(planItems) || !planItems.length) {
+    return [];
+  }
+  const available = results.slice();
+  const matched = [];
+  for (const item of planItems) {
+    const targetUrl = normalizeHistoryAssistantUrl(item.url);
+    if (!targetUrl) {
+      continue;
+    }
+    const index = available.findIndex((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const entryUrl = normalizeHistoryAssistantUrl(entry.url || entry.targetUrl || "");
+      if (!entryUrl) {
+        return false;
+      }
+      if (entryUrl !== targetUrl) {
+        return false;
+      }
+      if (item.lastVisitTime !== null) {
+        const entryTimestamp = Number.isFinite(entry.lastVisitTime)
+          ? Math.floor(entry.lastVisitTime)
+          : Number.isFinite(entry.timeStamp)
+          ? Math.floor(entry.timeStamp)
+          : null;
+        if (entryTimestamp !== null) {
+          const delta = Math.abs(entryTimestamp - item.lastVisitTime);
+          if (delta > HISTORY_ASSISTANT_TIMESTAMP_TOLERANCE_MS) {
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+    if (index >= 0) {
+      matched.push(available.splice(index, 1)[0]);
+    }
+  }
+  return matched;
+}
+
+function buildHistoryResultsFromPlanItems(planItems) {
+  if (!Array.isArray(planItems) || !planItems.length) {
+    return [];
+  }
+  return planItems.map((item, index) => ({
+    type: "history",
+    title: item.title || item.url || `History entry ${index + 1}`,
+    url: item.url,
+    lastVisitTime: item.lastVisitTime,
+    timeStamp: item.lastVisitTime,
+    visitCount: item.visitCount,
+    domain: item.domain,
+    assistantGenerated: true,
+  }));
+}
+
+function selectHistoryAssistantTargets(results, planItems, limit) {
+  const planMatches = matchHistoryResultsToPlanItems(results, planItems);
+  let base = planMatches.length ? planMatches : [];
+  if (!base.length && Array.isArray(planItems) && planItems.length) {
+    base = buildHistoryResultsFromPlanItems(planItems);
+  }
+  if (!base.length) {
+    base = Array.isArray(results) ? results.slice() : [];
+  }
+  if (!base.length) {
+    return [];
+  }
+  if (Number.isFinite(limit)) {
+    const normalized = Math.max(1, Math.floor(limit));
+    return base.slice(0, normalized);
+  }
+  return base;
+}
+
 function applyHistoryAssistantPlan(plan, requestId) {
   if (!plan || typeof plan !== "object") {
     setHistoryAssistantMessage("Assistant returned an empty plan", { tone: "error" });
@@ -978,23 +1104,29 @@ function applyHistoryAssistantPlan(plan, requestId) {
   historyAssistantSummaryRequestId += 1;
   setHistoryAssistantLoading(false);
   const intent = typeof plan.intent === "string" ? plan.intent : "show";
-  const message = typeof plan.message === "string" ? plan.message : "";
+  const reason = typeof plan.reason === "string" ? plan.reason.trim() : "";
+  const message = typeof plan.message === "string" && plan.message.trim() ? plan.message.trim() : reason;
   const query = typeof plan.query === "string" ? plan.query.trim() : "";
   const topic = typeof plan.topic === "string" ? plan.topic.trim() : "";
   const site = typeof plan.site === "string" ? plan.site.trim() : "";
   const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
   const limit = Number.isFinite(plan.limit) ? plan.limit : null;
   const timeRange = sanitizeHistoryAssistantTimeRange(plan.timeRange);
+  const items = sanitizeHistoryAssistantPlanItems(plan.items);
+  const analysis = plan.analysis && typeof plan.analysis === "object" ? { ...plan.analysis } : null;
 
   historyAssistantPlan = {
     intent,
     message,
+    reason,
     query,
     topic,
     site,
     subfilterId,
     limit,
     timeRange,
+    items,
+    analysis,
     requestId,
   };
 
@@ -1586,6 +1718,12 @@ function applyHistoryAssistantPlanAfterResults() {
     filteredHistoryResultsByTime,
     historyAssistantPlan.site,
   );
+  const planItems = Array.isArray(historyAssistantPlan.items) ? historyAssistantPlan.items : [];
+  const hasPlanItems = planItems.length > 0;
+  const matchedPlanResults = hasPlanItems ? matchHistoryResultsToPlanItems(filteredHistoryResults, planItems) : [];
+  const fallbackPlanResults = hasPlanItems && !matchedPlanResults.length
+    ? buildHistoryResultsFromPlanItems(planItems)
+    : [];
   const timeRangeLabel =
     typeof historyAssistantPlan.timeRange?.label === "string" && historyAssistantPlan.timeRange.label
       ? historyAssistantPlan.timeRange.label
@@ -1597,10 +1735,16 @@ function applyHistoryAssistantPlanAfterResults() {
     const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
       ? Math.max(1, Math.floor(historyAssistantPlan.limit))
       : null;
-    const totalCount = filteredHistoryResults.length;
-    const displayResults = filteredHistoryResults.slice();
+    const baseResults = hasPlanItems
+      ? matchedPlanResults.length
+        ? matchedPlanResults
+        : fallbackPlanResults
+      : filteredHistoryResults;
+    const totalCount = hasPlanItems ? planItems.length : filteredHistoryResults.length;
+    const displayResults = requestedLimit !== null ? baseResults.slice(0, requestedLimit) : baseResults.slice();
     const displayCount = displayResults.length;
     const shownLabel = formatCountLabel(displayCount, "match");
+    const missingCount = hasPlanItems ? Math.max(0, planItems.length - matchedPlanResults.length) : 0;
 
     const messageParts = [];
     if (historyAssistantPlan.message) {
@@ -1615,6 +1759,13 @@ function applyHistoryAssistantPlanAfterResults() {
       if (requestedLimit !== null && requestedLimit < totalCount) {
         const requestedLabel = formatCountLabel(requestedLimit, "match");
         messageParts.push(`Showing all matches (requested ${requestedLabel}).`);
+      }
+      if (hasPlanItems && missingCount > 0 && matchedPlanResults.length > 0) {
+        const missingLabel = formatCountLabel(missingCount, "selection");
+        messageParts.push(`Assistant selected entries beyond what is currently available (${missingLabel} missing).`);
+      }
+      if (hasPlanItems && !matchedPlanResults.length && fallbackPlanResults.length) {
+        messageParts.push("Showing assistant-selected entries based on your request.");
       }
     } else {
       if (historyAssistantPlan.message) {
@@ -1746,8 +1897,13 @@ function applyHistoryAssistantPlanAfterResults() {
   if (intent === "summarize") {
     const limit = Number.isFinite(historyAssistantPlan.limit)
       ? historyAssistantPlan.limit
-      : filteredHistoryResults.length;
-    const summaryEntries = prepareHistorySummaryEntries(filteredHistoryResults, limit);
+      : (hasPlanItems ? planItems.length : filteredHistoryResults.length);
+    const baseResults = hasPlanItems
+      ? matchedPlanResults.length
+        ? matchedPlanResults
+        : fallbackPlanResults
+      : filteredHistoryResults;
+    const summaryEntries = prepareHistorySummaryEntries(baseResults, limit);
     if (!summaryEntries.length) {
       const fallback = historyAssistantPlan.message
         ? `${historyAssistantPlan.message} · No matching history found.`
@@ -1757,7 +1913,7 @@ function applyHistoryAssistantPlanAfterResults() {
       return;
     }
 
-    const totalCount = filteredHistoryResults.length;
+    const totalCount = hasPlanItems ? planItems.length : filteredHistoryResults.length;
     const summaryRequestId = ++historyAssistantSummaryRequestId;
     const planMessage = historyAssistantPlan.message || "";
     const planQuery = typeof historyAssistantPlan.query === "string" ? historyAssistantPlan.query : "";
@@ -1834,7 +1990,7 @@ function applyHistoryAssistantPlanAfterResults() {
     const limit = Number.isFinite(historyAssistantPlan.limit)
       ? historyAssistantPlan.limit
       : filteredHistoryResults.length;
-    openHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
+    openHistoryEntries(filteredHistoryResults, planItems, limit, historyAssistantPlan.requestId);
     return;
   }
 
@@ -1842,24 +1998,15 @@ function applyHistoryAssistantPlanAfterResults() {
     const limit = Number.isFinite(historyAssistantPlan.limit)
       ? historyAssistantPlan.limit
       : filteredHistoryResults.length;
-    deleteHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
+    deleteHistoryEntries(filteredHistoryResults, planItems, limit, historyAssistantPlan.requestId);
     return;
   }
 
   historyAssistantPlan = null;
 }
 
-async function deleteHistoryEntries(results, limit, planId) {
-  const available = Array.isArray(results) ? results.length : 0;
-  let desired;
-  if (Number.isFinite(limit)) {
-    const normalized = Math.floor(limit);
-    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
-  } else {
-    desired = available;
-  }
-  const max = Math.max(0, desired);
-  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+async function deleteHistoryEntries(results, planItems, limit, planId) {
+  const targets = selectHistoryAssistantTargets(results, planItems, limit);
   const urls = targets.map((entry) => (typeof entry?.url === "string" ? entry.url : "")).filter(Boolean);
   if (!urls.length) {
     setHistoryAssistantMessage("No matching history to delete.", { tone: "muted" });
@@ -1901,17 +2048,9 @@ async function deleteHistoryEntries(results, limit, planId) {
   }
 }
 
-async function openHistoryEntries(results, limit, planId) {
-  const available = Array.isArray(results) ? results.length : 0;
-  let desired;
-  if (Number.isFinite(limit)) {
-    const normalized = Math.floor(limit);
-    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
-  } else {
-    desired = available;
-  }
-  const max = Math.max(0, desired);
-  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+async function openHistoryEntries(results, planItems, limit, planId) {
+  const candidates = selectHistoryAssistantTargets(results, planItems, limit);
+  const targets = candidates.filter((entry) => typeof entry?.id !== "undefined");
   if (!targets.length) {
     setHistoryAssistantMessage("No matching history to open.", { tone: "muted" });
     historyAssistantPlan = null;
