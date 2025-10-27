@@ -8,6 +8,8 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
+  historySummaries,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -186,6 +188,79 @@ export function registerMessageHandlers({
           console.error("Spotlight: summary generation failed", err);
           const errorMessage = err?.message || "Unable to generate summary";
           sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      if (!historyAssistant || typeof historyAssistant.interpret !== "function") {
+        sendResponse({ success: false, error: "Smart history assistant unavailable" });
+        return true;
+      }
+      historyAssistant
+        .interpret({ text: message.text || message.query || "" })
+        .then((plan) => {
+          sendResponse({ success: true, plan });
+        })
+        .catch((error) => {
+          const errorMessage = error?.message || "Assistant request failed";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_SUMMARIZE") {
+      if (!historySummaries || typeof historySummaries.summarize !== "function") {
+        sendResponse({ success: false, error: "History summaries unavailable" });
+        return true;
+      }
+      const entries = Array.isArray(message.entries) ? message.entries : [];
+      const timeRange = message.timeRange && typeof message.timeRange === "object" ? message.timeRange : null;
+      const timeRangeLabel = typeof message.timeRangeLabel === "string" ? message.timeRangeLabel : "";
+      const totalCount = Number.isFinite(message.totalCount) ? message.totalCount : null;
+      const query = typeof message.query === "string" ? message.query : "";
+      const topic = typeof message.topic === "string" ? message.topic : "";
+      const site = typeof message.site === "string" ? message.site : "";
+      const planMessage = typeof message.planMessage === "string" ? message.planMessage : "";
+      historySummaries
+        .summarize({
+          entries,
+          timeRange,
+          timeRangeLabel,
+          totalCount,
+          query,
+          topic,
+          site,
+          planMessage,
+        })
+        .then((summary) => {
+          sendResponse({ success: true, summary });
+        })
+        .catch((error) => {
+          const errorMessage = error?.message || "Unable to summarize history";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_DELETE") {
+      const urls = Array.isArray(message.urls)
+        ? message.urls.map((url) => (typeof url === "string" ? url.trim() : "")).filter(Boolean)
+        : [];
+      if (!urls.length) {
+        sendResponse({ success: false, error: "No history URLs provided" });
+        return true;
+      }
+      Promise.all(urls.map((url) => chrome.history.deleteUrl({ url })))
+        .then(() => {
+          if (context && typeof context.scheduleRebuild === "function") {
+            context.scheduleRebuild(400);
+          }
+          sendResponse({ success: true, count: urls.length });
+        })
+        .catch((error) => {
+          console.error("Spotlight: failed to delete history entries", error);
+          sendResponse({ success: false, error: error?.message || "Failed to delete history" });
         });
       return true;
     }

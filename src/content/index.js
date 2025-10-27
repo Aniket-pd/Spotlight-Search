@@ -38,6 +38,33 @@ let slashMenuEl = null;
 let slashMenuOptions = [];
 let slashMenuVisible = false;
 let slashMenuActiveIndex = -1;
+const SMART_HISTORY_ASSISTANT_ENABLED = (() => {
+  if (typeof globalThis === "undefined") {
+    return true;
+  }
+  const flags = globalThis.SpotlightFeatureFlags;
+  if (flags && typeof flags.smartHistoryAssistant === "boolean") {
+    return flags.smartHistoryAssistant;
+  }
+  if (globalThis.SpotlightFeatureFlagUtils && typeof globalThis.SpotlightFeatureFlagUtils.isSmartHistoryAssistantEnabled === "function") {
+    try {
+      return Boolean(globalThis.SpotlightFeatureFlagUtils.isSmartHistoryAssistantEnabled());
+    } catch (err) {
+      return true;
+    }
+  }
+  return true;
+})();
+let historyAssistantContainerEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantSubmitEl = null;
+let historyAssistantMessageEl = null;
+let historyAssistantVisible = false;
+let historyAssistantLoading = false;
+let historyAssistantPlan = null;
+let historyAssistantRequestId = 0;
+let historyAssistantSummaryRequestId = 0;
+let pendingHistoryAssistantSubfilter = null;
 let pointerNavigationSuspended = false;
 let shadowStylesLoaded = false;
 let shadowStylesPromise = null;
@@ -381,6 +408,10 @@ function createOverlay() {
   inputWrapper.appendChild(subfilterContainerEl);
   ensureBookmarkOrganizerControl();
 
+  if (SMART_HISTORY_ASSISTANT_ENABLED) {
+    createHistoryAssistantUI(inputWrapper);
+  }
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -494,6 +525,1428 @@ function installOverlayGuards() {
       shadowRootEl.addEventListener(type, stopKeys);
     });
   }
+}
+
+function createHistoryAssistantUI(parent) {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || historyAssistantContainerEl || !parent) {
+    return;
+  }
+  const container = document.createElement("div");
+  container.className = "spotlight-history-assistant";
+  container.hidden = true;
+  container.setAttribute("aria-hidden", "true");
+
+  const form = document.createElement("form");
+  form.className = "spotlight-history-assistant-form";
+  form.setAttribute("role", "group");
+  form.setAttribute("aria-label", "Smart history assistant");
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "spotlight-history-assistant-input";
+  input.setAttribute("placeholder", "Ask Spotlight about your history…");
+  input.setAttribute("spellcheck", "false");
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "spotlight-history-assistant-submit";
+  button.textContent = "Ask";
+
+  form.appendChild(input);
+  form.appendChild(button);
+  container.appendChild(form);
+
+  const message = document.createElement("div");
+  message.className = "spotlight-history-assistant-message";
+  message.setAttribute("aria-live", "polite");
+  container.appendChild(message);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    handleHistoryAssistantSubmit();
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.metaKey) {
+      event.preventDefault();
+      handleHistoryAssistantSubmit();
+    }
+    if (event.key === "Escape" && historyAssistantVisible) {
+      input.value = "";
+      setHistoryAssistantMessage("");
+    }
+  });
+
+  parent.appendChild(container);
+
+  historyAssistantContainerEl = container;
+  historyAssistantInputEl = input;
+  historyAssistantSubmitEl = button;
+  historyAssistantMessageEl = message;
+}
+
+function sendRuntimeMessage(payload) {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(payload, (response) => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message || "Runtime message failed"));
+          return;
+        }
+        resolve(response);
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function setHistoryAssistantLoading(loading) {
+  historyAssistantLoading = Boolean(loading);
+  if (historyAssistantContainerEl) {
+    historyAssistantContainerEl.classList.toggle("loading", historyAssistantLoading);
+  }
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.disabled = historyAssistantLoading;
+  }
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.disabled = historyAssistantLoading;
+  }
+}
+
+function setHistoryAssistantMessage(message, options = {}) {
+  if (!historyAssistantMessageEl) {
+    return;
+  }
+  const text = typeof message === "string" ? message : "";
+  historyAssistantMessageEl.textContent = text;
+  const tone = typeof options.tone === "string" ? options.tone : "";
+  historyAssistantMessageEl.classList.toggle("error", tone === "error");
+  historyAssistantMessageEl.classList.toggle("success", tone === "success");
+  historyAssistantMessageEl.classList.toggle("muted", tone === "muted");
+}
+
+function resetHistoryAssistantState() {
+  historyAssistantPlan = null;
+  pendingHistoryAssistantSubfilter = null;
+  setHistoryAssistantLoading(false);
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  setHistoryAssistantMessage("");
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantContainerEl) {
+    return;
+  }
+  const shouldShow = isOpen && activeFilter === "history";
+  if (historyAssistantVisible === shouldShow) {
+    return;
+  }
+  historyAssistantVisible = shouldShow;
+  historyAssistantContainerEl.hidden = !shouldShow;
+  historyAssistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) {
+    resetHistoryAssistantState();
+  } else if (!historyAssistantMessageEl?.textContent) {
+    setHistoryAssistantMessage("Try natural requests like “Show videos from yesterday.”", { tone: "muted" });
+  }
+}
+
+function handleHistoryAssistantSubmit() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantInputEl) {
+    return;
+  }
+  const text = historyAssistantInputEl.value.trim();
+  if (!text) {
+    setHistoryAssistantMessage("Ask about your browsing history to get started.", { tone: "muted" });
+    return;
+  }
+  runHistoryAssistantRequest(text);
+}
+
+async function runHistoryAssistantRequest(text) {
+  const requestId = ++historyAssistantRequestId;
+  setHistoryAssistantLoading(true);
+  setHistoryAssistantMessage("Understanding your request…", { tone: "muted" });
+  try {
+    const response = await sendRuntimeMessage({
+      type: "SPOTLIGHT_HISTORY_ASSISTANT",
+      text,
+    });
+    if (requestId !== historyAssistantRequestId) {
+      return;
+    }
+    if (!response || !response.success || !response.plan) {
+      const errorMessage = response && typeof response.error === "string" ? response.error : "Assistant unavailable";
+      setHistoryAssistantMessage(errorMessage, { tone: "error" });
+      return;
+    }
+    applyHistoryAssistantPlan(response.plan, requestId);
+  } catch (error) {
+    if (requestId !== historyAssistantRequestId) {
+      return;
+    }
+    const errorMessage = error?.message || "Assistant unavailable";
+    setHistoryAssistantMessage(errorMessage, { tone: "error" });
+  } finally {
+    if (requestId === historyAssistantRequestId) {
+      setHistoryAssistantLoading(false);
+    }
+  }
+}
+
+const HISTORY_ASSISTANT_PRESET_LABELS = {
+  all: "all time",
+  today: "today",
+  yesterday: "yesterday",
+  last7: "last 7 days",
+  last30: "last 30 days",
+  older: "older than 30 days",
+};
+
+function sanitizeHistoryAssistantTimeRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const presetId = typeof range.presetId === "string" && range.presetId ? range.presetId : null;
+  const raw = typeof range.raw === "string" ? range.raw.trim() : "";
+  const labelCandidate = typeof range.label === "string" ? range.label.trim() : "";
+  const fallbackPresetLabel = presetId && HISTORY_ASSISTANT_PRESET_LABELS[presetId]
+    ? HISTORY_ASSISTANT_PRESET_LABELS[presetId]
+    : "";
+  const label = labelCandidate || raw || fallbackPresetLabel;
+  const from = Number.isFinite(range.from) && range.from >= 0 ? range.from : null;
+  const to = Number.isFinite(range.to) && range.to >= 0 ? range.to : null;
+  const kind = typeof range.kind === "string" && range.kind ? range.kind : null;
+  const resolvedAt = Number.isFinite(range.resolvedAt) && range.resolvedAt >= 0 ? range.resolvedAt : null;
+  const unit = typeof range.unit === "string" ? range.unit.trim() : "";
+  const normalizedUnit = unit ? unit.toLowerCase() : "";
+  const safeUnit = normalizedUnit ? normalizedUnit.replace(/[^a-z]/g, "") : "";
+  const quantity = Number.isFinite(range.quantity) && range.quantity > 0 ? range.quantity : null;
+  const durationMs = Number.isFinite(range.durationMs) && range.durationMs > 0 ? range.durationMs : null;
+  if (
+    !presetId &&
+    !raw &&
+    !label &&
+    from === null &&
+    to === null &&
+    !kind &&
+    resolvedAt === null &&
+    !safeUnit &&
+    quantity === null &&
+    durationMs === null
+  ) {
+    return null;
+  }
+  return {
+    presetId,
+    raw,
+    label,
+    from,
+    to,
+    kind,
+    resolvedAt,
+    unit: safeUnit || null,
+    quantity,
+    durationMs,
+  };
+}
+
+const HISTORY_ASSISTANT_SECOND_MS = 1000;
+const HISTORY_ASSISTANT_MINUTE_MS = 60 * HISTORY_ASSISTANT_SECOND_MS;
+const HISTORY_ASSISTANT_HOUR_MS = 60 * HISTORY_ASSISTANT_MINUTE_MS;
+const HISTORY_ASSISTANT_DAY_MS = 24 * HISTORY_ASSISTANT_HOUR_MS;
+const HISTORY_ASSISTANT_WEEK_MS = 7 * HISTORY_ASSISTANT_DAY_MS;
+const HISTORY_ASSISTANT_MONTH_MS = 30 * HISTORY_ASSISTANT_DAY_MS;
+
+function toHistoryAssistantStartOfDay(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function resolveHistoryAssistantPresetBounds(presetId, now) {
+  const reference = Number.isFinite(now) ? now : Date.now();
+  const safeNow = reference > 0 ? reference : Date.now();
+  if (presetId === "all") {
+    return { from: null, to: null };
+  }
+  if (presetId === "today") {
+    const startToday = toHistoryAssistantStartOfDay(safeNow);
+    return { from: startToday, to: safeNow };
+  }
+  if (presetId === "yesterday") {
+    const startToday = toHistoryAssistantStartOfDay(safeNow);
+    const startYesterday = startToday - HISTORY_ASSISTANT_DAY_MS;
+    return { from: startYesterday, to: startToday };
+  }
+  if (presetId === "last7") {
+    return { from: Math.max(0, safeNow - 7 * HISTORY_ASSISTANT_DAY_MS), to: safeNow };
+  }
+  if (presetId === "last30") {
+    return { from: Math.max(0, safeNow - 30 * HISTORY_ASSISTANT_DAY_MS), to: safeNow };
+  }
+  if (presetId === "older") {
+    return { from: 0, to: Math.max(0, safeNow - 30 * HISTORY_ASSISTANT_DAY_MS) };
+  }
+  return { from: null, to: null };
+}
+
+function resolveHistoryAssistantRelativeBounds(range, now) {
+  const reference = Number.isFinite(now) && now > 0 ? now : Date.now();
+  const duration = Number.isFinite(range?.durationMs) && range.durationMs > 0 ? range.durationMs : null;
+  if (!duration) {
+    const unit = typeof range?.unit === "string" && range.unit ? range.unit.toLowerCase() : null;
+    const quantity = Number.isFinite(range?.quantity) && range.quantity > 0 ? range.quantity : null;
+    if (!unit || !quantity) {
+      return { from: null, to: null };
+    }
+    const unitMap = {
+      second: HISTORY_ASSISTANT_SECOND_MS,
+      minute: HISTORY_ASSISTANT_MINUTE_MS,
+      hour: HISTORY_ASSISTANT_HOUR_MS,
+      day: HISTORY_ASSISTANT_DAY_MS,
+      week: HISTORY_ASSISTANT_WEEK_MS,
+      month: HISTORY_ASSISTANT_MONTH_MS,
+      year: 365 * HISTORY_ASSISTANT_DAY_MS,
+    };
+    const unitMs = unitMap[unit] || null;
+    if (!unitMs) {
+      return { from: null, to: null };
+    }
+    const computedDuration = quantity * unitMs;
+    if (!Number.isFinite(computedDuration) || computedDuration <= 0) {
+      return { from: null, to: null };
+    }
+    const to = reference;
+    const from = Math.max(0, Math.floor(to - computedDuration));
+    return { from, to };
+  }
+  const to = reference;
+  const from = Math.max(0, Math.floor(to - duration));
+  return { from, to };
+}
+
+function resolveHistoryAssistantBounds(range, now = Date.now()) {
+  if (!range || typeof range !== "object") {
+    return { from: null, to: null };
+  }
+  const presetId = typeof range.presetId === "string" && range.presetId ? range.presetId : null;
+  const kind = typeof range.kind === "string" ? range.kind : null;
+  const reference = Number.isFinite(now) && now > 0 ? now : Date.now();
+
+  if (kind === "preset" && presetId) {
+    return resolveHistoryAssistantPresetBounds(presetId, reference);
+  }
+
+  if (kind === "relative") {
+    const bounds = resolveHistoryAssistantRelativeBounds(range, reference);
+    if (bounds.from !== null || bounds.to !== null) {
+      return bounds;
+    }
+  }
+
+  if (presetId) {
+    const presetBounds = resolveHistoryAssistantPresetBounds(presetId, reference);
+    if (presetBounds.from !== null || presetBounds.to !== null) {
+      return presetBounds;
+    }
+  }
+
+  const from = Number.isFinite(range.from) && range.from >= 0 ? range.from : null;
+  const to = Number.isFinite(range.to) && range.to >= 0 ? range.to : null;
+  if (from !== null || to !== null) {
+    return { from, to };
+  }
+  return { from: null, to: null };
+}
+
+function normalizeHistoryAssistantDomain(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return "";
+  }
+  let hostname = "";
+  const candidate = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
+  try {
+    hostname = new URL(candidate).hostname;
+  } catch (error) {
+    hostname = trimmed.replace(/^[^a-z0-9]+/i, "").replace(/[^a-z0-9.-]+/gi, "");
+  }
+  if (!hostname) {
+    return "";
+  }
+  const withoutPort = hostname.replace(/:\d+$/, "");
+  return withoutPort.replace(/^www\./, "").replace(/\.+$/, "");
+}
+
+function extractHistoryResultDomain(result) {
+  if (!result || typeof result !== "object") {
+    return "";
+  }
+  if (typeof result.domain === "string" && result.domain.trim()) {
+    const normalized = normalizeHistoryAssistantDomain(result.domain);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  if (typeof result.url === "string" && result.url.trim()) {
+    const normalized = normalizeHistoryAssistantDomain(result.url);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
+}
+
+function filterHistoryResultsBySite(results, site) {
+  if (!Array.isArray(results) || !results.length) {
+    return Array.isArray(results) ? results : [];
+  }
+  const normalizedSite = normalizeHistoryAssistantDomain(site);
+  const rawSiteToken = typeof site === "string" ? site.trim().toLowerCase() : "";
+  const fallbackToken =
+    normalizedSite && normalizedSite.includes(".")
+      ? ""
+      : normalizeHistoryAssistantDomain(rawSiteToken) || rawSiteToken.replace(/^www\./, "");
+  if (!normalizedSite && !fallbackToken) {
+    return results;
+  }
+  return results.filter((entry) => {
+    const domain = extractHistoryResultDomain(entry);
+    if (!domain) {
+      return false;
+    }
+    if (normalizedSite && domain === normalizedSite) {
+      return true;
+    }
+    if (normalizedSite && domain.endsWith(`.${normalizedSite}`)) {
+      return true;
+    }
+    if (fallbackToken) {
+      const token = fallbackToken.replace(/[^a-z0-9-]+/g, "");
+      if (token) {
+        const parts = domain.split(".");
+        if (parts.includes(token)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+
+function filterHistoryResultsByTimeRange(results, range) {
+  if (!Array.isArray(results) || !results.length || !range || typeof range !== "object") {
+    return Array.isArray(results) ? results : [];
+  }
+  const { from, to } = resolveHistoryAssistantBounds(range);
+  if (from === null && to === null) {
+    return results;
+  }
+  return results.filter((entry) => {
+    const timestamp =
+      typeof entry?.timeStamp === "number"
+        ? entry.timeStamp
+        : typeof entry?.lastVisitTime === "number"
+        ? entry.lastVisitTime
+        : 0;
+    if (!timestamp) {
+      return false;
+    }
+    if (from !== null && timestamp < from) {
+      return false;
+    }
+    if (to !== null && timestamp > to) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function applyHistoryAssistantPlan(plan, requestId) {
+  if (!plan || typeof plan !== "object") {
+    setHistoryAssistantMessage("Assistant returned an empty plan", { tone: "error" });
+    return;
+  }
+  historyAssistantSummaryRequestId += 1;
+  setHistoryAssistantLoading(false);
+  const intent = typeof plan.intent === "string" ? plan.intent : "show";
+  const message = typeof plan.message === "string" ? plan.message : "";
+  const query = typeof plan.query === "string" ? plan.query.trim() : "";
+  const topic = typeof plan.topic === "string" ? plan.topic.trim() : "";
+  const site = typeof plan.site === "string" ? plan.site.trim() : "";
+  const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
+  const limit = Number.isFinite(plan.limit) ? plan.limit : null;
+  const timeRange = sanitizeHistoryAssistantTimeRange(plan.timeRange);
+
+  historyAssistantPlan = {
+    intent,
+    message,
+    query,
+    topic,
+    site,
+    subfilterId,
+    limit,
+    timeRange,
+    requestId,
+  };
+
+  const timeRangeLabel = typeof timeRange?.label === "string" && timeRange.label ? timeRange.label : timeRange?.raw || "";
+  const normalizedRangeLabel = timeRangeLabel.toLowerCase();
+  const shouldHighlightRange = timeRangeLabel && normalizedRangeLabel !== "all time";
+  if (message) {
+    setHistoryAssistantMessage(message);
+  } else if (shouldHighlightRange) {
+    setHistoryAssistantMessage(`Focusing on ${timeRangeLabel}.`, { tone: "muted" });
+  } else {
+    setHistoryAssistantMessage("Assistant ready.", { tone: "muted" });
+  }
+
+  if (subfilterId) {
+    pendingHistoryAssistantSubfilter = { type: "history", id: subfilterId };
+    selectedSubfilter = { type: "history", id: subfilterId };
+  } else {
+    pendingHistoryAssistantSubfilter = null;
+  }
+
+  if (intent === "info") {
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (inputEl) {
+    const nextQuery = query || "history:";
+    inputEl.value = nextQuery;
+    inputEl.setSelectionRange(nextQuery.length, nextQuery.length);
+    handleInputChange();
+  }
+}
+
+function formatCountLabel(count, singular, plural = null) {
+  const value = Number.isFinite(count) ? count : 0;
+  const labelPlural = plural || `${singular}s`;
+  return `${value} ${value === 1 ? singular : labelPlural}`;
+}
+
+const HISTORY_SUMMARY_STOP_WORDS = new Set([
+  "a",
+  "about",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "for",
+  "from",
+  "have",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "this",
+  "to",
+  "with",
+  "you",
+  "your",
+]);
+
+function sanitizeHistorySummaryResult(result) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const rawTitle = typeof result.title === "string" ? result.title.trim() : "";
+  const title = rawTitle ? rawTitle.slice(0, 160) : "";
+  const rawUrl = typeof result.url === "string" ? result.url.trim() : "";
+  const url = rawUrl || "";
+  if (!title && !url) {
+    return null;
+  }
+  const lastVisitTime = Number.isFinite(result.lastVisitTime)
+    ? result.lastVisitTime
+    : Number.isFinite(result.timeStamp)
+    ? result.timeStamp
+    : null;
+  const visitCount = Number.isFinite(result.visitCount) && result.visitCount > 0 ? result.visitCount : null;
+  let domain = "";
+  if (typeof result.domain === "string" && result.domain.trim()) {
+    domain = result.domain.trim().toLowerCase();
+  } else if (url) {
+    try {
+      const parsed = new URL(url);
+      domain = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    } catch (error) {
+      const sanitized = url.replace(/^https?:\/\//i, "");
+      domain = sanitized.split("/")[0].toLowerCase();
+    }
+  }
+  return {
+    title,
+    url,
+    domain,
+    lastVisitTime,
+    visitCount,
+  };
+}
+
+function prepareHistorySummaryEntries(results, limit) {
+  if (!Array.isArray(results) || !results.length) {
+    return [];
+  }
+  const baseLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.floor(limit))
+    : results.length;
+  const max = Math.min(baseLimit, results.length);
+  const sanitized = [];
+  for (let index = 0; index < results.length && sanitized.length < max; index += 1) {
+    const entry = sanitizeHistorySummaryResult(results[index]);
+    if (entry) {
+      sanitized.push(entry);
+    }
+  }
+  return sanitized;
+}
+
+function extractHistorySummaryKeywords(text) {
+  if (!text) {
+    return [];
+  }
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token && token.length > 2 && !HISTORY_SUMMARY_STOP_WORDS.has(token));
+}
+
+function computeHistorySummaryAggregates(entries) {
+  const domainCounts = new Map();
+  const keywordCounts = new Map();
+  const dayCounts = new Map();
+  let newestTime = 0;
+  let oldestTime = Number.POSITIVE_INFINITY;
+
+  entries.forEach((entry) => {
+    if (entry.domain) {
+      domainCounts.set(entry.domain, (domainCounts.get(entry.domain) || 0) + 1);
+    }
+    const tokens = new Set([
+      ...extractHistorySummaryKeywords(entry.title),
+      ...extractHistorySummaryKeywords(entry.domain.replace(/\./g, " ")),
+    ]);
+    tokens.forEach((token) => {
+      keywordCounts.set(token, (keywordCounts.get(token) || 0) + 1);
+    });
+    if (Number.isFinite(entry.lastVisitTime) && entry.lastVisitTime > 0) {
+      newestTime = Math.max(newestTime, entry.lastVisitTime);
+      oldestTime = Math.min(oldestTime, entry.lastVisitTime);
+      const dayLabel = new Date(entry.lastVisitTime).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      });
+      dayCounts.set(dayLabel, (dayCounts.get(dayLabel) || 0) + 1);
+    }
+  });
+
+  const sortedDomains = Array.from(domainCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const sortedKeywords = Array.from(keywordCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const sortedDays = Array.from(dayCounts.entries()).sort((a, b) => b[1] - a[1]);
+
+  return {
+    domains: sortedDomains,
+    keywords: sortedKeywords,
+    days: sortedDays,
+    newestTime: Number.isFinite(newestTime) && newestTime > 0 ? newestTime : null,
+    oldestTime: Number.isFinite(oldestTime) && oldestTime > 0 ? oldestTime : null,
+    siteCount: sortedDomains.length ? sortedDomains.length : new Set(entries.map((entry) => entry.domain || entry.url)).size,
+  };
+}
+
+function resolveHistoryAssistantFrequencyLabel(entry) {
+  if (!entry) {
+    return { key: null, label: "" };
+  }
+  if (entry.domain) {
+    const domain = entry.domain.replace(/^www\./i, "");
+    return { key: domain.toLowerCase(), label: domain };
+  }
+  const rawUrl = typeof entry.url === "string" ? entry.url.trim() : "";
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl.includes("://") ? rawUrl : `https://${rawUrl}`);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      if (host) {
+        return { key: host, label: host };
+      }
+    } catch (error) {
+      const sanitized = rawUrl.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/^www\./i, "");
+      if (sanitized) {
+        return { key: sanitized.toLowerCase(), label: sanitized };
+      }
+    }
+    return { key: rawUrl.toLowerCase(), label: rawUrl };
+  }
+  const title = typeof entry.title === "string" ? entry.title.trim() : "";
+  if (title) {
+    return { key: title.toLowerCase(), label: title };
+  }
+  return { key: null, label: "" };
+}
+
+function computeHistoryAssistantFrequencies(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return { items: [], totalVisits: 0, uniqueCount: 0 };
+  }
+  const buckets = new Map();
+  let totalVisits = 0;
+  results.forEach((result) => {
+    const entry = sanitizeHistorySummaryResult(result);
+    if (!entry) {
+      return;
+    }
+    const { key, label } = resolveHistoryAssistantFrequencyLabel(entry);
+    if (!key || !label) {
+      return;
+    }
+    const visitWeight = Number.isFinite(entry.visitCount) && entry.visitCount > 0 ? entry.visitCount : 1;
+    totalVisits += visitWeight;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        label,
+        count: 0,
+        sampleTitle: entry.title || "",
+        sampleUrl: entry.url || "",
+      });
+    }
+    const bucket = buckets.get(key);
+    bucket.count += visitWeight;
+    if (!bucket.sampleTitle && entry.title) {
+      bucket.sampleTitle = entry.title;
+    }
+    if (!bucket.sampleUrl && entry.url) {
+      bucket.sampleUrl = entry.url;
+    }
+  });
+
+  const items = Array.from(buckets.values()).map((item) => ({
+    label: item.label,
+    count: item.count,
+    sampleTitle: item.sampleTitle,
+    sampleUrl: item.sampleUrl,
+  }));
+
+  items.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  return {
+    items,
+    totalVisits,
+    uniqueCount: items.length,
+  };
+}
+
+function formatHistorySummaryTimestamp(timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "recently";
+  }
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function buildHistorySummaryFallback(entries, timeRangeLabel, totalCount) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return "No matching history found.";
+  }
+  const aggregates = computeHistorySummaryAggregates(entries);
+  const safeRange = timeRangeLabel || "your recent activity";
+  const total = Number.isFinite(totalCount) ? totalCount : entries.length;
+  const domainHighlights = aggregates.domains.slice(0, 3).map(([domain, count]) => `${domain} (${count})`);
+  const domainNames = aggregates.domains.slice(0, 3).map(([domain]) => domain);
+  const keywordHighlights = aggregates.keywords.slice(0, 4).map(([word]) => word);
+  const dayHighlights = aggregates.days.slice(0, 2).map(([day]) => day);
+  const siteCount = aggregates.siteCount || domainNames.length || new Set(entries.map((entry) => entry.domain || entry.url)).size;
+
+  const bullets = [];
+  if (domainHighlights.length) {
+    bullets.push(`• Visited ${domainHighlights.join(", ")}.`);
+  }
+  if (keywordHighlights.length) {
+    bullets.push(`• Focused on topics like ${keywordHighlights.join(", ")}.`);
+  }
+  if (dayHighlights.length) {
+    bullets.push(`• Most active on ${dayHighlights.join(" and ")}.`);
+  }
+  const visitsLabel = `• Opened ${formatCountLabel(total, "page")} across ${formatCountLabel(siteCount || 1, "site")}.`;
+  if (!bullets.some((line) => line.startsWith("• Opened"))) {
+    bullets.push(visitsLabel);
+  }
+  if (aggregates.newestTime) {
+    bullets.push(`• Latest visit around ${formatHistorySummaryTimestamp(aggregates.newestTime)}.`);
+  }
+
+  while (bullets.length < 3) {
+    bullets.push(`• Explored ${formatCountLabel(entries.length, "result")} from your history.`);
+  }
+
+  const trimmedBullets = bullets.slice(0, 5);
+
+  const overallParts = [];
+  if (keywordHighlights.length) {
+    overallParts.push(keywordHighlights.slice(0, 3).join(", "));
+  }
+  if (domainNames.length) {
+    overallParts.push(`sites like ${domainNames.join(", ")}`);
+  }
+  if (!overallParts.length) {
+    overallParts.push(`${formatCountLabel(siteCount || entries.length, "site")} and ${formatCountLabel(total, "visit")}`);
+  }
+  const overallLabel =
+    overallParts.length === 1
+      ? `a stretch focused on ${overallParts[0]}.`
+      : `a stretch focused on ${overallParts.slice(0, -1).join(", ")} and ${overallParts.slice(-1)}.`;
+
+  return `In ${safeRange}, you mainly:\n\n${trimmedBullets.join("\n")}\n\n👉 Overall: ${overallLabel}`;
+}
+
+const DEFAULT_SUMMARY_FALLBACK_BULLETS = [
+  "Explored your browsing history.",
+  "Stayed active across several topics.",
+  "Checked in on favorite sites.",
+  "Looked up information that mattered to you.",
+  "Kept momentum going with your research.",
+];
+
+function looksStructuredHistorySummary(text) {
+  if (!text) {
+    return false;
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return false;
+  }
+  if (!/^in\s.+you mainly:/i.test(lines[0])) {
+    return false;
+  }
+  const bulletCount = lines.filter((line) => line.startsWith("• ")).length;
+  if (bulletCount < 3) {
+    return false;
+  }
+  return lines.some((line) => /^👉\s*overall:/i.test(line));
+}
+
+function stripSummaryBulletPrefix(text) {
+  if (!text) {
+    return "";
+  }
+  let sanitized = text.trim();
+  sanitized = sanitized.replace(/^[-*•]\s*/, "");
+  sanitized = sanitized.replace(/^\(?\d+[.)]\s*/, "");
+  return sanitized.trim();
+}
+
+function parseHistorySummaryParts(summaryText) {
+  const lines = typeof summaryText === "string" ? summaryText.split(/\r?\n/) : [];
+  const parts = { intro: "", bullets: [], overall: "" };
+  let encounteredOverall = false;
+
+  for (const rawLine of lines) {
+    const line = typeof rawLine === "string" ? rawLine.trim() : "";
+    if (!line) {
+      continue;
+    }
+    if (!parts.intro) {
+      parts.intro = line;
+      continue;
+    }
+    if (/^👉\s*overall/i.test(line)) {
+      parts.overall = line;
+      encounteredOverall = true;
+      continue;
+    }
+    if (!encounteredOverall && /overall/i.test(line) && !parts.overall) {
+      parts.overall = line;
+      encounteredOverall = true;
+      continue;
+    }
+    const bulletText = stripSummaryBulletPrefix(line);
+    if (bulletText) {
+      parts.bullets.push(bulletText);
+    }
+  }
+
+  return parts;
+}
+
+function extractRangeFromIntro(introLine) {
+  if (!introLine) {
+    return "";
+  }
+  const normalized = introLine.replace(/\s+/g, " ").trim();
+  const match = normalized.match(/in\s+(.+?)(?:,|\s+you\b|$)/i);
+  if (match && match[1]) {
+    return match[1].replace(/[:.]*$/, "").trim();
+  }
+  return "";
+}
+
+function formatHistorySummaryIntro(rawIntro, defaultRange, fallbackIntro) {
+  const rangeLabel =
+    extractRangeFromIntro(rawIntro) ||
+    extractRangeFromIntro(fallbackIntro) ||
+    defaultRange ||
+    "your recent activity";
+  return `In ${rangeLabel}, you mainly:`;
+}
+
+function ensureSentenceCase(text) {
+  if (!text) {
+    return "";
+  }
+  let sanitized = text.trim();
+  sanitized = sanitized.replace(/^👉\s*overall[:\s-]*/i, "");
+  sanitized = sanitized.replace(/^[-*•]\s*/, "");
+  sanitized = sanitized.replace(/^\(?\d+[.)]\s*/, "");
+  sanitized = sanitized.trim();
+  if (!sanitized) {
+    return "";
+  }
+  if (!/[.!?…]$/u.test(sanitized)) {
+    sanitized += ".";
+  }
+  return sanitized.charAt(0).toUpperCase() + sanitized.slice(1);
+}
+
+function normalizeHistorySummaryBullets(bullets, fallbackBullets, minCount = 3, maxCount = 5) {
+  const results = [];
+  const seen = new Set();
+
+  const appendBullet = (text) => {
+    const sentence = ensureSentenceCase(text);
+    if (!sentence) {
+      return;
+    }
+    const key = sentence.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    results.push(`• ${sentence}`);
+  };
+
+  bullets.forEach((bullet) => appendBullet(bullet));
+  fallbackBullets.forEach((bullet) => appendBullet(bullet));
+
+  let defaultIndex = 0;
+  while (results.length < minCount && defaultIndex < DEFAULT_SUMMARY_FALLBACK_BULLETS.length) {
+    appendBullet(DEFAULT_SUMMARY_FALLBACK_BULLETS[defaultIndex]);
+    defaultIndex += 1;
+  }
+
+  while (results.length < minCount) {
+    appendBullet(`Explored recent browsing activity ${results.length + 1}.`);
+  }
+
+  return maxCount > 0 ? results.slice(0, maxCount) : results;
+}
+
+function formatHistorySummaryOverall(rawOverall, fallbackOverall) {
+  if (rawOverall) {
+    const sentence = ensureSentenceCase(rawOverall);
+    if (sentence) {
+      return `👉 Overall: ${sentence}`;
+    }
+  }
+  if (fallbackOverall) {
+    const sentence = ensureSentenceCase(fallbackOverall);
+    if (sentence) {
+      return `👉 Overall: ${sentence}`;
+    }
+  }
+  return "👉 Overall: Here's what stood out.";
+}
+
+function ensureHistorySummaryStructure(summaryText, options = {}) {
+  const trimmed = typeof summaryText === "string" ? summaryText.trim() : "";
+  const fallbackBuilder = typeof options.buildFallback === "function" ? options.buildFallback : null;
+  const defaultRange = typeof options.defaultRangeLabel === "string" && options.defaultRangeLabel
+    ? options.defaultRangeLabel
+    : "your recent activity";
+
+  if (!trimmed) {
+    return fallbackBuilder ? fallbackBuilder() || "" : "";
+  }
+
+  if (looksStructuredHistorySummary(trimmed)) {
+    return trimmed;
+  }
+
+  let fallbackSummary = "";
+  let fallbackParts = { intro: "", bullets: [], overall: "" };
+  if (fallbackBuilder) {
+    fallbackSummary = fallbackBuilder() || "";
+    fallbackParts = parseHistorySummaryParts(fallbackSummary);
+  }
+
+  const parsed = parseHistorySummaryParts(trimmed);
+  const intro = formatHistorySummaryIntro(parsed.intro, defaultRange, fallbackParts.intro);
+  const bulletLines = normalizeHistorySummaryBullets(parsed.bullets, fallbackParts.bullets, 3, 5);
+  const fallbackOverall = fallbackParts.overall ? formatHistorySummaryOverall(fallbackParts.overall, "") : "";
+  const overall = formatHistorySummaryOverall(parsed.overall, fallbackOverall);
+  const finalOverall = overall || fallbackOverall || "👉 Overall: Here's what stood out.";
+
+  return `${intro}\n\n${bulletLines.join("\n")}\n\n${finalOverall}`;
+}
+
+async function requestHistoryAssistantSummary(options = {}) {
+  const entries = Array.isArray(options.entries) ? options.entries : [];
+  if (!entries.length) {
+    throw new Error("No history entries to summarize");
+  }
+  const message = {
+    type: "SPOTLIGHT_HISTORY_ASSISTANT_SUMMARIZE",
+    entries,
+  };
+  if (options.timeRange && typeof options.timeRange === "object") {
+    message.timeRange = options.timeRange;
+  }
+  const timeRangeLabel = typeof options.timeRangeLabel === "string" ? options.timeRangeLabel : "";
+  if (timeRangeLabel) {
+    message.timeRangeLabel = timeRangeLabel;
+  }
+  if (Number.isFinite(options.totalCount)) {
+    message.totalCount = options.totalCount;
+  }
+  if (typeof options.query === "string" && options.query) {
+    message.query = options.query;
+  }
+  if (typeof options.topic === "string" && options.topic) {
+    message.topic = options.topic;
+  }
+  if (typeof options.site === "string" && options.site) {
+    message.site = options.site;
+  }
+  if (typeof options.planMessage === "string" && options.planMessage) {
+    message.planMessage = options.planMessage;
+  }
+  const response = await sendRuntimeMessage(message);
+  if (!response || !response.success) {
+    const errorMessage = response && typeof response.error === "string" ? response.error : "History summary unavailable";
+    throw new Error(errorMessage);
+  }
+  const summary = typeof response.summary === "string" ? response.summary.trim() : "";
+  if (!summary) {
+    throw new Error("History summary unavailable");
+  }
+  return summary;
+}
+
+function applyHistoryAssistantPlanAfterResults() {
+  if (!SMART_HISTORY_ASSISTANT_ENABLED || !historyAssistantPlan) {
+    return;
+  }
+  if (historyAssistantPlan.requestId !== historyAssistantRequestId) {
+    return;
+  }
+  const intent = historyAssistantPlan.intent || "show";
+  if (intent === "info") {
+    historyAssistantPlan = null;
+    return;
+  }
+  const rawHistoryResults = Array.isArray(resultsState)
+    ? resultsState.filter((result) => result && result.type === "history")
+    : [];
+  const filteredHistoryResultsByTime = filterHistoryResultsByTimeRange(
+    rawHistoryResults,
+    historyAssistantPlan.timeRange,
+  );
+  const filteredHistoryResults = filterHistoryResultsBySite(
+    filteredHistoryResultsByTime,
+    historyAssistantPlan.site,
+  );
+  const timeRangeLabel =
+    typeof historyAssistantPlan.timeRange?.label === "string" && historyAssistantPlan.timeRange.label
+      ? historyAssistantPlan.timeRange.label
+      : historyAssistantPlan.timeRange?.raw || "";
+  const normalizedRangeLabel = timeRangeLabel.toLowerCase();
+  const shouldAppendRange = timeRangeLabel && normalizedRangeLabel !== "all time";
+
+  if (intent === "show") {
+    const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
+      ? Math.max(1, Math.floor(historyAssistantPlan.limit))
+      : null;
+    const totalCount = filteredHistoryResults.length;
+    const displayResults = filteredHistoryResults.slice();
+    const displayCount = displayResults.length;
+    const shownLabel = formatCountLabel(displayCount, "match");
+
+    const messageParts = [];
+    if (historyAssistantPlan.message) {
+      messageParts.push(historyAssistantPlan.message);
+    }
+
+    if (displayCount > 0) {
+      const foundMessage = historyAssistantPlan.message
+        ? `Found ${shownLabel}`
+        : `Found ${shownLabel}.`;
+      messageParts.push(foundMessage);
+      if (requestedLimit !== null && requestedLimit < totalCount) {
+        const requestedLabel = formatCountLabel(requestedLimit, "match");
+        messageParts.push(`Showing all matches (requested ${requestedLabel}).`);
+      }
+    } else {
+      if (historyAssistantPlan.message) {
+        messageParts.push("No matches found.");
+      } else {
+        messageParts.push("No matching history found.");
+      }
+    }
+
+    let message = messageParts.join(" · ");
+    if (shouldAppendRange && timeRangeLabel) {
+      const normalizedMessage = message.toLowerCase();
+      if (!normalizedMessage.includes(normalizedRangeLabel)) {
+        message = message ? `${message} · Time range: ${timeRangeLabel}` : `Time range: ${timeRangeLabel}`;
+      }
+    }
+
+    if (displayCount > 0) {
+      setHistoryAssistantMessage(message);
+    } else {
+      setHistoryAssistantMessage(message, { tone: "muted" });
+    }
+
+    resultsState = displayResults.slice();
+    lazyList.setItems(resultsState);
+    if (resultsState.length > 0) {
+      lazyList.ensureVisible(resultsState.length - 1);
+    }
+    pruneSummaryState();
+    applyCachedFavicons(resultsState);
+    activeIndex = resultsState.length > 0 ? 0 : -1;
+    pointerNavigationSuspended = true;
+    renderResults();
+
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (intent === "frequent") {
+    const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
+      ? Math.max(1, Math.floor(historyAssistantPlan.limit))
+      : null;
+    const frequency = computeHistoryAssistantFrequencies(filteredHistoryResults);
+    if (!frequency.items.length) {
+      const fallback = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matching history found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(fallback, { tone: "muted" });
+      historyAssistantPlan = null;
+      return;
+    }
+
+    const displayItems = requestedLimit !== null
+      ? frequency.items.slice(0, requestedLimit)
+      : frequency.items.slice();
+    if (!displayItems.length) {
+      const fallback = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matching history found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(fallback, { tone: "muted" });
+      historyAssistantPlan = null;
+      return;
+    }
+
+    const totalCount = filteredHistoryResults.length;
+    const rangeSuffix = shouldAppendRange && timeRangeLabel ? ` (${timeRangeLabel})` : "";
+    const headerLabel = requestedLimit !== null
+      ? `Top ${formatCountLabel(displayItems.length, "site")} by visits${rangeSuffix}:`
+      : `Most visited sites${rangeSuffix}:`;
+    const listText = displayItems
+      .map((item, index) => `${index + 1}. ${item.label} — ${formatCountLabel(item.count, "visit")}`)
+      .join("\n");
+
+    const messageParts = [];
+    if (historyAssistantPlan.message) {
+      messageParts.push(historyAssistantPlan.message);
+    } else {
+      messageParts.push(`Found ${formatCountLabel(totalCount, "match")} in your history.`);
+    }
+    messageParts.push(`${headerLabel}\n${listText}`);
+
+    if (requestedLimit !== null && frequency.uniqueCount > displayItems.length) {
+      messageParts.push(
+        `Showing top ${formatCountLabel(displayItems.length, "site")} of ${formatCountLabel(
+          frequency.uniqueCount,
+          "site",
+        )}.`,
+      );
+    }
+
+    if (frequency.totalVisits > 0) {
+      if (frequency.uniqueCount > 0) {
+        messageParts.push(
+          `Analyzed ${formatCountLabel(frequency.totalVisits, "visit")} across ${formatCountLabel(
+            frequency.uniqueCount,
+            "site",
+          )}.`,
+        );
+      } else {
+        messageParts.push(`Analyzed ${formatCountLabel(frequency.totalVisits, "visit")}.`);
+      }
+    }
+
+    let message = messageParts.join("\n\n");
+    if (shouldAppendRange && timeRangeLabel) {
+      const normalizedMessage = message.toLowerCase();
+      if (!normalizedMessage.includes(normalizedRangeLabel)) {
+        message = `${message}\n\nTime range: ${timeRangeLabel}`;
+      }
+    }
+
+    setHistoryAssistantMessage(message);
+
+    resultsState = filteredHistoryResults.slice();
+    lazyList.setItems(resultsState);
+    if (resultsState.length > 0) {
+      lazyList.ensureVisible(resultsState.length - 1);
+    }
+    pruneSummaryState();
+    applyCachedFavicons(resultsState);
+    activeIndex = resultsState.length > 0 ? 0 : -1;
+    pointerNavigationSuspended = true;
+    renderResults();
+
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (intent === "summarize") {
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
+    const summaryEntries = prepareHistorySummaryEntries(filteredHistoryResults, limit);
+    if (!summaryEntries.length) {
+      const fallback = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matching history found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(fallback, { tone: "muted" });
+      historyAssistantPlan = null;
+      return;
+    }
+
+    const totalCount = filteredHistoryResults.length;
+    const summaryRequestId = ++historyAssistantSummaryRequestId;
+    const planMessage = historyAssistantPlan.message || "";
+    const planQuery = typeof historyAssistantPlan.query === "string" ? historyAssistantPlan.query : "";
+    const planTopic = typeof historyAssistantPlan.topic === "string" ? historyAssistantPlan.topic : "";
+    const planSite = typeof historyAssistantPlan.site === "string" ? historyAssistantPlan.site : "";
+    const planTimeRange = historyAssistantPlan.timeRange ? { ...historyAssistantPlan.timeRange } : null;
+
+    const pendingMessage = planMessage ? `${planMessage} · Analyzing your history…` : "Analyzing your history…";
+    setHistoryAssistantLoading(true);
+    setHistoryAssistantMessage(pendingMessage, { tone: "muted" });
+
+    requestHistoryAssistantSummary({
+      entries: summaryEntries,
+      totalCount,
+      timeRange: planTimeRange,
+      timeRangeLabel,
+      query: planQuery,
+      topic: planTopic,
+      site: planSite,
+      planMessage,
+    })
+      .then((summaryText) => {
+        if (summaryRequestId !== historyAssistantSummaryRequestId) {
+          return;
+        }
+        const structuredSummary = ensureHistorySummaryStructure(summaryText, {
+          defaultRangeLabel: timeRangeLabel || "your recent activity",
+          buildFallback: () => buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount),
+        });
+        let message = structuredSummary;
+        if (planMessage) {
+          message = `${planMessage}\n\n${structuredSummary}`;
+        }
+        if (shouldAppendRange) {
+          const normalizedMessage = message.toLowerCase();
+          if (!normalizedMessage.includes(normalizedRangeLabel)) {
+            message = `${message}\n\nTime range: ${timeRangeLabel}`;
+          }
+        }
+        setHistoryAssistantMessage(message);
+      })
+      .catch((error) => {
+        if (summaryRequestId !== historyAssistantSummaryRequestId) {
+          return;
+        }
+        const fallback = buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount);
+        const errorLabel = error?.message || "History summary unavailable";
+        let message = errorLabel;
+        const fallbackUseful = fallback && fallback !== "No matching history found.";
+        if (fallbackUseful) {
+          message = `${errorLabel}.\n\nHere’s a quick snapshot instead:\n\n${fallback}`;
+        }
+        if (planMessage) {
+          message = `${planMessage}\n\n${message}`;
+        }
+        if (shouldAppendRange) {
+          const normalizedMessage = message.toLowerCase();
+          if (!normalizedMessage.includes(normalizedRangeLabel)) {
+            message = `${message}\n\nTime range: ${timeRangeLabel}`;
+          }
+        }
+        setHistoryAssistantMessage(message, fallbackUseful ? undefined : { tone: "error" });
+      })
+      .finally(() => {
+        if (summaryRequestId === historyAssistantSummaryRequestId) {
+          historyAssistantPlan = null;
+          setHistoryAssistantLoading(false);
+        }
+      });
+    return;
+  }
+
+  if (intent === "open") {
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
+    openHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
+    return;
+  }
+
+  if (intent === "delete") {
+    const limit = Number.isFinite(historyAssistantPlan.limit)
+      ? historyAssistantPlan.limit
+      : filteredHistoryResults.length;
+    deleteHistoryEntries(filteredHistoryResults, limit, historyAssistantPlan.requestId);
+    return;
+  }
+
+  historyAssistantPlan = null;
+}
+
+async function deleteHistoryEntries(results, limit, planId) {
+  const available = Array.isArray(results) ? results.length : 0;
+  let desired;
+  if (Number.isFinite(limit)) {
+    const normalized = Math.floor(limit);
+    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
+  } else {
+    desired = available;
+  }
+  const max = Math.max(0, desired);
+  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+  const urls = targets.map((entry) => (typeof entry?.url === "string" ? entry.url : "")).filter(Boolean);
+  if (!urls.length) {
+    setHistoryAssistantMessage("No matching history to delete.", { tone: "muted" });
+    historyAssistantPlan = null;
+    return;
+  }
+  setHistoryAssistantLoading(true);
+  try {
+    const response = await sendRuntimeMessage({ type: "SPOTLIGHT_HISTORY_DELETE", urls });
+    if (planId !== historyAssistantRequestId) {
+      return;
+    }
+    if (!response || !response.success) {
+      const errorMessage = typeof response?.error === "string" ? response.error : "Failed to delete history.";
+      setHistoryAssistantMessage(errorMessage, { tone: "error" });
+      historyAssistantPlan = null;
+      return;
+    }
+    const count = Number.isFinite(response.count) ? response.count : urls.length;
+    const countLabel = formatCountLabel(count, "entry");
+    setHistoryAssistantMessage(`Removed ${countLabel} from history.`, { tone: "success" });
+    historyAssistantPlan = null;
+    setTimeout(() => {
+      if (isOpen && inputEl) {
+        requestResults(inputEl.value);
+      }
+    }, 200);
+  } catch (error) {
+    if (planId !== historyAssistantRequestId) {
+      return;
+    }
+    const message = error?.message || "Failed to delete history.";
+    setHistoryAssistantMessage(message, { tone: "error" });
+    historyAssistantPlan = null;
+  } finally {
+    if (planId === historyAssistantRequestId) {
+      setHistoryAssistantLoading(false);
+    }
+  }
+}
+
+async function openHistoryEntries(results, limit, planId) {
+  const available = Array.isArray(results) ? results.length : 0;
+  let desired;
+  if (Number.isFinite(limit)) {
+    const normalized = Math.floor(limit);
+    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
+  } else {
+    desired = available;
+  }
+  const max = Math.max(0, desired);
+  const targets = Array.isArray(results) ? results.slice(0, max) : [];
+  if (!targets.length) {
+    setHistoryAssistantMessage("No matching history to open.", { tone: "muted" });
+    historyAssistantPlan = null;
+    return;
+  }
+  const outcomes = await Promise.all(
+    targets.map(
+      (entry) =>
+        new Promise((resolve) => {
+          if (!entry || typeof entry.id === "undefined") {
+            resolve(false);
+            return;
+          }
+          chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: entry.id }, () => {
+            if (chrome.runtime.lastError) {
+              console.warn("Spotlight: failed to open history result", chrome.runtime.lastError);
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          });
+        })
+    )
+  );
+  if (planId !== historyAssistantRequestId) {
+    return;
+  }
+  const opened = outcomes.filter(Boolean).length;
+  if (opened <= 0) {
+    setHistoryAssistantMessage("Unable to open the requested history entries.", { tone: "error" });
+  } else {
+    const countLabel = formatCountLabel(opened, "tab");
+    setHistoryAssistantMessage(`Opened ${countLabel} in the background.`, { tone: "success" });
+  }
+  historyAssistantPlan = null;
 }
 
 function resetSlashMenuState() {
@@ -985,6 +2438,7 @@ function applySlashSelection(option) {
 function resetSubfilterState() {
   subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
   selectedSubfilter = null;
+  pendingHistoryAssistantSubfilter = null;
   renderSubfilters();
 }
 
@@ -1030,6 +2484,19 @@ function updateSubfilterState(payload) {
     selectedSubfilter = { type, id: resolvedActiveId };
   } else {
     selectedSubfilter = null;
+  }
+  if (
+    pendingHistoryAssistantSubfilter &&
+    pendingHistoryAssistantSubfilter.type === type &&
+    typeof pendingHistoryAssistantSubfilter.id === "string"
+  ) {
+    const desiredId = pendingHistoryAssistantSubfilter.id;
+    const match = sanitizedOptions.find((option) => option && option.id === desiredId);
+    if (match) {
+      subfilterState = { ...subfilterState, activeId: desiredId };
+      selectedSubfilter = desiredId === "all" ? null : { type, id: desiredId };
+    }
+    pendingHistoryAssistantSubfilter = null;
   }
   renderSubfilters();
 }
@@ -1307,6 +2774,7 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  updateHistoryAssistantVisibility();
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -1524,9 +2992,11 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantVisibility();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
+      applyHistoryAssistantPlanAfterResults();
 
       if (response.webSearch && typeof response.webSearch.engineId === "string") {
         const api = getWebSearchApi();

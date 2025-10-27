@@ -63,6 +63,86 @@
   background: rgba(32, 32, 40, 0.9);
 }
 
+.spotlight-history-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 15, 22, 0.55);
+}
+
+.spotlight-history-assistant[hidden] {
+  display: none !important;
+}
+
+.spotlight-history-assistant.loading .spotlight-history-assistant-input,
+.spotlight-history-assistant.loading .spotlight-history-assistant-submit {
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.spotlight-history-assistant-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.spotlight-history-assistant-input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 28, 0.9);
+  padding: 10px 12px;
+  transition: border 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+
+.spotlight-history-assistant-input:focus {
+  border-color: rgba(112, 132, 255, 0.85);
+  box-shadow: 0 0 0 3px rgba(112, 132, 255, 0.2);
+}
+
+.spotlight-history-assistant-submit {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  background: rgba(108, 128, 255, 0.88);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.spotlight-history-assistant-submit:hover:not(:disabled) {
+  background: rgba(128, 148, 255, 0.95);
+}
+
+.spotlight-history-assistant-submit:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.spotlight-history-assistant-message {
+  font-size: 0.85rem;
+  min-height: 1.1em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.spotlight-history-assistant-message.error {
+  color: #ff9191;
+}
+
+.spotlight-history-assistant-message.success {
+  color: #8df7c2;
+}
+
+.spotlight-history-assistant-message.muted {
+  color: rgba(255, 255, 255, 0.55);
+}
+
 .spotlight-input-container {
   position: relative;
   display: flex;
