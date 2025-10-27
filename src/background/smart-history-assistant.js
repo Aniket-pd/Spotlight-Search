@@ -7,7 +7,6 @@ import {
 } from "../shared/time-range-definitions.js";
 
 const ALLOWED_INTENTS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
-const ALLOWED_TONES = new Set(["formal", "casual", "action"]);
 const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -38,14 +37,6 @@ const RESPONSE_SCHEMA = {
       type: "integer",
       minimum: 1,
     },
-    comparisonRange: {
-      type: "string",
-      maxLength: 160,
-    },
-    tone: {
-      type: "string",
-      enum: Array.from(ALLOWED_TONES),
-    },
   },
 };
 
@@ -54,13 +45,11 @@ You convert natural language requests about the user's browsing history into str
 Return compact JSON only, matching the provided schema. \
 Use these intents: show (just list results), open (user wants to immediately reopen matches), delete (user wants to remove matches), summarize (user wants a quick recap), frequent (user wants the most visited tabs/sites with visit counts), info (user is asking about you). \
 timeRange can be any concise natural-language window like 'today', 'yesterday', 'last 3 days', 'past 2 hours', or 'all'. Prefer phrasing that the UI can echo back and keep it short, and use 'all' when no timeframe is mentioned. \
-If the user explicitly wants two windows compared (e.g., "this week vs last week"), keep intent as summarize and populate comparisonRange with the second timeframe while keeping timeRange focused on the primary window. \
 searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
 If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
 Only include limit when the user specifies a quantity, using positive integers without inventing defaults. \
 When using the frequent intent, mention that you'll rank the user's matches by visit count and, if they asked for a quantity, clarify how many entries you'll surface. \
 Always include a friendly message explaining what you interpreted. \
-If the request hints at a tone (academic, casual, action-oriented), set tone to "formal", "casual", or "action" respectively; otherwise omit tone. \
 If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
 Never include the history: prefix in searchQuery.`;
 
@@ -77,49 +66,6 @@ function sanitizeIntent(value) {
   }
   const normalized = value.toLowerCase();
   return ALLOWED_INTENTS.has(normalized) ? normalized : "show";
-}
-
-function sanitizeTone(value) {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (ALLOWED_TONES.has(normalized)) {
-    return normalized;
-  }
-  return null;
-}
-
-const TONE_KEYWORD_WEIGHTS = [
-  { tone: "action", keywords: ["productivity", "progress", "plan", "organize", "optimize", "deliverable", "ship", "output", "results", "accomplish", "task", "workflow", "focus", "review", "status"] },
-  { tone: "formal", keywords: ["study", "research", "paper", "assignment", "university", "academic", "analysis", "notes", "documentation", "docs", "lecture", "course", "learn", "report"] },
-  { tone: "casual", keywords: ["watch", "youtube", "video", "movie", "music", "entertainment", "reddit", "gaming", "fun", "leisure", "blog", "shopping", "stream", "series"] },
-];
-
-function inferToneFromText(text, parsed) {
-  const haystacks = [];
-  if (typeof text === "string" && text.trim()) {
-    haystacks.push(text.toLowerCase());
-  }
-  if (typeof parsed?.message === "string" && parsed.message.trim()) {
-    haystacks.push(parsed.message.toLowerCase());
-  }
-  if (typeof parsed?.topic === "string" && parsed.topic.trim()) {
-    haystacks.push(parsed.topic.toLowerCase());
-  }
-  if (typeof parsed?.searchQuery === "string" && parsed.searchQuery.trim()) {
-    haystacks.push(parsed.searchQuery.toLowerCase());
-  }
-  if (!haystacks.length) {
-    return null;
-  }
-  const combined = haystacks.join(" ");
-  for (const descriptor of TONE_KEYWORD_WEIGHTS) {
-    if (descriptor.keywords.some((keyword) => combined.includes(keyword))) {
-      return descriptor.tone;
-    }
-  }
-  return null;
 }
 
 const UNIT_IN_MS = new Map(TIME_UNIT_DEFINITIONS.map((definition) => [definition.id, definition.ms]));
@@ -499,7 +445,7 @@ function buildSearchQuery(tokens) {
   return `history: ${tokens.join(" ")}`.trim();
 }
 
-function sanitizeInterpretation(parsed, now = Date.now(), text = "") {
+function sanitizeInterpretation(parsed, now = Date.now()) {
   const intent = sanitizeIntent(parsed?.intent);
   const timeRange = parseTimeRange(parsed?.timeRange, now);
   const message = sanitizeString(parsed?.message);
@@ -507,10 +453,6 @@ function sanitizeInterpretation(parsed, now = Date.now(), text = "") {
   const topic = sanitizeString(parsed?.topic);
   const site = sanitizeDomain(parsed?.site);
   const limit = intent === "info" ? null : normalizeLimit(parsed?.limit);
-  const comparisonRange = parseTimeRange(parsed?.comparisonRange, now);
-  const reportedTone = sanitizeTone(parsed?.tone);
-  const inferredTone = inferToneFromText(text, parsed);
-  const tone = reportedTone || inferredTone;
   return {
     intent,
     timeRange,
@@ -519,8 +461,6 @@ function sanitizeInterpretation(parsed, now = Date.now(), text = "") {
     topic,
     site,
     limit,
-    comparisonRange,
-    tone,
   };
 }
 
@@ -583,11 +523,10 @@ export function createSmartHistoryAssistant() {
       throw new Error("Assistant returned invalid JSON");
     }
     const now = Date.now();
-    const sanitized = sanitizeInterpretation(parsed, now, text);
+    const sanitized = sanitizeInterpretation(parsed, now);
     const tokens = buildSearchTokens(sanitized);
     const query = buildSearchQuery(tokens);
     const rangePayload = buildTimeRangePayload(sanitized.timeRange);
-    const comparisonPayload = buildTimeRangePayload(sanitized.comparisonRange);
     const presetId = typeof rangePayload?.presetId === "string" ? rangePayload.presetId : null;
     const subfilterId = presetId && presetId !== "all" ? presetId : null;
     const payload = {
@@ -609,12 +548,6 @@ export function createSmartHistoryAssistant() {
     }
     if (rangePayload) {
       payload.timeRange = rangePayload;
-    }
-    if (comparisonPayload) {
-      payload.comparisonRange = comparisonPayload;
-    }
-    if (sanitized.tone) {
-      payload.tone = sanitized.tone;
     }
     return payload;
   }

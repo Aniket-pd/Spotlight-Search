@@ -755,20 +755,6 @@ function sanitizeHistoryAssistantTimeRange(range) {
   };
 }
 
-function sanitizeHistoryAssistantTone(tone) {
-  if (typeof tone !== "string") {
-    return null;
-  }
-  const normalized = tone.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized === "formal" || normalized === "casual" || normalized === "action") {
-    return normalized;
-  }
-  return null;
-}
-
 const HISTORY_ASSISTANT_SECOND_MS = 1000;
 const HISTORY_ASSISTANT_MINUTE_MS = 60 * HISTORY_ASSISTANT_SECOND_MS;
 const HISTORY_ASSISTANT_HOUR_MS = 60 * HISTORY_ASSISTANT_MINUTE_MS;
@@ -999,8 +985,6 @@ function applyHistoryAssistantPlan(plan, requestId) {
   const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
   const limit = Number.isFinite(plan.limit) ? plan.limit : null;
   const timeRange = sanitizeHistoryAssistantTimeRange(plan.timeRange);
-  const comparisonRange = sanitizeHistoryAssistantTimeRange(plan.comparisonRange);
-  const tone = sanitizeHistoryAssistantTone(plan.tone);
 
   historyAssistantPlan = {
     intent,
@@ -1011,8 +995,6 @@ function applyHistoryAssistantPlan(plan, requestId) {
     subfilterId,
     limit,
     timeRange,
-    comparisonRange,
-    tone,
     requestId,
   };
 
@@ -1082,9 +1064,6 @@ const HISTORY_SUMMARY_STOP_WORDS = new Set([
   "your",
 ]);
 
-const HISTORY_SUMMARY_CONTEXT_LIMIT = 400;
-const HISTORY_SUMMARY_BUCKET_COUNT = 12;
-
 function sanitizeHistorySummaryResult(result) {
   if (!result || typeof result !== "object") {
     return null;
@@ -1123,11 +1102,14 @@ function sanitizeHistorySummaryResult(result) {
   };
 }
 
-function collectHistorySummarySanitizedResults(results, limit = HISTORY_SUMMARY_CONTEXT_LIMIT) {
+function prepareHistorySummaryEntries(results, limit) {
   if (!Array.isArray(results) || !results.length) {
     return [];
   }
-  const max = Number.isFinite(limit) && limit > 0 ? Math.min(limit, results.length) : results.length;
+  const baseLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.floor(limit))
+    : results.length;
+  const max = Math.min(baseLimit, results.length);
   const sanitized = [];
   for (let index = 0; index < results.length && sanitized.length < max; index += 1) {
     const entry = sanitizeHistorySummaryResult(results[index]);
@@ -1136,111 +1118,6 @@ function collectHistorySummarySanitizedResults(results, limit = HISTORY_SUMMARY_
     }
   }
   return sanitized;
-}
-
-function buildHistorySummaryEntryKey(entry) {
-  if (!entry) {
-    return "";
-  }
-  const domain = typeof entry.domain === "string" ? entry.domain.toLowerCase() : "";
-  const title = typeof entry.title === "string" ? entry.title.toLowerCase() : "";
-  const url = typeof entry.url === "string" ? entry.url.toLowerCase() : "";
-  if (domain && title) {
-    return `${domain}::${title}`;
-  }
-  if (domain && url) {
-    return `${domain}::${url}`;
-  }
-  if (url) {
-    return url;
-  }
-  return title || domain;
-}
-
-function prepareHistorySummaryEntries(results, limit) {
-  if (!Array.isArray(results) || !results.length) {
-    return [];
-  }
-  const sanitized = collectHistorySummarySanitizedResults(results, HISTORY_SUMMARY_CONTEXT_LIMIT);
-  if (!sanitized.length) {
-    return [];
-  }
-  const desiredLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : sanitized.length;
-  const max = Math.min(desiredLimit, sanitized.length);
-  const now = Date.now();
-  const scored = sanitized.map((entry, index) => {
-    const timestamp = Number.isFinite(entry.lastVisitTime) && entry.lastVisitTime > 0 ? entry.lastVisitTime : null;
-    const ageMs = timestamp ? Math.max(0, now - timestamp) : null;
-    const ageDays = ageMs ? ageMs / (24 * 60 * 60 * 1000) : null;
-    const recencyScore = ageDays !== null ? 1 / (1 + ageDays) : 0.3;
-    const visitScore = entry.visitCount ? Math.log10(entry.visitCount + 1) : 0.2;
-    const diversityScore = entry.domain ? 0.35 : 0.15;
-    const positionScore = 1 / (1 + index / 50);
-    const score = recencyScore * 0.55 + visitScore * 0.3 + diversityScore + positionScore * 0.15;
-    return { entry, score, index };
-  });
-
-  const bestByDomain = new Map();
-  scored.forEach((item) => {
-    const domain = typeof item.entry.domain === "string" ? item.entry.domain : "";
-    const key = domain ? domain.toLowerCase() : null;
-    if (!key) {
-      return;
-    }
-    if (!bestByDomain.has(key) || bestByDomain.get(key).score < item.score) {
-      bestByDomain.set(key, item);
-    }
-  });
-
-  const usedKeys = new Set();
-  const selected = [];
-  const domainCounts = new Map();
-
-  const uniqueCandidates = Array.from(bestByDomain.values()).sort((a, b) => b.score - a.score);
-  for (const candidate of uniqueCandidates) {
-    if (selected.length >= max) {
-      break;
-    }
-    const key = buildHistorySummaryEntryKey(candidate.entry);
-    if (!key || usedKeys.has(key)) {
-      continue;
-    }
-    selected.push(candidate.entry);
-    usedKeys.add(key);
-    const domainKey = typeof candidate.entry.domain === "string" ? candidate.entry.domain.toLowerCase() : "";
-    if (domainKey) {
-      domainCounts.set(domainKey, (domainCounts.get(domainKey) || 0) + 1);
-    }
-  }
-
-  if (selected.length < max) {
-    const remaining = scored
-      .slice()
-      .sort((a, b) => b.score - a.score)
-      .filter((item) => !usedKeys.has(buildHistorySummaryEntryKey(item.entry)));
-    for (const item of remaining) {
-      if (selected.length >= max) {
-        break;
-      }
-      const key = buildHistorySummaryEntryKey(item.entry);
-      if (!key || usedKeys.has(key)) {
-        continue;
-      }
-      const domainKey = typeof item.entry.domain === "string" ? item.entry.domain.toLowerCase() : "";
-      const domainSeen = domainKey ? domainCounts.get(domainKey) || 0 : 0;
-      const penalty = domainSeen * 0.18;
-      if (selected.length >= Math.ceil(max * 0.7) && item.score - penalty < 0.25) {
-        continue;
-      }
-      selected.push(item.entry);
-      usedKeys.add(key);
-      if (domainKey) {
-        domainCounts.set(domainKey, domainSeen + 1);
-      }
-    }
-  }
-
-  return selected.slice(0, max);
 }
 
 function extractHistorySummaryKeywords(text) {
@@ -1255,20 +1132,14 @@ function extractHistorySummaryKeywords(text) {
 }
 
 function computeHistorySummaryAggregates(entries) {
-  const domainWeights = new Map();
   const domainCounts = new Map();
-  const keywordWeights = new Map();
+  const keywordCounts = new Map();
   const dayCounts = new Map();
-  const timeBuckets = new Array(HISTORY_SUMMARY_BUCKET_COUNT).fill(0);
   let newestTime = 0;
   let oldestTime = Number.POSITIVE_INFINITY;
-  let totalWeight = 0;
 
   entries.forEach((entry) => {
-    const weight = Number.isFinite(entry.visitCount) && entry.visitCount > 0 ? entry.visitCount : 1;
-    totalWeight += weight;
     if (entry.domain) {
-      domainWeights.set(entry.domain, (domainWeights.get(entry.domain) || 0) + weight);
       domainCounts.set(entry.domain, (domainCounts.get(entry.domain) || 0) + 1);
     }
     const tokens = new Set([
@@ -1276,7 +1147,7 @@ function computeHistorySummaryAggregates(entries) {
       ...extractHistorySummaryKeywords(entry.domain.replace(/\./g, " ")),
     ]);
     tokens.forEach((token) => {
-      keywordWeights.set(token, (keywordWeights.get(token) || 0) + weight);
+      keywordCounts.set(token, (keywordCounts.get(token) || 0) + 1);
     });
     if (Number.isFinite(entry.lastVisitTime) && entry.lastVisitTime > 0) {
       newestTime = Math.max(newestTime, entry.lastVisitTime);
@@ -1285,137 +1156,22 @@ function computeHistorySummaryAggregates(entries) {
         month: "short",
         day: "numeric",
       });
-      dayCounts.set(dayLabel, (dayCounts.get(dayLabel) || 0) + weight);
-      const hour = new Date(entry.lastVisitTime).getHours();
-      if (Number.isFinite(hour)) {
-        const bucketIndex = Math.max(0, Math.min(HISTORY_SUMMARY_BUCKET_COUNT - 1, Math.floor(hour / 2)));
-        timeBuckets[bucketIndex] += weight;
-      }
+      dayCounts.set(dayLabel, (dayCounts.get(dayLabel) || 0) + 1);
     }
   });
 
-  const sortedDomains = Array.from(domainWeights.entries()).sort((a, b) => b[1] - a[1]);
-  const sortedKeywords = Array.from(keywordWeights.entries()).sort((a, b) => b[1] - a[1]);
+  const sortedDomains = Array.from(domainCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const sortedKeywords = Array.from(keywordCounts.entries()).sort((a, b) => b[1] - a[1]);
   const sortedDays = Array.from(dayCounts.entries()).sort((a, b) => b[1] - a[1]);
-
-  let peakBucketIndex = -1;
-  let peakBucketWeight = 0;
-  timeBuckets.forEach((value, index) => {
-    if (value > peakBucketWeight) {
-      peakBucketWeight = value;
-      peakBucketIndex = index;
-    }
-  });
 
   return {
     domains: sortedDomains,
-    domainCounts,
     keywords: sortedKeywords,
     days: sortedDays,
     newestTime: Number.isFinite(newestTime) && newestTime > 0 ? newestTime : null,
     oldestTime: Number.isFinite(oldestTime) && oldestTime > 0 ? oldestTime : null,
-    siteCount: domainCounts.size ? domainCounts.size : new Set(entries.map((entry) => entry.domain || entry.url)).size,
-    totalWeight,
-    timeBuckets,
-    peakBucketIndex,
-    peakBucketWeight,
+    siteCount: sortedDomains.length ? sortedDomains.length : new Set(entries.map((entry) => entry.domain || entry.url)).size,
   };
-}
-
-function formatHistorySummaryTimeBucket(bucketIndex) {
-  if (!Number.isFinite(bucketIndex) || bucketIndex < 0) {
-    return "";
-  }
-  const normalized = Math.max(0, Math.min(HISTORY_SUMMARY_BUCKET_COUNT - 1, Math.floor(bucketIndex)));
-  const startHour = (normalized * 2) % 24;
-  const endHour = (startHour + 2) % 24;
-  const formatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-  const baseDate = new Date();
-  baseDate.setHours(startHour, 0, 0, 0);
-  const startLabel = formatter.format(baseDate);
-  baseDate.setHours(endHour, 0, 0, 0);
-  const endLabel = formatter.format(baseDate);
-  return `${startLabel}–${endLabel}`;
-}
-
-function computeHistorySummaryBulletRange(primaryCount, comparisonCount = 0) {
-  const total = Math.max(primaryCount || 0, comparisonCount || 0);
-  if (total <= 1) {
-    return { min: 1, max: 1 };
-  }
-  if (total <= 3) {
-    return { min: 1, max: 2 };
-  }
-  if (total <= 5) {
-    return { min: 2, max: 3 };
-  }
-  if (total <= 12) {
-    return { min: 3, max: comparisonCount > 0 ? 5 : 4 };
-  }
-  if (total <= 25) {
-    return { min: 4, max: comparisonCount > 0 ? 6 : 5 };
-  }
-  if (total <= 35) {
-    return { min: 5, max: comparisonCount > 0 ? 7 : 6 };
-  }
-  return { min: 5, max: comparisonCount > 0 ? 8 : 7 };
-}
-
-function buildHistorySummaryContext(entries) {
-  if (!Array.isArray(entries) || !entries.length) {
-    return {
-      entryCount: 0,
-      totalVisits: 0,
-      uniqueDomains: 0,
-      domainShares: [],
-      topKeywords: [],
-      timeOfDayPeak: null,
-    };
-  }
-  const aggregates = computeHistorySummaryAggregates(entries);
-  const entryCount = entries.length;
-  const totalVisits = aggregates.totalWeight > 0 ? aggregates.totalWeight : entryCount;
-  const uniqueDomains = aggregates.domainCounts.size
-    ? aggregates.domainCounts.size
-    : new Set(entries.map((entry) => entry.domain || entry.url)).size;
-  const domainShares = aggregates.domains.slice(0, 4).map(([domain, weight]) => ({
-    domain,
-    share: totalVisits > 0 ? Math.max(0, Math.min(1, weight / totalVisits)) : 0,
-    count: aggregates.domainCounts.get(domain) || null,
-  }));
-  const topKeywords = aggregates.keywords.slice(0, 6).map(([keyword, weight]) => ({
-    keyword,
-    share: totalVisits > 0 ? Math.max(0, Math.min(1, weight / totalVisits)) : 0,
-  }));
-  const timeOfDayPeak = Number.isFinite(aggregates.peakBucketIndex) && aggregates.peakBucketIndex >= 0
-    ? {
-        label: formatHistorySummaryTimeBucket(aggregates.peakBucketIndex),
-        share:
-          totalVisits > 0
-            ? Math.max(0, Math.min(1, aggregates.peakBucketWeight / totalVisits))
-            : null,
-      }
-    : null;
-
-  return {
-    entryCount,
-    totalVisits,
-    uniqueDomains,
-    domainShares,
-    topKeywords,
-    timeOfDayPeak,
-  };
-}
-
-function formatHistorySummaryPercent(value) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  const percent = Math.round(value * 1000) / 10;
-  if (!Number.isFinite(percent) || percent <= 0) {
-    return "";
-  }
-  return `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}%`;
 }
 
 function resolveHistoryAssistantFrequencyLabel(entry) {
@@ -1517,17 +1273,14 @@ function formatHistorySummaryTimestamp(timestamp) {
   });
 }
 
-function buildHistorySummaryFallback(entries, timeRangeLabel, totalCount, options = {}) {
+function buildHistorySummaryFallback(entries, timeRangeLabel, totalCount) {
   if (!Array.isArray(entries) || !entries.length) {
     return "No matching history found.";
   }
   const aggregates = computeHistorySummaryAggregates(entries);
+  const safeRange = timeRangeLabel || "your recent activity";
   const total = Number.isFinite(totalCount) ? totalCount : entries.length;
-  const totalVisits = aggregates.totalWeight > 0 ? aggregates.totalWeight : entries.length;
-  const domainHighlights = aggregates.domains.slice(0, 3).map(([domain, weight]) => {
-    const percent = formatHistorySummaryPercent(totalVisits > 0 ? weight / totalVisits : 0);
-    return percent ? `${domain} (${percent})` : domain;
-  });
+  const domainHighlights = aggregates.domains.slice(0, 3).map(([domain, count]) => `${domain} (${count})`);
   const domainNames = aggregates.domains.slice(0, 3).map(([domain]) => domain);
   const keywordHighlights = aggregates.keywords.slice(0, 4).map(([word]) => word);
   const dayHighlights = aggregates.days.slice(0, 2).map(([day]) => day);
@@ -1551,15 +1304,11 @@ function buildHistorySummaryFallback(entries, timeRangeLabel, totalCount, option
     bullets.push(`• Latest visit around ${formatHistorySummaryTimestamp(aggregates.newestTime)}.`);
   }
 
-  const desiredRange = options.bulletRange || computeHistorySummaryBulletRange(entries.length);
-  const minBullets = Math.max(1, desiredRange.min || 3);
-  const maxBullets = Math.max(minBullets, desiredRange.max || 5);
-
-  while (bullets.length < minBullets) {
+  while (bullets.length < 3) {
     bullets.push(`• Explored ${formatCountLabel(entries.length, "result")} from your history.`);
   }
 
-  const trimmedBullets = maxBullets > 0 ? bullets.slice(0, maxBullets) : bullets;
+  const trimmedBullets = bullets.slice(0, 5);
 
   const overallParts = [];
   if (keywordHighlights.length) {
@@ -1763,10 +1512,7 @@ function ensureHistorySummaryStructure(summaryText, options = {}) {
 
   const parsed = parseHistorySummaryParts(trimmed);
   const intro = formatHistorySummaryIntro(parsed.intro, defaultRange, fallbackParts.intro);
-  const desiredRange = options.bulletRange || {};
-  const minBullets = Math.max(1, Number.isFinite(desiredRange.min) ? Math.floor(desiredRange.min) : 3);
-  const maxBullets = Math.max(minBullets, Number.isFinite(desiredRange.max) ? Math.floor(desiredRange.max) : 5);
-  const bulletLines = normalizeHistorySummaryBullets(parsed.bullets, fallbackParts.bullets, minBullets, maxBullets);
+  const bulletLines = normalizeHistorySummaryBullets(parsed.bullets, fallbackParts.bullets, 3, 5);
   const fallbackOverall = fallbackParts.overall ? formatHistorySummaryOverall(fallbackParts.overall, "") : "";
   const overall = formatHistorySummaryOverall(parsed.overall, fallbackOverall);
   const finalOverall = overall || fallbackOverall || "👉 Overall: Here's what stood out.";
@@ -1804,15 +1550,6 @@ async function requestHistoryAssistantSummary(options = {}) {
   }
   if (typeof options.planMessage === "string" && options.planMessage) {
     message.planMessage = options.planMessage;
-  }
-  if (typeof options.tone === "string" && options.tone) {
-    message.tone = options.tone;
-  }
-  if (options.context && typeof options.context === "object") {
-    message.context = options.context;
-  }
-  if (options.comparison && typeof options.comparison === "object") {
-    message.comparison = options.comparison;
   }
   const response = await sendRuntimeMessage(message);
   if (!response || !response.success) {
@@ -2028,47 +1765,7 @@ function applyHistoryAssistantPlanAfterResults() {
     const planSite = typeof historyAssistantPlan.site === "string" ? historyAssistantPlan.site : "";
     const planTimeRange = historyAssistantPlan.timeRange ? { ...historyAssistantPlan.timeRange } : null;
 
-    const planTone = historyAssistantPlan.tone || null;
-    const planComparisonRange = historyAssistantPlan.comparisonRange
-      ? { ...historyAssistantPlan.comparisonRange }
-      : null;
-
-    const contextEntries = collectHistorySummarySanitizedResults(
-      filteredHistoryResults,
-      HISTORY_SUMMARY_CONTEXT_LIMIT,
-    );
-    const summaryContext = buildHistorySummaryContext(contextEntries);
-
-    let comparisonSummaryEntries = [];
-    let comparisonTotalCount = 0;
-    let comparisonContext = null;
-    let comparisonTimeRange = null;
-    let comparisonTimeRangeLabel = "";
-    if (planComparisonRange) {
-      const comparisonByTime = filterHistoryResultsByTimeRange(rawHistoryResults, planComparisonRange);
-      const comparisonFiltered = filterHistoryResultsBySite(comparisonByTime, historyAssistantPlan.site);
-      comparisonTotalCount = comparisonFiltered.length;
-      if (comparisonFiltered.length) {
-        comparisonSummaryEntries = prepareHistorySummaryEntries(comparisonFiltered, limit);
-      }
-      const comparisonContextEntries = collectHistorySummarySanitizedResults(
-        comparisonFiltered,
-        HISTORY_SUMMARY_CONTEXT_LIMIT,
-      );
-      comparisonContext = buildHistorySummaryContext(comparisonContextEntries);
-      comparisonTimeRange = { ...planComparisonRange };
-      comparisonTimeRangeLabel =
-        (typeof planComparisonRange.label === "string" && planComparisonRange.label)
-          ? planComparisonRange.label
-          : planComparisonRange.raw || "";
-    }
-
-    const bulletRange = computeHistorySummaryBulletRange(
-      summaryEntries.length,
-      comparisonSummaryEntries.length,
-    );
-
-    const pendingMessage = planMessage ? `${planMessage} · Summarizing your history…` : "Summarizing your history…";
+    const pendingMessage = planMessage ? `${planMessage} · Analyzing your history…` : "Analyzing your history…";
     setHistoryAssistantLoading(true);
     setHistoryAssistantMessage(pendingMessage, { tone: "muted" });
 
@@ -2081,18 +1778,6 @@ function applyHistoryAssistantPlanAfterResults() {
       topic: planTopic,
       site: planSite,
       planMessage,
-      tone: planTone,
-      context: summaryContext,
-      comparison:
-        comparisonTotalCount > 0
-          ? {
-              entries: comparisonSummaryEntries,
-              totalCount: comparisonTotalCount,
-              timeRange: comparisonTimeRange,
-              timeRangeLabel: comparisonTimeRangeLabel,
-              context: comparisonContext,
-            }
-          : null,
     })
       .then((summaryText) => {
         if (summaryRequestId !== historyAssistantSummaryRequestId) {
@@ -2100,9 +1785,7 @@ function applyHistoryAssistantPlanAfterResults() {
         }
         const structuredSummary = ensureHistorySummaryStructure(summaryText, {
           defaultRangeLabel: timeRangeLabel || "your recent activity",
-          buildFallback: () =>
-            buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount, { bulletRange }),
-          bulletRange,
+          buildFallback: () => buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount),
         });
         let message = structuredSummary;
         if (planMessage) {
@@ -2114,20 +1797,13 @@ function applyHistoryAssistantPlanAfterResults() {
             message = `${message}\n\nTime range: ${timeRangeLabel}`;
           }
         }
-        if (comparisonTimeRangeLabel) {
-          const normalizedMessage = message.toLowerCase();
-          const normalizedComparison = comparisonTimeRangeLabel.toLowerCase();
-          if (!normalizedMessage.includes(normalizedComparison)) {
-            message = `${message}\n\nComparison range: ${comparisonTimeRangeLabel}`;
-          }
-        }
         setHistoryAssistantMessage(message);
       })
       .catch((error) => {
         if (summaryRequestId !== historyAssistantSummaryRequestId) {
           return;
         }
-        const fallback = buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount, { bulletRange });
+        const fallback = buildHistorySummaryFallback(summaryEntries, timeRangeLabel, totalCount);
         const errorLabel = error?.message || "History summary unavailable";
         let message = errorLabel;
         const fallbackUseful = fallback && fallback !== "No matching history found.";
@@ -2141,13 +1817,6 @@ function applyHistoryAssistantPlanAfterResults() {
           const normalizedMessage = message.toLowerCase();
           if (!normalizedMessage.includes(normalizedRangeLabel)) {
             message = `${message}\n\nTime range: ${timeRangeLabel}`;
-          }
-        }
-        if (comparisonTimeRangeLabel) {
-          const normalizedMessage = message.toLowerCase();
-          const normalizedComparison = comparisonTimeRangeLabel.toLowerCase();
-          if (!normalizedMessage.includes(normalizedComparison)) {
-            message = `${message}\n\nComparison range: ${comparisonTimeRangeLabel}`;
           }
         }
         setHistoryAssistantMessage(message, fallbackUseful ? undefined : { tone: "error" });
