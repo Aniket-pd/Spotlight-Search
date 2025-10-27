@@ -1096,6 +1096,93 @@ function computeHistorySummaryAggregates(entries) {
   };
 }
 
+function resolveHistoryAssistantFrequencyLabel(entry) {
+  if (!entry) {
+    return { key: null, label: "" };
+  }
+  if (entry.domain) {
+    const domain = entry.domain.replace(/^www\./i, "");
+    return { key: domain.toLowerCase(), label: domain };
+  }
+  const rawUrl = typeof entry.url === "string" ? entry.url.trim() : "";
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl.includes("://") ? rawUrl : `https://${rawUrl}`);
+      const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+      if (host) {
+        return { key: host, label: host };
+      }
+    } catch (error) {
+      const sanitized = rawUrl.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/^www\./i, "");
+      if (sanitized) {
+        return { key: sanitized.toLowerCase(), label: sanitized };
+      }
+    }
+    return { key: rawUrl.toLowerCase(), label: rawUrl };
+  }
+  const title = typeof entry.title === "string" ? entry.title.trim() : "";
+  if (title) {
+    return { key: title.toLowerCase(), label: title };
+  }
+  return { key: null, label: "" };
+}
+
+function computeHistoryAssistantFrequencies(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return { items: [], totalVisits: 0, uniqueCount: 0 };
+  }
+  const buckets = new Map();
+  let totalVisits = 0;
+  results.forEach((result) => {
+    const entry = sanitizeHistorySummaryResult(result);
+    if (!entry) {
+      return;
+    }
+    const { key, label } = resolveHistoryAssistantFrequencyLabel(entry);
+    if (!key || !label) {
+      return;
+    }
+    const visitWeight = Number.isFinite(entry.visitCount) && entry.visitCount > 0 ? entry.visitCount : 1;
+    totalVisits += visitWeight;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        label,
+        count: 0,
+        sampleTitle: entry.title || "",
+        sampleUrl: entry.url || "",
+      });
+    }
+    const bucket = buckets.get(key);
+    bucket.count += visitWeight;
+    if (!bucket.sampleTitle && entry.title) {
+      bucket.sampleTitle = entry.title;
+    }
+    if (!bucket.sampleUrl && entry.url) {
+      bucket.sampleUrl = entry.url;
+    }
+  });
+
+  const items = Array.from(buckets.values()).map((item) => ({
+    label: item.label,
+    count: item.count,
+    sampleTitle: item.sampleTitle,
+    sampleUrl: item.sampleUrl,
+  }));
+
+  items.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  return {
+    items,
+    totalVisits,
+    uniqueCount: items.length,
+  };
+}
+
 function formatHistorySummaryTimestamp(timestamp) {
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return "recently";
@@ -1275,6 +1362,96 @@ function applyHistoryAssistantPlanAfterResults() {
     }
 
     resultsState = displayResults.slice();
+    lazyList.setItems(resultsState);
+    if (resultsState.length > 0) {
+      lazyList.ensureVisible(resultsState.length - 1);
+    }
+    pruneSummaryState();
+    applyCachedFavicons(resultsState);
+    activeIndex = resultsState.length > 0 ? 0 : -1;
+    pointerNavigationSuspended = true;
+    renderResults();
+
+    historyAssistantPlan = null;
+    return;
+  }
+
+  if (intent === "frequent") {
+    const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
+      ? Math.max(1, Math.floor(historyAssistantPlan.limit))
+      : null;
+    const frequency = computeHistoryAssistantFrequencies(filteredHistoryResults);
+    if (!frequency.items.length) {
+      const fallback = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matching history found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(fallback, { tone: "muted" });
+      historyAssistantPlan = null;
+      return;
+    }
+
+    const displayItems = requestedLimit !== null
+      ? frequency.items.slice(0, requestedLimit)
+      : frequency.items.slice();
+    if (!displayItems.length) {
+      const fallback = historyAssistantPlan.message
+        ? `${historyAssistantPlan.message} · No matching history found.`
+        : "No matching history found.";
+      setHistoryAssistantMessage(fallback, { tone: "muted" });
+      historyAssistantPlan = null;
+      return;
+    }
+
+    const totalCount = filteredHistoryResults.length;
+    const rangeSuffix = shouldAppendRange && timeRangeLabel ? ` (${timeRangeLabel})` : "";
+    const headerLabel = requestedLimit !== null
+      ? `Top ${formatCountLabel(displayItems.length, "site")} by visits${rangeSuffix}:`
+      : `Most visited sites${rangeSuffix}:`;
+    const listText = displayItems
+      .map((item, index) => `${index + 1}. ${item.label} — ${formatCountLabel(item.count, "visit")}`)
+      .join("\n");
+
+    const messageParts = [];
+    if (historyAssistantPlan.message) {
+      messageParts.push(historyAssistantPlan.message);
+    } else {
+      messageParts.push(`Found ${formatCountLabel(totalCount, "match")} in your history.`);
+    }
+    messageParts.push(`${headerLabel}\n${listText}`);
+
+    if (requestedLimit !== null && frequency.uniqueCount > displayItems.length) {
+      messageParts.push(
+        `Showing top ${formatCountLabel(displayItems.length, "site")} of ${formatCountLabel(
+          frequency.uniqueCount,
+          "site",
+        )}.`,
+      );
+    }
+
+    if (frequency.totalVisits > 0) {
+      if (frequency.uniqueCount > 0) {
+        messageParts.push(
+          `Analyzed ${formatCountLabel(frequency.totalVisits, "visit")} across ${formatCountLabel(
+            frequency.uniqueCount,
+            "site",
+          )}.`,
+        );
+      } else {
+        messageParts.push(`Analyzed ${formatCountLabel(frequency.totalVisits, "visit")}.`);
+      }
+    }
+
+    let message = messageParts.join("\n\n");
+    if (shouldAppendRange && timeRangeLabel) {
+      const normalizedMessage = message.toLowerCase();
+      if (!normalizedMessage.includes(normalizedRangeLabel)) {
+        message = `${message}\n\nTime range: ${timeRangeLabel}`;
+      }
+    }
+
+    setHistoryAssistantMessage(message);
+
+    resultsState = filteredHistoryResults.slice();
     lazyList.setItems(resultsState);
     if (resultsState.length > 0) {
       lazyList.ensureVisible(resultsState.length - 1);
