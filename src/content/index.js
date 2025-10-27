@@ -957,7 +957,6 @@ function formatCountLabel(count, singular, plural = null) {
   return `${value} ${value === 1 ? singular : labelPlural}`;
 }
 
-const HISTORY_SUMMARY_MAX_ENTRIES = 40;
 const HISTORY_SUMMARY_STOP_WORDS = new Set([
   "a",
   "about",
@@ -1029,8 +1028,10 @@ function prepareHistorySummaryEntries(results, limit) {
   if (!Array.isArray(results) || !results.length) {
     return [];
   }
-  const baseLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : HISTORY_SUMMARY_MAX_ENTRIES;
-  const max = Math.min(baseLimit, HISTORY_SUMMARY_MAX_ENTRIES, results.length);
+  const baseLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.floor(limit))
+    : results.length;
+  const max = Math.min(baseLimit, results.length);
   const sanitized = [];
   for (let index = 0; index < results.length && sanitized.length < max; index += 1) {
     const entry = sanitizeHistorySummaryResult(results[index]);
@@ -1361,13 +1362,9 @@ async function deleteHistoryEntries(results, limit, planId) {
   let desired;
   if (Number.isFinite(limit)) {
     const normalized = Math.floor(limit);
-    if (!Number.isFinite(normalized) || normalized <= 0) {
-      desired = available > 0 ? 1 : 0;
-    } else {
-      desired = Math.min(normalized, 25, available);
-    }
+    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
   } else {
-    desired = Math.min(available, 25);
+    desired = available;
   }
   const max = Math.max(0, desired);
   const targets = Array.isArray(results) ? results.slice(0, max) : [];
@@ -1417,13 +1414,9 @@ async function openHistoryEntries(results, limit, planId) {
   let desired;
   if (Number.isFinite(limit)) {
     const normalized = Math.floor(limit);
-    if (!Number.isFinite(normalized) || normalized <= 0) {
-      desired = available > 0 ? 1 : 0;
-    } else {
-      desired = Math.min(normalized, 10, available);
-    }
+    desired = Number.isFinite(normalized) && normalized > 0 ? Math.min(normalized, available) : 0;
   } else {
-    desired = Math.min(available, 10);
+    desired = available;
   }
   const max = Math.max(0, desired);
   const targets = Array.isArray(results) ? results.slice(0, max) : [];

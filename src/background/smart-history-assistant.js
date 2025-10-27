@@ -30,7 +30,6 @@ const RESPONSE_SCHEMA = {
     limit: {
       type: "integer",
       minimum: 1,
-      maximum: 50,
     },
   },
 };
@@ -42,7 +41,7 @@ Use these intents: show (just list results), open (user wants to immediately reo
 timeRange can be any concise natural-language window like 'today', 'yesterday', 'last 3 days', 'past 2 hours', or 'all'. Prefer phrasing that the UI can echo back and keep it short, and use 'all' when no timeframe is mentioned. \
 searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
 If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
-Only include limit when the user specifies a quantity. When present, clamp the limit between 1 and 50 for show/summarize, 1 and 10 for open, and 1 and 25 for delete. \
+Only include limit when the user specifies a quantity, using positive integers without inventing defaults. \
 Always include a friendly message explaining what you interpreted. \
 If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
 Never include the history: prefix in searchQuery.`;
@@ -484,24 +483,15 @@ function sanitizeDomain(value) {
   }
 }
 
-function clampLimit(intent, value) {
-  const maxByIntentMap = {
-    show: 50,
-    summarize: 50,
-    open: 10,
-    delete: 25,
-    info: 0,
-  };
-  const maxByIntent = maxByIntentMap[intent] ?? 50;
+function normalizeLimit(value) {
   if (!Number.isFinite(value)) {
     return null;
   }
   const normalized = Math.floor(value);
-  if (!Number.isFinite(normalized)) {
+  if (!Number.isFinite(normalized) || normalized <= 0) {
     return null;
   }
-  const clamped = Math.max(1, Math.min(normalized, maxByIntent));
-  return clamped;
+  return normalized;
 }
 
 function buildSearchTokens({ searchQuery, site, topic }) {
@@ -552,7 +542,7 @@ function sanitizeInterpretation(parsed, now = Date.now()) {
   const searchQuery = sanitizeString(parsed?.searchQuery);
   const topic = sanitizeString(parsed?.topic);
   const site = sanitizeDomain(parsed?.site);
-  const limit = intent === "info" ? 0 : clampLimit(intent, parsed?.limit);
+  const limit = intent === "info" ? null : normalizeLimit(parsed?.limit);
   return {
     intent,
     timeRange,
@@ -637,10 +627,12 @@ export function createSmartHistoryAssistant() {
         (sanitized.intent === "info"
           ? "I'm Spotlight's on-device history assistant, ready to help you search."
           : "Ready to help with your history."),
-      limit: sanitized.limit,
       site: sanitized.site || "",
       topic: sanitized.topic || "",
     };
+    if (Number.isFinite(sanitized.limit) && sanitized.limit > 0) {
+      payload.limit = sanitized.limit;
+    }
     if (subfilterId) {
       payload.subfilterId = subfilterId;
     }
