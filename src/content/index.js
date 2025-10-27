@@ -87,7 +87,6 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
-const HISTORY_SUMMARY_RESPONSE_TIMEOUT_MS = 12000;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -600,43 +599,6 @@ function sendRuntimeMessage(payload) {
     } catch (err) {
       reject(err);
     }
-  });
-}
-
-function withTimeout(promise, timeoutMs, onTimeout) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return promise;
-  }
-  return new Promise((resolve, reject) => {
-    let timeoutId = null;
-    const cleanup = () => {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    };
-    timeoutId = setTimeout(() => {
-      cleanup();
-      if (typeof onTimeout === "function") {
-        try {
-          reject(onTimeout());
-        } catch (error) {
-          reject(error);
-        }
-        return;
-      }
-      reject(new Error(onTimeout || "Operation timed out"));
-    }, Math.max(0, timeoutMs));
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      },
-    );
   });
 }
 
@@ -1852,11 +1814,7 @@ async function requestHistoryAssistantSummary(options = {}) {
   if (options.comparison && typeof options.comparison === "object") {
     message.comparison = options.comparison;
   }
-  const response = await withTimeout(
-    sendRuntimeMessage(message),
-    HISTORY_SUMMARY_RESPONSE_TIMEOUT_MS,
-    () => new Error("History summary timed out"),
-  );
+  const response = await sendRuntimeMessage(message);
   if (!response || !response.success) {
     const errorMessage = response && typeof response.error === "string" ? response.error : "History summary unavailable";
     throw new Error(errorMessage);

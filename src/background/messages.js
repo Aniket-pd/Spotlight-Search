@@ -225,15 +225,8 @@ export function registerMessageHandlers({
       const tone = typeof message.tone === "string" ? message.tone : "";
       const context = message.context && typeof message.context === "object" ? message.context : null;
       const comparison = message.comparison && typeof message.comparison === "object" ? message.comparison : null;
-
-      const handleError = (error) => {
-        const errorMessage = error?.message || "Unable to summarize history";
-        sendResponse({ success: false, error: errorMessage });
-      };
-
-      let summaryPromise;
-      try {
-        summaryPromise = historySummaries.summarize({
+      historySummaries
+        .summarize({
           entries,
           timeRange,
           timeRangeLabel,
@@ -245,17 +238,14 @@ export function registerMessageHandlers({
           tone,
           context,
           comparison,
-        });
-      } catch (error) {
-        handleError(error);
-        return true;
-      }
-
-      Promise.resolve(summaryPromise)
+        })
         .then((summary) => {
           sendResponse({ success: true, summary });
         })
-        .catch(handleError);
+        .catch((error) => {
+          const errorMessage = error?.message || "Unable to summarize history";
+          sendResponse({ success: false, error: errorMessage });
+        });
       return true;
     }
 
