@@ -6,53 +6,6 @@ import {
   TIME_UNIT_DEFINITIONS,
 } from "../shared/time-range-definitions.js";
 
-const ALLOWED_INTENTS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
-const RESPONSE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["intent"],
-  properties: {
-    intent: {
-      type: "string",
-      enum: Array.from(ALLOWED_INTENTS),
-    },
-    searchQuery: {
-      type: "string",
-    },
-    timeRange: {
-      type: "string",
-      minLength: 0,
-      maxLength: 160,
-    },
-    site: {
-      type: "string",
-    },
-    topic: {
-      type: "string",
-    },
-    message: {
-      type: "string",
-    },
-    limit: {
-      type: "integer",
-      minimum: 1,
-    },
-  },
-};
-
-const SYSTEM_INSTRUCTIONS = `You are Spotlight's Smart History Assistant living inside a local Chrome extension. \
-You convert natural language requests about the user's browsing history into structured instructions. \
-Return compact JSON only, matching the provided schema. \
-Use these intents: show (just list results), open (user wants to immediately reopen matches), delete (user wants to remove matches), summarize (user wants a quick recap), frequent (user wants the most visited tabs/sites with visit counts), info (user is asking about you). \
-timeRange can be any concise natural-language window like 'today', 'yesterday', 'last 3 days', 'past 2 hours', or 'all'. Prefer phrasing that the UI can echo back and keep it short, and use 'all' when no timeframe is mentioned. \
-searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
-If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
-Only include limit when the user specifies a quantity, using positive integers without inventing defaults. \
-When using the frequent intent, mention that you'll rank the user's matches by visit count and, if they asked for a quantity, clarify how many entries you'll surface. \
-Always include a friendly message explaining what you interpreted. \
-If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
-Never include the history: prefix in searchQuery.`;
-
 function sanitizeString(value) {
   if (typeof value !== "string") {
     return "";
@@ -60,13 +13,33 @@ function sanitizeString(value) {
   return value.trim();
 }
 
-function sanitizeIntent(value) {
-  if (typeof value !== "string") {
-    return "show";
-  }
-  const normalized = value.toLowerCase();
-  return ALLOWED_INTENTS.has(normalized) ? normalized : "show";
-}
+const TIME_EXTRACTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["timeRange"],
+  properties: {
+    timeRange: {
+      type: "string",
+      minLength: 0,
+      maxLength: 160,
+    },
+  },
+};
+
+const TIME_EXTRACTION_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant living inside a local Chrome extension. \
+Your only job is to identify the time range mentioned in the user's request. \
+Return concise JSON that matches the provided schema. \
+Use the user's own words when possible. \
+When the request does not include a time range, respond with the string "all time".`;
+
+const HISTORY_ANALYSIS_SYSTEM_PROMPT = `You are Spotlight's Smart History Assistant. \
+You receive the user's request plus sanitized browsing history entries that fall inside the requested window. \
+Use only those entries to answer the request directly. \
+If nothing in the history helps, clearly say that no relevant activity was found. \
+Keep the response under 120 words and write in English.`;
+
+const MAX_HISTORY_RESULTS = 200;
+const MAX_PROMPT_ENTRIES = 60;
 
 const UNIT_IN_MS = new Map(TIME_UNIT_DEFINITIONS.map((definition) => [definition.id, definition.ms]));
 
@@ -380,92 +353,192 @@ function buildTimeRangePayload(range) {
   return payload;
 }
 
-function sanitizeDomain(value) {
-  const text = sanitizeString(value);
-  if (!text) {
+function resolveBoundsForRange(range, now = Date.now()) {
+  if (!range || typeof range !== "object") {
+    return { from: null, to: null };
+  }
+  const referenceNow = Number.isFinite(now) && now > 0 ? now : Date.now();
+  let from = Number.isFinite(range.from) && range.from >= 0 ? Math.floor(range.from) : null;
+  let to = Number.isFinite(range.to) && range.to >= 0 ? Math.floor(range.to) : null;
+  if (from !== null && to === null) {
+    to = referenceNow;
+  }
+  if (from !== null && to !== null && to < from) {
+    return { from: to, to: from };
+  }
+  return { from, to };
+}
+
+function sanitizeAssistantResponse(value) {
+  if (typeof value !== "string") {
     return "";
   }
-  try {
-    const url = new URL(text.includes("://") ? text : `https://${text}`);
-    return url.hostname.toLowerCase();
-  } catch (err) {
-    return text.replace(/^[^a-z0-9]+/i, "").replace(/[^a-z0-9.-]+/gi, "").toLowerCase();
-  }
+  return value.trim();
 }
 
-function normalizeLimit(value) {
-  if (!Number.isFinite(value)) {
+function sanitizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== "object") {
     return null;
   }
-  const normalized = Math.floor(value);
-  if (!Number.isFinite(normalized) || normalized <= 0) {
+  const rawTitle = typeof entry.title === "string" ? entry.title.trim() : "";
+  const title = rawTitle.slice(0, 160);
+  const rawUrl = typeof entry.url === "string" ? entry.url.trim() : "";
+  const url = rawUrl.slice(0, 200);
+  if (!title && !url) {
     return null;
   }
-  return normalized;
-}
-
-function buildSearchTokens({ searchQuery, site, topic }) {
-  const tokens = [];
-  const normalizedQuery = sanitizeString(searchQuery);
-  if (normalizedQuery) {
-    normalizedQuery
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter(Boolean)
-      .forEach((token) => tokens.push(token.toLowerCase()));
-  }
-  const normalizedTopic = sanitizeString(topic);
-  if (normalizedTopic) {
-    normalizedTopic
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter(Boolean)
-      .forEach((token) => tokens.push(token.toLowerCase()));
-  }
-  const normalizedSite = sanitizeDomain(site);
-  if (normalizedSite) {
-    tokens.push(normalizedSite);
-  }
-  const unique = [];
-  const seen = new Set();
-  for (const token of tokens) {
-    if (!token || seen.has(token)) {
-      continue;
+  const lastVisitTime = Number.isFinite(entry.lastVisitTime)
+    ? Math.floor(entry.lastVisitTime)
+    : Number.isFinite(entry.timeStamp)
+    ? Math.floor(entry.timeStamp)
+    : null;
+  const visitCount = Number.isFinite(entry.visitCount) && entry.visitCount > 0 ? Math.floor(entry.visitCount) : null;
+  let domain = "";
+  if (typeof entry.domain === "string" && entry.domain.trim()) {
+    domain = entry.domain.trim().toLowerCase();
+  } else if (url) {
+    try {
+      const parsed = new URL(url.includes("://") ? url : `https://${url}`);
+      domain = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    } catch (error) {
+      const sanitized = url.replace(/^https?:\/\//i, "");
+      domain = sanitized.split("/")[0].replace(/^www\./i, "").toLowerCase();
     }
-    seen.add(token);
-    unique.push(token);
   }
-  return unique;
-}
-
-function buildSearchQuery(tokens) {
-  if (!Array.isArray(tokens) || !tokens.length) {
-    return "history:";
-  }
-  return `history: ${tokens.join(" ")}`.trim();
-}
-
-function sanitizeInterpretation(parsed, now = Date.now()) {
-  const intent = sanitizeIntent(parsed?.intent);
-  const timeRange = parseTimeRange(parsed?.timeRange, now);
-  const message = sanitizeString(parsed?.message);
-  const searchQuery = sanitizeString(parsed?.searchQuery);
-  const topic = sanitizeString(parsed?.topic);
-  const site = sanitizeDomain(parsed?.site);
-  const limit = intent === "info" ? null : normalizeLimit(parsed?.limit);
   return {
-    intent,
-    timeRange,
-    message,
-    searchQuery,
-    topic,
-    site,
-    limit,
+    title,
+    url,
+    domain,
+    lastVisitTime,
+    visitCount,
   };
 }
 
-function buildPrompt(text) {
-  return `${SYSTEM_INSTRUCTIONS}\n\nUser request:\n"""${text}"""`;
+function sanitizeHistoryEntries(entries, bounds) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const from = Number.isFinite(bounds?.from) ? bounds.from : null;
+  const to = Number.isFinite(bounds?.to) ? bounds.to : null;
+  const sanitized = [];
+  for (const entry of entries) {
+    const clean = sanitizeHistoryEntry(entry);
+    if (!clean) {
+      continue;
+    }
+    const timestamp = Number.isFinite(clean.lastVisitTime) ? clean.lastVisitTime : null;
+    if (from !== null && (timestamp === null || timestamp < from)) {
+      continue;
+    }
+    if (to !== null && (timestamp === null || timestamp > to)) {
+      continue;
+    }
+    sanitized.push(clean);
+  }
+  sanitized.sort((a, b) => {
+    const aTime = Number.isFinite(a.lastVisitTime) ? a.lastVisitTime : 0;
+    const bTime = Number.isFinite(b.lastVisitTime) ? b.lastVisitTime : 0;
+    return bTime - aTime;
+  });
+  return sanitized;
+}
+
+function formatPromptDate(timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "unknown";
+  }
+  try {
+    return new Date(timestamp).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch (error) {
+    return "unknown";
+  }
+}
+
+function buildTimeExtractionPrompt(text) {
+  return `${TIME_EXTRACTION_SYSTEM_PROMPT}\n\nUser request:\n"""${text}"""`;
+}
+
+function buildAnalysisPrompt({ query, timeRangeLabel, entries }) {
+  const safeLabel = timeRangeLabel || "all time";
+  const lines = [HISTORY_ANALYSIS_SYSTEM_PROMPT, `User request:\n"""${query}"""`, `Time range: ${safeLabel}`];
+  if (!entries.length) {
+    lines.push("History entries: none found in this range.");
+    return lines.join("\n\n");
+  }
+  lines.push("History entries (most recent first):");
+  const limited = entries.slice(0, MAX_PROMPT_ENTRIES);
+  limited.forEach((entry, index) => {
+    const parts = [];
+    parts.push(`${index + 1}.`);
+    if (entry.domain) {
+      parts.push(entry.domain);
+    }
+    if (Number.isFinite(entry.visitCount) && entry.visitCount > 0) {
+      parts.push(`visits:${entry.visitCount}`);
+    }
+    if (Number.isFinite(entry.lastVisitTime)) {
+      parts.push(formatPromptDate(entry.lastVisitTime));
+    }
+    const headline = entry.title || entry.url;
+    parts.push(`— ${headline}`);
+    if (entry.url) {
+      parts.push(`(${entry.url})`);
+    }
+    lines.push(parts.join(" "));
+  });
+  if (entries.length > limited.length) {
+    lines.push(`…and ${entries.length - limited.length} more entries within the range.`);
+  }
+  return lines.join("\n");
+}
+
+async function extractTimeRange(session, text) {
+  const prompt = buildTimeExtractionPrompt(text);
+  const raw = await session.prompt(prompt, { responseConstraint: TIME_EXTRACTION_SCHEMA });
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error("Assistant returned an invalid time range");
+  }
+  const extracted = sanitizeString(parsed?.timeRange);
+  return extracted || "all time";
+}
+
+async function fetchHistoryEntries(bounds) {
+  const options = { text: "", maxResults: MAX_HISTORY_RESULTS };
+  if (Number.isFinite(bounds?.from)) {
+    options.startTime = bounds.from;
+  }
+  if (Number.isFinite(bounds?.to)) {
+    options.endTime = bounds.to;
+  }
+  let results = [];
+  try {
+    results = await chrome.history.search(options);
+  } catch (error) {
+    console.warn("Spotlight: history search failed", error);
+    return [];
+  }
+  return sanitizeHistoryEntries(results, bounds);
+}
+
+async function analyzeHistory(session, { query, timeRangeLabel, entries }) {
+  const prompt = buildAnalysisPrompt({ query, timeRangeLabel, entries });
+  const response = await session.prompt(prompt);
+  const answer = sanitizeAssistantResponse(response);
+  if (answer) {
+    return answer;
+  }
+  if (!entries.length) {
+    return "I couldn't find any browsing history in that time range.";
+  }
+  return "I couldn't interpret the browsing history for that request.";
 }
 
 export function createSmartHistoryAssistant() {
@@ -514,42 +587,39 @@ export function createSmartHistoryAssistant() {
       throw new Error("Ask something about your history to get started");
     }
     const session = await ensureSession();
-    const prompt = buildPrompt(text);
-    const raw = await session.prompt(prompt, { responseConstraint: RESPONSE_SCHEMA });
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      throw new Error("Assistant returned invalid JSON");
-    }
     const now = Date.now();
-    const sanitized = sanitizeInterpretation(parsed, now);
-    const tokens = buildSearchTokens(sanitized);
-    const query = buildSearchQuery(tokens);
-    const rangePayload = buildTimeRangePayload(sanitized.timeRange);
-    const presetId = typeof rangePayload?.presetId === "string" ? rangePayload.presetId : null;
-    const subfilterId = presetId && presetId !== "all" ? presetId : null;
-    const payload = {
-      intent: sanitized.intent,
-      query,
-      message:
-        sanitized.message ||
-        (sanitized.intent === "info"
-          ? "I'm Spotlight's on-device history assistant, ready to help you search."
-          : "Ready to help with your history."),
-      site: sanitized.site || "",
-      topic: sanitized.topic || "",
+    const extractedRangeText = await extractTimeRange(session, text);
+    const parsedRange = parseTimeRange(extractedRangeText, now);
+    const bounds = resolveBoundsForRange(parsedRange, now);
+    const entries = await fetchHistoryEntries(bounds);
+    const fallbackLabel = extractedRangeText || "all time";
+    const timeRangePayload = buildTimeRangePayload(parsedRange) || {
+      raw: fallbackLabel,
+      label: fallbackLabel,
     };
-    if (Number.isFinite(sanitized.limit) && sanitized.limit > 0) {
-      payload.limit = sanitized.limit;
+    if (timeRangePayload && !timeRangePayload.label) {
+      timeRangePayload.label = fallbackLabel;
     }
-    if (subfilterId) {
-      payload.subfilterId = subfilterId;
+    if (timeRangePayload && !timeRangePayload.raw) {
+      timeRangePayload.raw = fallbackLabel;
     }
-    if (rangePayload) {
-      payload.timeRange = rangePayload;
-    }
-    return payload;
+    const answer = await analyzeHistory(session, {
+      query: text,
+      timeRangeLabel: timeRangePayload?.label || fallbackLabel,
+      entries,
+    });
+    return {
+      intent: "show",
+      query: "history:",
+      message: answer,
+      site: "",
+      topic: "",
+      timeRange: timeRangePayload || null,
+      analysis: {
+        extractedTimeRange: fallbackLabel,
+        analyzedEntryCount: entries.length,
+      },
+    };
   }
 
   return { interpret };
