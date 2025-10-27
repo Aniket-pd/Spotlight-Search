@@ -9,6 +9,7 @@ import { createNavigationService, registerNavigationListeners } from "./navigati
 import { createSummarizerService } from "./summarizer.js";
 import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
 import { createSmartHistoryAssistant } from "./smart-history-assistant.js";
+import { createHistorySummaryService } from "./history-summary.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -28,6 +29,7 @@ const { resolveFaviconForTarget } = createFaviconService({ cache: context.favico
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
 const historyAssistant = createSmartHistoryAssistant();
+const historySummaries = createHistorySummaryService();
 
 registerNavigationListeners(navigation);
 
@@ -40,6 +42,7 @@ registerMessageHandlers({
   summaries,
   organizer,
   historyAssistant,
+  historySummaries,
 });
 
 registerLifecycleEvents(context);

@@ -9,6 +9,7 @@ export function registerMessageHandlers({
   summaries,
   organizer,
   historyAssistant,
+  historySummaries,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -203,6 +204,40 @@ export function registerMessageHandlers({
         })
         .catch((error) => {
           const errorMessage = error?.message || "Assistant request failed";
+          sendResponse({ success: false, error: errorMessage });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_SUMMARIZE") {
+      if (!historySummaries || typeof historySummaries.summarize !== "function") {
+        sendResponse({ success: false, error: "History summaries unavailable" });
+        return true;
+      }
+      const entries = Array.isArray(message.entries) ? message.entries : [];
+      const timeRange = message.timeRange && typeof message.timeRange === "object" ? message.timeRange : null;
+      const timeRangeLabel = typeof message.timeRangeLabel === "string" ? message.timeRangeLabel : "";
+      const totalCount = Number.isFinite(message.totalCount) ? message.totalCount : null;
+      const query = typeof message.query === "string" ? message.query : "";
+      const topic = typeof message.topic === "string" ? message.topic : "";
+      const site = typeof message.site === "string" ? message.site : "";
+      const planMessage = typeof message.planMessage === "string" ? message.planMessage : "";
+      historySummaries
+        .summarize({
+          entries,
+          timeRange,
+          timeRangeLabel,
+          totalCount,
+          query,
+          topic,
+          site,
+          planMessage,
+        })
+        .then((summary) => {
+          sendResponse({ success: true, summary });
+        })
+        .catch((error) => {
+          const errorMessage = error?.message || "Unable to summarize history";
           sendResponse({ success: false, error: errorMessage });
         });
       return true;
