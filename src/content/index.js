@@ -1266,6 +1266,9 @@ function applyHistoryAssistantPlanAfterResults() {
 
     resultsState = displayResults.slice();
     lazyList.setItems(resultsState);
+    if (resultsState.length > 0) {
+      lazyList.ensureVisible(resultsState.length - 1);
+    }
     pruneSummaryState();
     applyCachedFavicons(resultsState);
     activeIndex = resultsState.length > 0 ? 0 : -1;
