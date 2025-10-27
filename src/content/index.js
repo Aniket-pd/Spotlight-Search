@@ -864,6 +864,84 @@ function resolveHistoryAssistantBounds(range, now = Date.now()) {
   return { from: null, to: null };
 }
 
+function normalizeHistoryAssistantDomain(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return "";
+  }
+  let hostname = "";
+  const candidate = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
+  try {
+    hostname = new URL(candidate).hostname;
+  } catch (error) {
+    hostname = trimmed.replace(/^[^a-z0-9]+/i, "").replace(/[^a-z0-9.-]+/gi, "");
+  }
+  if (!hostname) {
+    return "";
+  }
+  const withoutPort = hostname.replace(/:\d+$/, "");
+  return withoutPort.replace(/^www\./, "").replace(/\.+$/, "");
+}
+
+function extractHistoryResultDomain(result) {
+  if (!result || typeof result !== "object") {
+    return "";
+  }
+  if (typeof result.domain === "string" && result.domain.trim()) {
+    const normalized = normalizeHistoryAssistantDomain(result.domain);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  if (typeof result.url === "string" && result.url.trim()) {
+    const normalized = normalizeHistoryAssistantDomain(result.url);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
+}
+
+function filterHistoryResultsBySite(results, site) {
+  if (!Array.isArray(results) || !results.length) {
+    return Array.isArray(results) ? results : [];
+  }
+  const normalizedSite = normalizeHistoryAssistantDomain(site);
+  const rawSiteToken = typeof site === "string" ? site.trim().toLowerCase() : "";
+  const fallbackToken =
+    normalizedSite && normalizedSite.includes(".")
+      ? ""
+      : normalizeHistoryAssistantDomain(rawSiteToken) || rawSiteToken.replace(/^www\./, "");
+  if (!normalizedSite && !fallbackToken) {
+    return results;
+  }
+  return results.filter((entry) => {
+    const domain = extractHistoryResultDomain(entry);
+    if (!domain) {
+      return false;
+    }
+    if (normalizedSite && domain === normalizedSite) {
+      return true;
+    }
+    if (normalizedSite && domain.endsWith(`.${normalizedSite}`)) {
+      return true;
+    }
+    if (fallbackToken) {
+      const token = fallbackToken.replace(/[^a-z0-9-]+/g, "");
+      if (token) {
+        const parts = domain.split(".");
+        if (parts.includes(token)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+
 function filterHistoryResultsByTimeRange(results, range) {
   if (!Array.isArray(results) || !results.length || !range || typeof range !== "object") {
     return Array.isArray(results) ? results : [];
@@ -1500,7 +1578,14 @@ function applyHistoryAssistantPlanAfterResults() {
   const rawHistoryResults = Array.isArray(resultsState)
     ? resultsState.filter((result) => result && result.type === "history")
     : [];
-  const filteredHistoryResults = filterHistoryResultsByTimeRange(rawHistoryResults, historyAssistantPlan.timeRange);
+  const filteredHistoryResultsByTime = filterHistoryResultsByTimeRange(
+    rawHistoryResults,
+    historyAssistantPlan.timeRange,
+  );
+  const filteredHistoryResults = filterHistoryResultsBySite(
+    filteredHistoryResultsByTime,
+    historyAssistantPlan.site,
+  );
   const timeRangeLabel =
     typeof historyAssistantPlan.timeRange?.label === "string" && historyAssistantPlan.timeRange.label
       ? historyAssistantPlan.timeRange.label
