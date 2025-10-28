@@ -9,6 +9,7 @@ import { createNavigationService, registerNavigationListeners } from "./navigati
 import { createSummarizerService } from "./summarizer.js";
 import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
 import { createFocusManager } from "./focus.js";
+import { createHistoryAssistantService } from "./history-assistant.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -33,6 +34,7 @@ focus = createFocusManager({
 });
 const tabActions = createTabActions();
 const organizer = createBookmarkOrganizerService({ scheduleRebuild: context.scheduleRebuild });
+const historyAssistant = createHistoryAssistantService({ scheduleRebuild: context.scheduleRebuild });
 const executeCommand = createCommandExecutor({
   tabActions,
   scheduleRebuild: context.scheduleRebuild,
@@ -54,6 +56,7 @@ registerMessageHandlers({
   summaries,
   organizer,
   focus,
+  historyAssistant,
 });
 
 registerLifecycleEvents(context);
