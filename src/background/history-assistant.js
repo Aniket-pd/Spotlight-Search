@@ -167,6 +167,20 @@ const GENERAL_RESPONSE_SUGGESTIONS = [
   "Open the sites I visited 20 minutes ago.",
 ];
 
+const GENERAL_GREETING_SCHEMA = {
+  type: "object",
+  properties: {
+    message: { type: "string" },
+    suggestions: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: 8,
+    },
+  },
+  required: ["message"],
+  additionalProperties: false,
+};
+
 const TIME_RANGE_SCHEMA = {
   type: "object",
   properties: {
@@ -454,13 +468,13 @@ function extractMeaningfulKeywords(prompt) {
   return keywords;
 }
 
-function maybeHandleGeneralInquiryPrompt(prompt) {
+function isGeneralInquiryPrompt(prompt) {
   if (!prompt || typeof prompt !== "string") {
-    return null;
+    return false;
   }
   const collapsed = prompt.toLowerCase().replace(/\s+/g, " ").trim();
   if (!collapsed) {
-    return null;
+    return false;
   }
   const cleaned = collapsed.replace(/[^a-z0-9\s?]/g, " ");
   const padded = ` ${cleaned} `;
@@ -468,6 +482,10 @@ function maybeHandleGeneralInquiryPrompt(prompt) {
   const actionHint = HISTORY_ACTION_HINTS.some((keyword) => padded.includes(` ${keyword} `));
   const objectHint = HISTORY_OBJECT_HINTS.some((keyword) => padded.includes(` ${keyword} `));
   const hasHistoryIntent = actionHint && objectHint;
+
+  if (hasHistoryIntent) {
+    return false;
+  }
 
   const matchesGeneralRegex = GENERAL_INQUIRY_REGEX.some((regex) => regex.test(padded));
   const containsGeneralKeyword = /\b(usef(?:ul|ull)|capab(?:le|ilities?|ility)|capabilities|abilities)\b/.test(
@@ -479,27 +497,57 @@ function maybeHandleGeneralInquiryPrompt(prompt) {
       padded
     );
 
-  if (!(matchesGeneralRegex || containsGeneralKeyword || helpOnly)) {
-    return null;
-  }
+  return matchesGeneralRegex || containsGeneralKeyword || helpOnly;
+}
 
-  if (hasHistoryIntent) {
-    return null;
-  }
+function buildGeneralInquiryPrompt(prompt) {
+  return `You are the Smart History Search Assistant living inside the Spotlight interface of a web browser. A user who has the history filter enabled asked: """${prompt}""".\n\nRespond with JSON that matches this schema exactly:\n{\n  "message": string (a single friendly sentence that explains how you can help with browsing history),\n  "suggestions": string[] (up to four short example requests they can try next, each under 80 characters)\n}\n\nGuidelines:\n- Keep the message in the second person (e.g., "I can help you...").\n- Highlight that you understand natural language history questions and can search, open, delete, or summarize entries.\n- Tailor the wording so it feels responsive to the user's question.\n- Provide diverse suggestions that demonstrate useful history-related prompts.`;
+}
 
-  const message =
+async function buildGeneralInquiryResponse(state, prompt) {
+  const defaultMessage =
     "I'm the Spotlight history assistant. I can search, open, delete, and summarize your browsing history with natural language.";
-  const suggestions = GENERAL_RESPONSE_SUGGESTIONS.map((example) => `"${example}"`).join(" ");
-  const notes = suggestions ? `Try prompts like ${suggestions}` : "";
+  let message = defaultMessage;
+  let suggestionList = [...GENERAL_RESPONSE_SUGGESTIONS];
+  let usedModel = false;
+
+  try {
+    const session = await ensureSessionInstance(state);
+    const result = await runPrompt(session, buildGeneralInquiryPrompt(prompt), GENERAL_GREETING_SCHEMA);
+    const parsedMessage = typeof result?.message === "string" ? result.message.trim() : "";
+    if (parsedMessage) {
+      message = parsedMessage;
+      usedModel = true;
+    }
+    if (Array.isArray(result?.suggestions)) {
+      const filtered = result.suggestions
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 4);
+      if (filtered.length) {
+        suggestionList = filtered;
+      }
+    }
+  } catch (error) {
+    console.warn("Spotlight: general inquiry prompt failed", error);
+  }
+
+  const suggestionText = suggestionList.length
+    ? `Try prompts like ${suggestionList.map((example) => `"${example}"`).join(" ")}`
+    : "";
 
   return {
-    action: "show",
-    message,
-    notes,
-    results: [],
-    timeRange: null,
-    datasetSize: 0,
-    confidence: 1,
+    response: {
+      action: "show",
+      message,
+      notes: suggestionText,
+      results: [],
+      timeRange: null,
+      datasetSize: 0,
+      confidence: 1,
+    },
+    usedModel,
+    suggestions: suggestionList,
   };
 }
 
@@ -1074,13 +1122,17 @@ export function createHistoryAssistantService(options = {}) {
     if (!trimmed) {
       throw new Error("Enter a history request to analyze");
     }
-    const generalResponse = maybeHandleGeneralInquiryPrompt(trimmed);
-    if (generalResponse) {
+    if (isGeneralInquiryPrompt(trimmed)) {
+      const generalInquiry = await buildGeneralInquiryResponse(state, trimmed);
       console.info("Spotlight history assistant general inquiry", {
         prompt: trimmed,
         handled: "general",
+        responseSource: generalInquiry.usedModel ? "promptApi" : "fallback",
+        suggestionCount: Array.isArray(generalInquiry.suggestions)
+          ? generalInquiry.suggestions.length
+          : 0,
       });
-      return generalResponse;
+      return generalInquiry.response;
     }
     const nowIso = new Date(now).toISOString();
     const promptKeywords = extractMeaningfulKeywords(trimmed);
