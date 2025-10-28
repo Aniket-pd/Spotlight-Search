@@ -1,57 +1,75 @@
 import { isSmartHistoryAssistantEnabled } from "../shared/feature-flags.js";
-import {
-  NUMBER_WORD_DEFINITIONS,
-  QUANTITY_KEYWORD_DEFINITIONS,
-  TIME_PRESET_DEFINITIONS,
-  TIME_UNIT_DEFINITIONS,
-} from "../shared/time-range-definitions.js";
 
-const ALLOWED_INTENTS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
-const RESPONSE_SCHEMA = {
+const ALLOWED_ACTIONS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
+const MAX_DATASET_ENTRIES = 120;
+const MAX_RESPONSE_RESULTS = 60;
+
+const TIME_RANGE_SYSTEM_PROMPT =
+  "You are Spotlight's time-range analyst. You read a user's natural-language history request and" +
+  " identify the smallest UTC time window that captures the activity they're asking about." +
+  " Always respond with JSON that matches the provided schema. If the user gives no time clues," +
+  " leave both start and end null and label the window 'all time'." +
+  " Accept relative (e.g. 'last 4 days'), absolute (e.g. 'on Monday'), and partial references" +
+  " (e.g. 'around 9 PM yesterday').";
+
+const ASSISTANT_SYSTEM_PROMPT =
+  "You are Spotlight's Smart History Assistant running on-device." +
+  " A JSON array of history entries is supplied. Each entry has an id, title, url," +
+  " lastVisitTime (UTC ms), visitCount, and domain. Interpret the user's request, pick an intent," +
+  " and choose the matching entries." +
+  " Only return entries from the dataset—never invent new URLs or titles." +
+  " For each match, return its id inside filteredResults so Spotlight can map it back." +
+  " Keep outputMessage short, friendly, and ready for the UI." +
+  " Use intents show (list results), open (immediately reopen), delete (remove from history)," +
+  " summarize (summarize activity), frequent (top repeated items), or info (about yourself)." +
+  " Prefer concise labels like 'past 4 days'.";
+
+const TIME_RANGE_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["intent"],
+  required: ["timeRange"],
   properties: {
-    intent: {
-      type: "string",
-      enum: Array.from(ALLOWED_INTENTS),
-    },
-    searchQuery: {
-      type: "string",
-    },
     timeRange: {
-      type: "string",
-      minLength: 0,
-      maxLength: 160,
+      type: "object",
+      additionalProperties: false,
+      required: ["label"],
+      properties: {
+        start: { anyOf: [{ type: "string" }, { type: "null" }] },
+        end: { anyOf: [{ type: "string" }, { type: "null" }] },
+        label: { type: "string" },
+        raw: { type: "string" },
+      },
     },
-    site: {
-      type: "string",
-    },
-    topic: {
-      type: "string",
-    },
-    message: {
-      type: "string",
-    },
-    limit: {
-      type: "integer",
-      minimum: 1,
-    },
+    confidence: { type: "number" },
   },
 };
 
-const SYSTEM_INSTRUCTIONS = `You are Spotlight's Smart History Assistant living inside a local Chrome extension. \
-You convert natural language requests about the user's browsing history into structured instructions. \
-Return compact JSON only, matching the provided schema. \
-Use these intents: show (just list results), open (user wants to immediately reopen matches), delete (user wants to remove matches), summarize (user wants a quick recap), frequent (user wants the most visited tabs/sites with visit counts), info (user is asking about you). \
-timeRange can be any concise natural-language window like 'today', 'yesterday', 'last 3 days', 'past 2 hours', or 'all'. Prefer phrasing that the UI can echo back and keep it short, and use 'all' when no timeframe is mentioned. \
-searchQuery should contain plain keywords (no prefixes) to match titles or URLs. Keep it short and lowercase. \
-If a site is requested, populate site with the bare domain like "youtube.com". If a topic is mentioned, capture it in topic using 1-3 short keywords. \
-Only include limit when the user specifies a quantity, using positive integers without inventing defaults. \
-When using the frequent intent, mention that you'll rank the user's matches by visit count and, if they asked for a quantity, clarify how many entries you'll surface. \
-Always include a friendly message explaining what you interpreted. \
-If the user asks who you are or similar, set intent to info and craft an upbeat, concise response; leave searchQuery empty. \
-Never include the history: prefix in searchQuery.`;
+const ASSISTANT_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: true,
+  required: ["action", "outputMessage"],
+  properties: {
+    action: { type: "string", enum: Array.from(ALLOWED_ACTIONS) },
+    outputMessage: { type: "string" },
+    searchQuery: { type: "string" },
+    topic: { type: "string" },
+    site: { type: "string" },
+    limit: { type: "integer", minimum: 1 },
+    timeRangeLabel: { type: "string" },
+    filteredResults: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        required: ["id"],
+        properties: {
+          id: { type: "string", minLength: 1 },
+          notes: { type: "string" },
+        },
+      },
+    },
+  },
+};
 
 function sanitizeString(value) {
   if (typeof value !== "string") {
@@ -64,333 +82,8 @@ function sanitizeIntent(value) {
   if (typeof value !== "string") {
     return "show";
   }
-  const normalized = value.toLowerCase();
-  return ALLOWED_INTENTS.has(normalized) ? normalized : "show";
-}
-
-const UNIT_IN_MS = new Map(TIME_UNIT_DEFINITIONS.map((definition) => [definition.id, definition.ms]));
-
-const UNIT_ALIASES = new Map();
-for (const definition of TIME_UNIT_DEFINITIONS) {
-  for (const label of definition.labels) {
-    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
-    if (normalized) {
-      UNIT_ALIASES.set(normalized, definition.id);
-    }
-  }
-  UNIT_ALIASES.set(definition.id, definition.id);
-}
-
-const NUMBER_WORDS = new Map();
-for (const definition of NUMBER_WORD_DEFINITIONS) {
-  for (const label of definition.labels) {
-    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
-    if (normalized) {
-      NUMBER_WORDS.set(normalized, definition.value);
-    }
-  }
-}
-
-const QUANTITY_KEYWORDS = new Map();
-for (const definition of QUANTITY_KEYWORD_DEFINITIONS) {
-  for (const label of definition.labels) {
-    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
-    if (normalized) {
-      QUANTITY_KEYWORDS.set(normalized, definition.value);
-    }
-  }
-}
-
-const PRESET_ALIASES = new Map();
-const PRESET_RESOLVERS = new Map();
-for (const definition of TIME_PRESET_DEFINITIONS) {
-  PRESET_RESOLVERS.set(definition.id, definition.resolveBounds);
-  for (const label of definition.labels) {
-    const normalized = typeof label === "string" ? label.trim().toLowerCase() : "";
-    if (normalized) {
-      PRESET_ALIASES.set(normalized, definition.id);
-    }
-  }
-  PRESET_ALIASES.set(definition.id, definition.id);
-}
-
-function resolvePresetBounds(presetId, now) {
-  const reference = Number.isFinite(now) ? now : Date.now();
-  const safeNow = reference > 0 ? reference : Date.now();
-  const resolver = PRESET_RESOLVERS.get(presetId);
-  if (typeof resolver !== "function") {
-    return { from: null, to: null };
-  }
-  const bounds = resolver(safeNow) || {};
-  const from = Number.isFinite(bounds.from) && bounds.from >= 0 ? bounds.from : null;
-  const to = Number.isFinite(bounds.to) && bounds.to >= 0 ? bounds.to : null;
-  return { from, to };
-}
-
-function detectPresetRange(normalized, now) {
-  if (!normalized) {
-    return null;
-  }
-  const presetId = PRESET_ALIASES.get(normalized);
-  if (!presetId) {
-    return null;
-  }
-  const resolvedAt = Number.isFinite(now) && now > 0 ? now : Date.now();
-  const bounds = resolvePresetBounds(presetId, resolvedAt);
-  return { presetId, ...bounds, kind: "preset", resolvedAt };
-}
-
-function resolveQuantityToken(token) {
-  if (typeof token !== "string" || !token.trim()) {
-    return null;
-  }
-  const normalized = token.trim().toLowerCase();
-  if (QUANTITY_KEYWORDS.has(normalized)) {
-    return QUANTITY_KEYWORDS.get(normalized);
-  }
-  if (NUMBER_WORDS.has(normalized)) {
-    return NUMBER_WORDS.get(normalized);
-  }
-  const numeric = Number.parseFloat(normalized);
-  if (Number.isFinite(numeric)) {
-    return numeric;
-  }
-  return null;
-}
-
-function normalizeUnitToken(token) {
-  if (typeof token !== "string") {
-    return null;
-  }
-  let normalized = token.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  normalized = normalized.replace(/[^a-z]/g, "");
-  if (!normalized) {
-    return null;
-  }
-  if (UNIT_ALIASES.has(normalized)) {
-    return UNIT_ALIASES.get(normalized);
-  }
-  const deduped = normalized.replace(/(.)\1+$/g, "$1");
-  if (UNIT_ALIASES.has(deduped)) {
-    return UNIT_ALIASES.get(deduped);
-  }
-  let trimmed = normalized;
-  while (trimmed.endsWith("s") && !UNIT_ALIASES.has(trimmed)) {
-    trimmed = trimmed.slice(0, -1);
-  }
-  if (UNIT_ALIASES.has(trimmed)) {
-    return UNIT_ALIASES.get(trimmed);
-  }
-  if (UNIT_IN_MS.has(trimmed)) {
-    return trimmed;
-  }
-  for (const key of UNIT_ALIASES.keys()) {
-    if (trimmed.startsWith(key)) {
-      return UNIT_ALIASES.get(key);
-    }
-  }
-  for (const key of UNIT_IN_MS.keys()) {
-    if (trimmed.startsWith(key)) {
-      return key;
-    }
-    if (key.startsWith(trimmed)) {
-      return key;
-    }
-  }
-  return null;
-}
-
-function buildRelativeRange(quantityToken, unitToken, now) {
-  const unit = normalizeUnitToken(unitToken);
-  if (!unit || !UNIT_IN_MS.has(unit)) {
-    return null;
-  }
-  const resolvedQuantity = resolveQuantityToken(quantityToken);
-  const quantity = Number.isFinite(resolvedQuantity) && resolvedQuantity > 0 ? resolvedQuantity : 1;
-  const unitMs = UNIT_IN_MS.get(unit);
-  const duration = quantity * unitMs;
-  if (!Number.isFinite(duration) || duration <= 0) {
-    return null;
-  }
-  const safeNow = Number.isFinite(now) && now > 0 ? now : Date.now();
-  const to = safeNow;
-  const from = Math.max(0, Math.floor(to - duration));
-  let presetId = null;
-  if (unit === "day") {
-    if (Math.abs(quantity - 7) < 0.001) {
-      presetId = "last7";
-    } else if (Math.abs(quantity - 30) < 0.001) {
-      presetId = "last30";
-    }
-  } else if (unit === "week" && Math.abs(quantity - 1) < 0.001) {
-    presetId = "last7";
-  } else if (unit === "month" && Math.abs(quantity - 1) < 0.001) {
-    presetId = "last30";
-  }
-  return {
-    presetId,
-    from,
-    to,
-    kind: "relative",
-    resolvedAt: safeNow,
-    unit,
-    quantity,
-    durationMs: duration,
-  };
-}
-
-function parseRelativeTimeRange(normalized, now) {
-  if (!normalized) {
-    return null;
-  }
-  const basePattern =
-    /(?:in|within|over|during)?\s*(?:the\s+)?(?:last|past|previous)\s+(?:the\s+)?(?:(few|couple|several|[0-9]+(?:\.[0-9]+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+of)?\s+)?([a-z]+)/i;
-  const baseMatch = normalized.match(basePattern);
-  if (baseMatch) {
-    const range = buildRelativeRange(baseMatch[1] || null, baseMatch[2], now);
-    if (range) {
-      return range;
-    }
-  }
-  const agoPattern =
-    /(few|couple|several|[0-9]+(?:\.[0-9]+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+of)?\s+([a-z]+)\s+(?:ago|before|earlier|back)/i;
-  const agoMatch = normalized.match(agoPattern);
-  if (agoMatch) {
-    const range = buildRelativeRange(agoMatch[1], agoMatch[2], now);
-    if (range) {
-      return range;
-    }
-  }
-  const plainPattern =
-    /^(few|couple|several|[0-9]+(?:\.[0-9]+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+of)?\s+([a-z]+)$/i;
-  const plainMatch = normalized.match(plainPattern);
-  if (plainMatch) {
-    const range = buildRelativeRange(plainMatch[1], plainMatch[2], now);
-    if (range) {
-      return range;
-    }
-  }
-  return null;
-}
-
-function parseTimeRange(value, now = Date.now()) {
-  const raw = sanitizeString(value);
-  const referenceNow = Number.isFinite(now) && now > 0 ? now : Date.now();
-  const base = {
-    raw,
-    label: raw,
-    presetId: null,
-    from: null,
-    to: null,
-    kind: "freeform",
-    resolvedAt: referenceNow,
-    unit: null,
-    quantity: null,
-    durationMs: null,
-  };
-  if (!raw) {
-    return base;
-  }
-  const normalizedBase = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/_/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!normalizedBase) {
-    return base;
-  }
-  const tokens = normalizedBase.split(" ").filter(Boolean);
-  const canonicalTokens = tokens.map((token) => {
-    if (NUMBER_WORDS.has(token)) {
-      const mapped = NUMBER_WORDS.get(token);
-      return Number.isFinite(mapped) ? String(mapped) : token;
-    }
-    return token;
-  });
-  const canonicalNormalized = canonicalTokens.join(" ");
-  const preset = detectPresetRange(canonicalNormalized, referenceNow);
-  if (preset) {
-    return { ...base, ...preset };
-  }
-  const relative = parseRelativeTimeRange(canonicalNormalized, referenceNow);
-  if (relative) {
-    return { ...base, ...relative };
-  }
-  return base;
-}
-
-function buildTimeRangePayload(range) {
-  if (!range || typeof range !== "object") {
-    return null;
-  }
-  const presetId = typeof range.presetId === "string" && range.presetId ? range.presetId : null;
-  const raw = sanitizeString(range.raw);
-  const label = sanitizeString(range.label || raw);
-  const from = Number.isFinite(range.from) && range.from >= 0 ? Math.floor(range.from) : null;
-  const to = Number.isFinite(range.to) && range.to >= 0 ? Math.floor(range.to) : null;
-  const kind = typeof range.kind === "string" && range.kind ? range.kind : null;
-  const resolvedAt = Number.isFinite(range.resolvedAt) && range.resolvedAt >= 0 ? Math.floor(range.resolvedAt) : null;
-  const unit = typeof range.unit === "string" && range.unit ? range.unit : null;
-  const quantity = Number.isFinite(range.quantity) && range.quantity > 0 ? range.quantity : null;
-  const durationMs = Number.isFinite(range.durationMs) && range.durationMs > 0 ? Math.floor(range.durationMs) : null;
-  if (
-    !presetId &&
-    !raw &&
-    !label &&
-    from === null &&
-    to === null &&
-    !kind &&
-    resolvedAt === null &&
-    !unit &&
-    quantity === null &&
-    durationMs === null
-  ) {
-    return null;
-  }
-  const payload = {
-    presetId,
-    raw,
-    label,
-  };
-  if (from !== null) {
-    payload.from = from;
-  }
-  if (to !== null) {
-    payload.to = to;
-  }
-  if (kind) {
-    payload.kind = kind;
-  }
-  if (resolvedAt !== null) {
-    payload.resolvedAt = resolvedAt;
-  }
-  if (unit) {
-    payload.unit = unit;
-  }
-  if (quantity !== null) {
-    payload.quantity = quantity;
-  }
-  if (durationMs !== null) {
-    payload.durationMs = durationMs;
-  }
-  return payload;
-}
-
-function sanitizeDomain(value) {
-  const text = sanitizeString(value);
-  if (!text) {
-    return "";
-  }
-  try {
-    const url = new URL(text.includes("://") ? text : `https://${text}`);
-    return url.hostname.toLowerCase();
-  } catch (err) {
-    return text.replace(/^[^a-z0-9]+/i, "").replace(/[^a-z0-9.-]+/gi, "").toLowerCase();
-  }
+  const normalized = value.trim().toLowerCase();
+  return ALLOWED_ACTIONS.has(normalized) ? normalized : "show";
 }
 
 function normalizeLimit(value) {
@@ -404,105 +97,326 @@ function normalizeLimit(value) {
   return normalized;
 }
 
-function buildSearchTokens({ searchQuery, site, topic }) {
-  const tokens = [];
-  const normalizedQuery = sanitizeString(searchQuery);
-  if (normalizedQuery) {
-    normalizedQuery
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter(Boolean)
-      .forEach((token) => tokens.push(token.toLowerCase()));
+function extractDomain(value) {
+  const text = sanitizeString(value);
+  if (!text) {
+    return "";
   }
-  const normalizedTopic = sanitizeString(topic);
-  if (normalizedTopic) {
-    normalizedTopic
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter(Boolean)
-      .forEach((token) => tokens.push(token.toLowerCase()));
+  try {
+    const url = new URL(text.includes("://") ? text : `https://${text}`);
+    return url.hostname.replace(/^www\./i, "").toLowerCase();
+  } catch (error) {
+    return text.replace(/^[^a-z0-9]+/i, "").replace(/[^a-z0-9.-]+/gi, "").toLowerCase();
   }
-  const normalizedSite = sanitizeDomain(site);
-  if (normalizedSite) {
-    tokens.push(normalizedSite);
+}
+
+function toMillis(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
   }
-  const unique = [];
-  const seen = new Set();
-  for (const token of tokens) {
-    if (!token || seen.has(token)) {
-      continue;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp;
+}
+
+function clampTimestamp(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.floor(value);
+}
+
+function ensureRangeOrder(start, end) {
+  if (start !== null && end !== null && start > end) {
+    return { start: end, end: start };
+  }
+  return { start, end };
+}
+
+function formatDateLabel(timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+  const date = new Date(timestamp);
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatTimeRangeLabel(start, end) {
+  if (start === null && end === null) {
+    return "all time";
+  }
+  if (start !== null && end !== null) {
+    const sameDay = new Date(start).toDateString() === new Date(end).toDateString();
+    if (sameDay) {
+      return formatDateLabel(start);
     }
-    seen.add(token);
-    unique.push(token);
+    return `${formatDateLabel(start)} – ${formatDateLabel(end)}`;
   }
-  return unique;
+  if (start !== null) {
+    return `since ${formatDateLabel(start)}`;
+  }
+  if (end !== null) {
+    return `before ${formatDateLabel(end)}`;
+  }
+  return "all time";
 }
 
-function buildSearchQuery(tokens) {
-  if (!Array.isArray(tokens) || !tokens.length) {
-    return "history:";
+function buildTimeRangePayload(range, label, now) {
+  const payload = {
+    presetId: null,
+    raw: label || "",
+    label: label || "",
+    kind: "detected",
+    resolvedAt: clampTimestamp(now) ?? Date.now(),
+  };
+  if (range.start !== null) {
+    payload.from = clampTimestamp(range.start);
   }
-  return `history: ${tokens.join(" ")}`.trim();
+  if (range.end !== null) {
+    payload.to = clampTimestamp(range.end);
+  }
+  return payload;
 }
 
-function sanitizeInterpretation(parsed, now = Date.now()) {
-  const intent = sanitizeIntent(parsed?.intent);
-  const timeRange = parseTimeRange(parsed?.timeRange, now);
-  const message = sanitizeString(parsed?.message);
-  const searchQuery = sanitizeString(parsed?.searchQuery);
-  const topic = sanitizeString(parsed?.topic);
-  const site = sanitizeDomain(parsed?.site);
-  const limit = intent === "info" ? null : normalizeLimit(parsed?.limit);
+function normalizeDatasetEntry(item, index) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const datasetId = `h${index}`;
+  const title = sanitizeString(item.title) || sanitizeString(item.url) || "Untitled";
+  const url = sanitizeString(item.url);
+  if (!url) {
+    return null;
+  }
+  const lastVisitTime = clampTimestamp(item.lastVisitTime);
+  const visitCount = Number.isFinite(item.visitCount) && item.visitCount > 0 ? Math.floor(item.visitCount) : null;
+  const domain = sanitizeString(item.origin) || extractDomain(url);
   return {
-    intent,
-    timeRange,
-    message,
-    searchQuery,
-    topic,
-    site,
-    limit,
+    id: datasetId,
+    itemId: item.id,
+    title,
+    url,
+    lastVisitTime,
+    visitCount,
+    domain,
   };
 }
 
-function buildPrompt(text) {
-  return `${SYSTEM_INSTRUCTIONS}\n\nUser request:\n"""${text}"""`;
+function mapAssistantResults(results, datasetMap) {
+  if (!Array.isArray(results) || !results.length) {
+    return [];
+  }
+  const mapped = [];
+  const seen = new Set();
+  for (const entry of results) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const id = sanitizeString(entry.id);
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const datasetEntry = datasetMap.get(id);
+    if (!datasetEntry) {
+      continue;
+    }
+    mapped.push({
+      id: datasetEntry.itemId,
+      type: "history",
+      title: datasetEntry.title,
+      url: datasetEntry.url,
+      lastVisitTime: datasetEntry.lastVisitTime ?? null,
+      visitCount: datasetEntry.visitCount ?? null,
+      domain: datasetEntry.domain,
+    });
+    if (mapped.length >= MAX_RESPONSE_RESULTS) {
+      break;
+    }
+  }
+  return mapped;
 }
 
-export function createSmartHistoryAssistant() {
-  let sessionInstance = null;
-  let sessionPromise = null;
+async function loadHistoryDataset(ensureIndex, range) {
+  const data = await ensureIndex();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const historyItems = items.filter((entry) => entry && entry.type === "history");
+  const filtered = historyItems.filter((entry) => {
+    const timestamp = clampTimestamp(entry?.lastVisitTime);
+    if (!Number.isFinite(timestamp)) {
+      return true;
+    }
+    if (range.start !== null && timestamp < range.start) {
+      return false;
+    }
+    if (range.end !== null && timestamp > range.end) {
+      return false;
+    }
+    return true;
+  });
+  filtered.sort((a, b) => {
+    const aTime = clampTimestamp(a?.lastVisitTime) ?? 0;
+    const bTime = clampTimestamp(b?.lastVisitTime) ?? 0;
+    return bTime - aTime;
+  });
+  const limited = filtered.slice(0, MAX_DATASET_ENTRIES);
+  const dataset = [];
+  const datasetMap = new Map();
+  limited.forEach((item, index) => {
+    const entry = normalizeDatasetEntry(item, index);
+    if (!entry) {
+      return;
+    }
+    dataset.push(entry);
+    datasetMap.set(entry.id, entry);
+  });
+  return {
+    entries: dataset,
+    map: datasetMap,
+    totalMatches: filtered.length,
+    totalAvailable: historyItems.length,
+  };
+}
 
-  async function ensureSession() {
-    if (sessionInstance) {
-      return sessionInstance;
+async function detectTimeRange(session, text, now) {
+  const isoNow = new Date(now).toISOString();
+  const prompt = [
+    {
+      role: "user",
+      content: `Current UTC time: ${isoNow}\nUser request:\n"""${text}"""`,
+    },
+  ];
+  const raw = await session.prompt(prompt, { responseConstraint: TIME_RANGE_RESPONSE_SCHEMA });
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error("Time range detector returned invalid JSON");
+  }
+  const rangeObject = parsed?.timeRange || {};
+  const start = toMillis(rangeObject.start);
+  const end = toMillis(rangeObject.end);
+  const ordered = ensureRangeOrder(start, end);
+  const labelCandidate = sanitizeString(rangeObject.label);
+  const rawLabel = sanitizeString(rangeObject.raw);
+  const label = labelCandidate || rawLabel || formatTimeRangeLabel(ordered.start, ordered.end);
+  return {
+    start: ordered.start,
+    end: ordered.end,
+    label,
+    rawLabel,
+    confidence: Number.isFinite(parsed?.confidence) ? parsed.confidence : null,
+  };
+}
+
+async function interpretWithDataset(session, options) {
+  const text = options.text;
+  const datasetEntries = Array.isArray(options.dataset?.entries) ? options.dataset.entries : [];
+  const datasetSummary = `Showing ${datasetEntries.length} entr${datasetEntries.length === 1 ? "y" : "ies"} out of ${options.dataset?.totalMatches || 0} in range.`;
+  const datasetJson = JSON.stringify(datasetEntries, null, 2);
+  const isoNow = new Date(options.now).toISOString();
+  const timeLabel = sanitizeString(options.timeLabel) || "all time";
+  const prompt = [
+    {
+      role: "user",
+      content:
+        `Current UTC time: ${isoNow}\n` +
+        `Focused time range: ${timeLabel}\n` +
+        `${datasetSummary}\n\n` +
+        `History dataset (use ids exactly as provided):\n${datasetJson}\n\n` +
+        `User request:\n"""${text}"""`,
+    },
+  ];
+  const raw = await session.prompt(prompt, { responseConstraint: ASSISTANT_RESPONSE_SCHEMA });
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error("Assistant returned invalid JSON");
+  }
+  return parsed;
+}
+
+export function createSmartHistoryAssistant({ ensureIndex } = {}) {
+  if (typeof ensureIndex !== "function") {
+    throw new Error("Missing ensureIndex dependency for history assistant");
+  }
+
+  let availabilityChecked = false;
+  let availabilityPromise = null;
+  let timeSessionInstance = null;
+  let timeSessionPromise = null;
+  let interpretSessionInstance = null;
+  let interpretSessionPromise = null;
+
+  async function ensureAvailability() {
+    if (availabilityChecked) {
+      return;
     }
-    if (sessionPromise) {
-      return sessionPromise;
+    if (availabilityPromise) {
+      return availabilityPromise;
     }
-    if (!isSmartHistoryAssistantEnabled()) {
-      throw new Error("Smart history assistant disabled");
+    availabilityPromise = (async () => {
+      if (typeof globalThis.LanguageModel !== "object" && typeof globalThis.LanguageModel !== "function") {
+        throw new Error("Prompt API unavailable");
+      }
+      const availability = await globalThis.LanguageModel.availability();
+      if (availability === "unavailable") {
+        throw new Error("Prompt model unavailable");
+      }
+      availabilityChecked = true;
+    })();
+    return availabilityPromise;
+  }
+
+  async function ensureTimeSession() {
+    if (timeSessionInstance) {
+      return timeSessionInstance;
     }
-    if (typeof globalThis.LanguageModel !== "object" && typeof globalThis.LanguageModel !== "function") {
-      throw new Error("Prompt API unavailable");
+    if (timeSessionPromise) {
+      return timeSessionPromise;
     }
-    const availability = await globalThis.LanguageModel.availability();
-    if (availability === "unavailable") {
-      throw new Error("Prompt model unavailable");
-    }
-    sessionPromise = globalThis.LanguageModel.create({
+    timeSessionPromise = globalThis.LanguageModel.create({
       expectedInputs: [{ type: "text", languages: ["en"] }],
       expectedOutputs: [{ type: "text", languages: ["en"] }],
+      initialPrompts: [{ role: "system", content: TIME_RANGE_SYSTEM_PROMPT }],
     })
       .then((instance) => {
-        sessionInstance = instance;
-        sessionPromise = null;
+        timeSessionInstance = instance;
+        timeSessionPromise = null;
         return instance;
       })
       .catch((error) => {
-        sessionPromise = null;
+        timeSessionPromise = null;
         throw error;
       });
-    return sessionPromise;
+    return timeSessionPromise;
+  }
+
+  async function ensureInterpretSession() {
+    if (interpretSessionInstance) {
+      return interpretSessionInstance;
+    }
+    if (interpretSessionPromise) {
+      return interpretSessionPromise;
+    }
+    interpretSessionPromise = globalThis.LanguageModel.create({
+      expectedInputs: [{ type: "text", languages: ["en"] }],
+      expectedOutputs: [{ type: "text", languages: ["en"] }],
+      initialPrompts: [{ role: "system", content: ASSISTANT_SYSTEM_PROMPT }],
+    })
+      .then((instance) => {
+        interpretSessionInstance = instance;
+        interpretSessionPromise = null;
+        return instance;
+      })
+      .catch((error) => {
+        interpretSessionPromise = null;
+        throw error;
+      });
+    return interpretSessionPromise;
   }
 
   async function interpret(options = {}) {
@@ -513,43 +427,60 @@ export function createSmartHistoryAssistant() {
     if (!text) {
       throw new Error("Ask something about your history to get started");
     }
-    const session = await ensureSession();
-    const prompt = buildPrompt(text);
-    const raw = await session.prompt(prompt, { responseConstraint: RESPONSE_SCHEMA });
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      throw new Error("Assistant returned invalid JSON");
-    }
+
+    await ensureAvailability();
     const now = Date.now();
-    const sanitized = sanitizeInterpretation(parsed, now);
-    const tokens = buildSearchTokens(sanitized);
-    const query = buildSearchQuery(tokens);
-    const rangePayload = buildTimeRangePayload(sanitized.timeRange);
-    const presetId = typeof rangePayload?.presetId === "string" ? rangePayload.presetId : null;
-    const subfilterId = presetId && presetId !== "all" ? presetId : null;
-    const payload = {
-      intent: sanitized.intent,
-      query,
-      message:
-        sanitized.message ||
-        (sanitized.intent === "info"
-          ? "I'm Spotlight's on-device history assistant, ready to help you search."
-          : "Ready to help with your history."),
-      site: sanitized.site || "",
-      topic: sanitized.topic || "",
+    const timeSession = await ensureTimeSession();
+    const detectedRange = await detectTimeRange(timeSession, text, now).catch((error) => {
+      console.warn("Spotlight: time-range detection failed", error);
+      return { start: null, end: null, label: "all time", rawLabel: "" };
+    });
+    const range = {
+      start: detectedRange.start ?? null,
+      end: detectedRange.end ?? null,
     };
-    if (Number.isFinite(sanitized.limit) && sanitized.limit > 0) {
-      payload.limit = sanitized.limit;
-    }
-    if (subfilterId) {
-      payload.subfilterId = subfilterId;
-    }
-    if (rangePayload) {
-      payload.timeRange = rangePayload;
-    }
-    return payload;
+    const dataset = await loadHistoryDataset(ensureIndex, range).catch((error) => {
+      console.warn("Spotlight: failed to load history dataset", error);
+      return { entries: [], map: new Map(), totalMatches: 0, totalAvailable: 0 };
+    });
+    const timeLabel = detectedRange.label || formatTimeRangeLabel(range.start, range.end);
+    const interpretSession = await ensureInterpretSession();
+    const assistantResponse = await interpretWithDataset(interpretSession, {
+      text,
+      dataset,
+      now,
+      timeLabel,
+    });
+
+    const intent = sanitizeIntent(assistantResponse?.action);
+    const message = sanitizeString(assistantResponse?.outputMessage);
+    const searchQuery = sanitizeString(assistantResponse?.searchQuery);
+    const topic = sanitizeString(assistantResponse?.topic);
+    const site = extractDomain(assistantResponse?.site);
+    const limit = normalizeLimit(assistantResponse?.limit);
+    const responseLabel = sanitizeString(assistantResponse?.timeRangeLabel);
+    const effectiveLabel = responseLabel || timeLabel || "all time";
+    const results = mapAssistantResults(assistantResponse?.filteredResults, dataset.map);
+
+    const timeRangePayload = buildTimeRangePayload(range, effectiveLabel, now);
+
+    return {
+      intent,
+      message: message ||
+        (intent === "info"
+          ? "I'm Spotlight's on-device history assistant."
+          : "Ready to help with your history."),
+      query: searchQuery,
+      topic,
+      site,
+      limit,
+      timeRange: timeRangePayload,
+      results,
+      totalCount: dataset.totalMatches,
+      evaluatedCount: dataset.entries.length,
+      filteredCount: results.length,
+      rangeConfidence: detectedRange.confidence,
+    };
   }
 
   return { interpret };

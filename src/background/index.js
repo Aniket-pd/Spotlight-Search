@@ -28,7 +28,7 @@ const executeCommand = createCommandExecutor({
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
-const historyAssistant = createSmartHistoryAssistant();
+const historyAssistant = createSmartHistoryAssistant({ ensureIndex: context.ensureIndex });
 const historySummaries = createHistorySummaryService();
 
 registerNavigationListeners(navigation);

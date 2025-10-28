@@ -905,6 +905,60 @@ function extractHistoryResultDomain(result) {
   return "";
 }
 
+function sanitizeHistoryAssistantPlanResult(result, index) {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const url = typeof result.url === "string" ? result.url.trim() : "";
+  if (!url) {
+    return null;
+  }
+  const title = typeof result.title === "string" ? result.title.trim().slice(0, 200) : "";
+  const rawId = result.id ?? result.itemId;
+  let id;
+  if (Number.isFinite(rawId)) {
+    id = rawId;
+  } else if (typeof rawId === "string" && rawId.trim()) {
+    id = rawId.trim();
+  } else {
+    id = `assistant-history-${index}`;
+  }
+  const lastVisitTime = Number.isFinite(result.lastVisitTime) ? Math.floor(result.lastVisitTime) : null;
+  const visitCount = Number.isFinite(result.visitCount) && result.visitCount > 0 ? Math.floor(result.visitCount) : null;
+  const domainCandidate = typeof result.domain === "string" ? result.domain : "";
+  const domain = normalizeHistoryAssistantDomain(domainCandidate || url);
+  return {
+    id,
+    type: "history",
+    title: title || url || "History entry",
+    url,
+    domain,
+    lastVisitTime,
+    visitCount,
+  };
+}
+
+function sanitizeHistoryAssistantPlanResults(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return [];
+  }
+  const sanitized = [];
+  const seenIds = new Set();
+  results.forEach((entry, index) => {
+    const sanitizedEntry = sanitizeHistoryAssistantPlanResult(entry, index);
+    if (!sanitizedEntry) {
+      return;
+    }
+    const key = String(sanitizedEntry.id);
+    if (seenIds.has(key)) {
+      return;
+    }
+    seenIds.add(key);
+    sanitized.push(sanitizedEntry);
+  });
+  return sanitized;
+}
+
 function filterHistoryResultsBySite(results, site) {
   if (!Array.isArray(results) || !results.length) {
     return Array.isArray(results) ? results : [];
@@ -985,6 +1039,12 @@ function applyHistoryAssistantPlan(plan, requestId) {
   const subfilterId = typeof plan.subfilterId === "string" && plan.subfilterId ? plan.subfilterId : null;
   const limit = Number.isFinite(plan.limit) ? plan.limit : null;
   const timeRange = sanitizeHistoryAssistantTimeRange(plan.timeRange);
+  const hasAssistantResults = Array.isArray(plan.results);
+  const planResults = sanitizeHistoryAssistantPlanResults(plan.results);
+  const filteredCount = Number.isFinite(plan.filteredCount) ? plan.filteredCount : planResults.length;
+  const totalCount = Number.isFinite(plan.totalCount) ? plan.totalCount : filteredCount;
+  const evaluatedCount = Number.isFinite(plan.evaluatedCount) ? plan.evaluatedCount : planResults.length;
+  const rangeConfidence = typeof plan.rangeConfidence === "number" ? plan.rangeConfidence : null;
 
   historyAssistantPlan = {
     intent,
@@ -995,6 +1055,12 @@ function applyHistoryAssistantPlan(plan, requestId) {
     subfilterId,
     limit,
     timeRange,
+    results: planResults,
+    hasAssistantResults,
+    filteredCount,
+    totalCount,
+    evaluatedCount,
+    rangeConfidence,
     requestId,
   };
 
@@ -1021,12 +1087,7 @@ function applyHistoryAssistantPlan(plan, requestId) {
     return;
   }
 
-  if (inputEl) {
-    const nextQuery = query || "history:";
-    inputEl.value = nextQuery;
-    inputEl.setSelectionRange(nextQuery.length, nextQuery.length);
-    handleInputChange();
-  }
+  applyHistoryAssistantPlanAfterResults();
 }
 
 function formatCountLabel(count, singular, plural = null) {
@@ -1575,17 +1636,20 @@ function applyHistoryAssistantPlanAfterResults() {
     historyAssistantPlan = null;
     return;
   }
-  const rawHistoryResults = Array.isArray(resultsState)
+  const assistantResults = historyAssistantPlan.hasAssistantResults
+    ? historyAssistantPlan.results.slice()
+    : [];
+  const rawHistoryResults = historyAssistantPlan.hasAssistantResults
+    ? assistantResults
+    : Array.isArray(resultsState)
     ? resultsState.filter((result) => result && result.type === "history")
     : [];
-  const filteredHistoryResultsByTime = filterHistoryResultsByTimeRange(
-    rawHistoryResults,
-    historyAssistantPlan.timeRange,
-  );
-  const filteredHistoryResults = filterHistoryResultsBySite(
-    filteredHistoryResultsByTime,
-    historyAssistantPlan.site,
-  );
+  const filteredHistoryResultsByTime = historyAssistantPlan.hasAssistantResults
+    ? rawHistoryResults
+    : filterHistoryResultsByTimeRange(rawHistoryResults, historyAssistantPlan.timeRange);
+  const filteredHistoryResults = historyAssistantPlan.hasAssistantResults
+    ? rawHistoryResults
+    : filterHistoryResultsBySite(filteredHistoryResultsByTime, historyAssistantPlan.site);
   const timeRangeLabel =
     typeof historyAssistantPlan.timeRange?.label === "string" && historyAssistantPlan.timeRange.label
       ? historyAssistantPlan.timeRange.label
@@ -1597,10 +1661,11 @@ function applyHistoryAssistantPlanAfterResults() {
     const requestedLimit = Number.isFinite(historyAssistantPlan.limit)
       ? Math.max(1, Math.floor(historyAssistantPlan.limit))
       : null;
-    const totalCount = filteredHistoryResults.length;
+    const planFilteredCount = Number.isFinite(historyAssistantPlan.filteredCount)
+      ? Math.max(filteredHistoryResults.length, Math.floor(historyAssistantPlan.filteredCount))
+      : filteredHistoryResults.length;
     const displayResults = filteredHistoryResults.slice();
     const displayCount = displayResults.length;
-    const shownLabel = formatCountLabel(displayCount, "match");
 
     const messageParts = [];
     if (historyAssistantPlan.message) {
@@ -1608,13 +1673,28 @@ function applyHistoryAssistantPlanAfterResults() {
     }
 
     if (displayCount > 0) {
-      const foundMessage = historyAssistantPlan.message
-        ? `Found ${shownLabel}`
-        : `Found ${shownLabel}.`;
-      messageParts.push(foundMessage);
-      if (requestedLimit !== null && requestedLimit < totalCount) {
+      const shownLabel = formatCountLabel(displayCount, "match");
+      const foundLabel = formatCountLabel(planFilteredCount, "match");
+      if (planFilteredCount > displayCount) {
+        const foundMessage = historyAssistantPlan.message
+          ? `Found ${foundLabel} · showing ${shownLabel}`
+          : `Found ${foundLabel}. Showing ${shownLabel}.`;
+        messageParts.push(foundMessage);
+      } else {
+        const foundMessage = historyAssistantPlan.message
+          ? `Found ${shownLabel}`
+          : `Found ${shownLabel}.`;
+        messageParts.push(foundMessage);
+      }
+      if (requestedLimit !== null && requestedLimit < planFilteredCount) {
         const requestedLabel = formatCountLabel(requestedLimit, "match");
         messageParts.push(`Showing all matches (requested ${requestedLabel}).`);
+      }
+      const evaluatedCount = Number.isFinite(historyAssistantPlan.evaluatedCount)
+        ? Math.floor(historyAssistantPlan.evaluatedCount)
+        : null;
+      if (evaluatedCount && evaluatedCount > 0 && evaluatedCount > planFilteredCount) {
+        messageParts.push(`Analyzed ${formatCountLabel(evaluatedCount, "entry")} in this window.`);
       }
     } else {
       if (historyAssistantPlan.message) {
@@ -1679,7 +1759,9 @@ function applyHistoryAssistantPlanAfterResults() {
       return;
     }
 
-    const totalCount = filteredHistoryResults.length;
+    const planFilteredCount = Number.isFinite(historyAssistantPlan.filteredCount)
+      ? Math.max(filteredHistoryResults.length, Math.floor(historyAssistantPlan.filteredCount))
+      : filteredHistoryResults.length;
     const rangeSuffix = shouldAppendRange && timeRangeLabel ? ` (${timeRangeLabel})` : "";
     const headerLabel = requestedLimit !== null
       ? `Top ${formatCountLabel(displayItems.length, "site")} by visits${rangeSuffix}:`
@@ -1692,7 +1774,7 @@ function applyHistoryAssistantPlanAfterResults() {
     if (historyAssistantPlan.message) {
       messageParts.push(historyAssistantPlan.message);
     } else {
-      messageParts.push(`Found ${formatCountLabel(totalCount, "match")} in your history.`);
+      messageParts.push(`Found ${formatCountLabel(planFilteredCount, "match")} in your history.`);
     }
     messageParts.push(`${headerLabel}\n${listText}`);
 
@@ -1757,7 +1839,10 @@ function applyHistoryAssistantPlanAfterResults() {
       return;
     }
 
-    const totalCount = filteredHistoryResults.length;
+    const planFilteredCount = Number.isFinite(historyAssistantPlan.filteredCount)
+      ? Math.max(filteredHistoryResults.length, Math.floor(historyAssistantPlan.filteredCount))
+      : filteredHistoryResults.length;
+    const totalCount = planFilteredCount;
     const summaryRequestId = ++historyAssistantSummaryRequestId;
     const planMessage = historyAssistantPlan.message || "";
     const planQuery = typeof historyAssistantPlan.query === "string" ? historyAssistantPlan.query : "";
