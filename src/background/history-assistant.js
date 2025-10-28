@@ -1,9 +1,9 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LOOKBACK_MS = 7 * DAY_MS;
-const MAX_DATASET_ENTRIES = 160;
-const MAX_RESULT_IDS = 24;
+const MAX_DATASET_ENTRIES = 240;
+const MAX_RESULT_IDS = 48;
 const MAX_ACTION_TABS = 8;
-const LOCAL_RESULT_LIMIT = 50;
+const LOCAL_RESULT_LIMIT = 60;
 
 const NUMBER_WORDS = new Map([
   ["zero", 0],
@@ -155,6 +155,55 @@ const INTERPRETATION_SCHEMA = {
     notes: { type: "string" },
   },
   required: ["action", "outputMessage", "filteredResultIds"],
+  additionalProperties: false,
+};
+
+const SEARCH_PLAN_SCHEMA = {
+  type: "object",
+  properties: {
+    intent: {
+      type: "string",
+      enum: ["show", "open", "delete", "summarize", "unknown"],
+    },
+    mustInclude: {
+      type: "array",
+      items: { type: "string" },
+    },
+    shouldInclude: {
+      type: "array",
+      items: { type: "string" },
+    },
+    exclude: {
+      type: "array",
+      items: { type: "string" },
+    },
+    domainHints: {
+      type: "array",
+      items: { type: "string" },
+    },
+    searchPhrases: {
+      type: "array",
+      items: { type: "string" },
+    },
+    timeRange: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          properties: {
+            start: { type: "string" },
+            end: { type: "string" },
+          },
+          required: ["start", "end"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    maxResults: { type: "number" },
+    requireModel: { type: "boolean" },
+    reasoning: { type: "string" },
+  },
+  required: ["intent"],
   additionalProperties: false,
 };
 
@@ -364,11 +413,232 @@ function itemMatchesKeyword(item, keyword) {
   return title.includes(normalized) || url.includes(normalized) || origin.includes(normalized);
 }
 
-function filterItemsByKeywords(items, keywords) {
-  if (!Array.isArray(items) || !keywords?.length) {
-    return Array.isArray(items) ? items.slice() : [];
+function normalizePlanArray(value) {
+  if (!value) {
+    return [];
   }
-  return items.filter((item) => keywords.every((keyword) => itemMatchesKeyword(item, keyword)));
+  const values = Array.isArray(value) ? value : [value];
+  const result = [];
+  const seen = new Set();
+  for (const entry of values) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push({ value: trimmed, normalized });
+  }
+  return result;
+}
+
+function normalizeDomainHint(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const url = trimmed.includes("://") ? new URL(trimmed) : new URL(`https://${trimmed}`);
+    if (url.hostname) {
+      return url.hostname.toLowerCase();
+    }
+  } catch (err) {
+    // fall through to fallback parsing
+  }
+  return trimmed
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .split(/[/?#]/)[0]
+    .toLowerCase();
+}
+
+function normalizePromptKeywords(keywords) {
+  if (!Array.isArray(keywords) || !keywords.length) {
+    return [];
+  }
+  return normalizePlanArray(
+    keywords
+      .map((keyword) => (typeof keyword === "string" ? keyword : ""))
+      .filter(Boolean)
+  );
+}
+
+function mergeEntrySets(primary, fallback) {
+  const result = [];
+  const seen = new Set();
+  for (const entry of [].concat(primary || [], fallback || [])) {
+    if (!entry || !entry.normalized) {
+      continue;
+    }
+    if (seen.has(entry.normalized)) {
+      continue;
+    }
+    seen.add(entry.normalized);
+    result.push(entry);
+  }
+  return result;
+}
+
+function parseSearchPlan(rawPlan, fallbackIntent = "show") {
+  const planObject = rawPlan && typeof rawPlan === "object" ? rawPlan : {};
+  const intent = normalizeAction(planObject.intent || fallbackIntent);
+  const must = normalizePlanArray(planObject.mustInclude);
+  const should = normalizePlanArray(planObject.shouldInclude);
+  const exclude = normalizePlanArray(planObject.exclude);
+  const domainValues = Array.isArray(planObject.domainHints)
+    ? planObject.domainHints.map((value) => normalizeDomainHint(value)).filter(Boolean)
+    : [];
+  const domainHints = normalizePlanArray(domainValues);
+  const phrases = normalizePlanArray(planObject.searchPhrases);
+  const maxResults = Number.isFinite(planObject.maxResults) ? Math.max(1, Math.floor(planObject.maxResults)) : null;
+  const requireModel = Boolean(planObject.requireModel);
+  const reasoning = typeof planObject.reasoning === "string" ? planObject.reasoning.trim() : "";
+  const rawTimeRange = planObject.timeRange && typeof planObject.timeRange === "object" ? planObject.timeRange : null;
+  return {
+    intent,
+    must,
+    should,
+    exclude,
+    domainHints,
+    phrases,
+    maxResults,
+    requireModel,
+    reasoning,
+    rawTimeRange,
+  };
+}
+
+function applySearchPlanToItems(items, plan, promptKeywords = []) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const fallbackOptional = normalizePromptKeywords(promptKeywords);
+  const optionalEntries = plan && plan.should && plan.should.length
+    ? mergeEntrySets(plan.should, fallbackOptional)
+    : fallbackOptional;
+  const mustEntries = Array.isArray(plan?.must) ? plan.must : [];
+  const excludeEntries = Array.isArray(plan?.exclude) ? plan.exclude : [];
+  const domainEntries = Array.isArray(plan?.domainHints) ? plan.domainHints : [];
+  const phraseEntries = Array.isArray(plan?.phrases) ? plan.phrases : [];
+
+  const annotated = [];
+
+  for (const item of items) {
+    if (!item) {
+      continue;
+    }
+
+    if (excludeEntries.length && excludeEntries.some((entry) => itemMatchesKeyword(item, entry.normalized))) {
+      continue;
+    }
+
+    const host = typeof item.host === "string" ? item.host.toLowerCase() : "";
+    const origin = typeof item.origin === "string" ? item.origin.toLowerCase() : "";
+    const url = typeof item.url === "string" ? item.url.toLowerCase() : "";
+
+    const domainMatches = domainEntries.filter(
+      (entry) => host.includes(entry.normalized) || origin.includes(entry.normalized) || url.includes(entry.normalized)
+    );
+    if (domainEntries.length && !domainMatches.length) {
+      continue;
+    }
+
+    const mustMatches = mustEntries.filter((entry) => itemMatchesKeyword(item, entry.normalized));
+    if (mustEntries.length && mustMatches.length !== mustEntries.length) {
+      continue;
+    }
+
+    const optionalMatches = optionalEntries.filter((entry) => itemMatchesKeyword(item, entry.normalized));
+    const phraseMatches = phraseEntries.filter((entry) => itemMatchesKeyword(item, entry.normalized));
+
+    let score = Number(item.lastVisitTime) || 0;
+    if (!Number.isFinite(score)) {
+      score = 0;
+    }
+
+    score += mustMatches.length * 6 * 60 * 60 * 1000;
+    score += optionalMatches.length * 4 * 60 * 60 * 1000;
+    score += phraseMatches.length * 3 * 60 * 60 * 1000;
+    score += domainMatches.length * 5 * 60 * 60 * 1000;
+
+    if (plan?.intent === "summarize" && typeof item.visitCount === "number") {
+      score += Math.min(48, item.visitCount) * 30 * 60 * 1000;
+    }
+
+    annotated.push({
+      item,
+      score,
+      matches: {
+        required: mustMatches.map((entry) => entry.value),
+        optional: optionalMatches.map((entry) => entry.value),
+        phrases: phraseMatches.map((entry) => entry.value),
+        domains: domainMatches.map((entry) => entry.value),
+      },
+    });
+  }
+
+  annotated.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    const aVisits = typeof a.item.visitCount === "number" ? a.item.visitCount : 0;
+    const bVisits = typeof b.item.visitCount === "number" ? b.item.visitCount : 0;
+    if (bVisits !== aVisits) {
+      return bVisits - aVisits;
+    }
+    const aTime = Number(a.item.lastVisitTime) || 0;
+    const bTime = Number(b.item.lastVisitTime) || 0;
+    return bTime - aTime;
+  });
+
+  if (plan?.maxResults && Number.isFinite(plan.maxResults)) {
+    const limit = Math.max(1, Math.min(MAX_DATASET_ENTRIES, Math.floor(plan.maxResults)));
+    return annotated.slice(0, limit);
+  }
+
+  return annotated;
+}
+
+function summarizePlan(plan) {
+  if (!plan) {
+    return "Intent: show\nNo additional filters were derived.";
+  }
+  const parts = [`Intent: ${plan.intent}`];
+  if (plan.must && plan.must.length) {
+    parts.push(`Must include: ${plan.must.map((entry) => entry.value).join(", ")}`);
+  }
+  if (plan.should && plan.should.length) {
+    parts.push(`Should include: ${plan.should.map((entry) => entry.value).join(", ")}`);
+  }
+  if (plan.domainHints && plan.domainHints.length) {
+    parts.push(`Domain hints: ${plan.domainHints.map((entry) => entry.value).join(", ")}`);
+  }
+  if (plan.exclude && plan.exclude.length) {
+    parts.push(`Exclude: ${plan.exclude.map((entry) => entry.value).join(", ")}`);
+  }
+  if (plan.phrases && plan.phrases.length) {
+    parts.push(`Search phrases: ${plan.phrases.map((entry) => entry.value).join(", ")}`);
+  }
+  if (plan.maxResults) {
+    parts.push(`Max results requested: ${plan.maxResults}`);
+  }
+  if (plan.requireModel) {
+    parts.push("Model reasoning required: true");
+  }
+  if (plan.reasoning) {
+    parts.push(`Reasoning: ${plan.reasoning}`);
+  }
+  return parts.join("\n");
 }
 
 function dedupeByUrl(items) {
@@ -388,7 +658,7 @@ function dedupeByUrl(items) {
   return result;
 }
 
-function toDatasetEntry(item) {
+function toDatasetEntry(item, annotations = {}) {
   if (!item || typeof item !== "object") {
     return null;
   }
@@ -401,7 +671,7 @@ function toDatasetEntry(item) {
       return "";
     }
   })();
-  return {
+  const entry = {
     id: item.id,
     title: item.title || item.url || "Untitled",
     url: item.url,
@@ -409,17 +679,46 @@ function toDatasetEntry(item) {
     lastVisitTime: lastVisitIso,
     visitCount: typeof item.visitCount === "number" ? item.visitCount : 0,
   };
+  if (annotations && typeof annotations === "object") {
+    for (const [key, value] of Object.entries(annotations)) {
+      if (value === undefined) {
+        continue;
+      }
+      entry[key] = value;
+    }
+  }
+  return entry;
 }
 
-function buildInterpretationPrompt({ prompt, dataset, nowIso, range, confidence }) {
+function buildInterpretationPrompt({
+  prompt,
+  dataset,
+  nowIso,
+  range,
+  confidence,
+  planSummary,
+  datasetSize,
+  totalAvailable,
+  maxReturn,
+}) {
   const datasetJson = JSON.stringify(dataset, null, 2);
   const rangeText = range ? `\nDetected range: ${range.start} to ${range.end}` : "";
   const confidenceText = Number.isFinite(confidence) ? `\nTime range confidence: ${confidence.toFixed(2)}` : "";
-  return `You are the Smart History Search Assistant. Interpret the user's request using the provided browser history entries.\n\nCurrent UTC time: ${nowIso}${rangeText}${confidenceText}\nUser request: """${prompt}"""\n\nThe dataset below contains browser history entries in reverse chronological order. Only use these entries when selecting results. Return JSON that matches this schema exactly:\n{\n  "action": "show" | "open" | "delete" | "summarize" | "unknown",\n  "outputMessage": string,\n  "filteredResultIds": number[],\n  "notes": string (optional explanatory text)\n}\n\nRules:\n- Choose result ids only from the dataset.\n- Limit filteredResultIds to at most ${MAX_RESULT_IDS} entries, ordered by relevance.\n- Prefer entries that match the user's intent, domains, or topics.\n- If nothing matches, return an empty filteredResultIds array and craft a helpful outputMessage explaining that no history was found.\n- Use the "delete" action only if the user clearly wants to remove history entries.\n- Use the "open" action only if the user wants tabs reopened. Otherwise default to "show".\n- Summaries should still list relevant result ids.\n- Respond with JSON only.\n\nHistory dataset:\n${datasetJson}`;
+  const summaryText = planSummary ? `\nSearch plan:\n${planSummary}` : "";
+  const datasetInfo = `\nProvided dataset entries: ${dataset.length} (focused from ${datasetSize} plan matches, ${totalAvailable} total in range)`;
+  const returnLimit = Math.max(1, Math.min(MAX_RESULT_IDS, maxReturn || MAX_RESULT_IDS));
+  return `You are the Smart History Search Assistant. Interpret the user's request using the provided browser history entries.\n\nCurrent UTC time: ${nowIso}${rangeText}${confidenceText}${summaryText}${datasetInfo}\nUser request: """${prompt}"""\n\nThe dataset below contains browser history entries in reverse chronological order. Only use these entries when selecting results. Return JSON that matches this schema exactly:\n{\n  "action": "show" | "open" | "delete" | "summarize" | "unknown",\n  "outputMessage": string,\n  "filteredResultIds": number[],\n  "notes": string (optional explanatory text)\n}\n\nRules:\n- Choose result ids only from the dataset.\n- Limit filteredResultIds to at most ${returnLimit} entries, ordered by relevance.\n- Prefer entries that match the user's intent, domains, or topics.\n- When the user asks for "all" or a broad result, include as many entries as allowed by the limit.\n- If nothing matches, return an empty filteredResultIds array and craft a helpful outputMessage explaining that no history was found.\n- Use the "delete" action only if the user clearly wants to remove history entries.\n- Use the "open" action only if the user wants tabs reopened. Otherwise default to "show".\n- Summaries should still list relevant result ids.\n- Respond with JSON only.\n\nHistory dataset:\n${datasetJson}`;
 }
 
 function buildTimeRangePrompt(prompt, nowIso) {
   return `You analyze natural language history queries and extract an explicit UTC time range.\nCurrent UTC time: ${nowIso}\nUser request: """${prompt}"""\n\nRespond with JSON only:\n{\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "confidence": number between 0 and 1 (optional)\n}\n\nGuidance:\n- Interpret relative phrases like "past 3 hours" or "23 minutes ago".\n- When the request mentions a single instant (for example "around 9 PM"), create a narrow window that includes that instant.\n- Clamp the end time so it is not in the future.\n- If you cannot determine a range, return null.`;
+}
+
+function buildSearchPlanPrompt({ prompt, nowIso, range, confidence, keywords }) {
+  const keywordText = keywords?.length ? keywords.join(", ") : "(none)";
+  const rangeText = range ? `start=${range.start}, end=${range.end}` : "(none)";
+  const confidenceText = Number.isFinite(confidence) ? confidence.toFixed(2) : "unknown";
+  return `You are a planning agent that translates natural language history questions into structured search filters.\nCurrent UTC time: ${nowIso}\nUser request: """${prompt}"""\nHeuristic time range: ${rangeText}\nHeuristic confidence: ${confidenceText}\nCandidate keywords from prompt: ${keywordText}\n\nRespond with JSON only:\n{\n  "intent": "show" | "open" | "delete" | "summarize" | "unknown",\n  "mustInclude": string[] (terms that must appear),\n  "shouldInclude": string[] (terms to boost),\n  "exclude": string[] (terms to remove),\n  "domainHints": string[] (hostnames or domains),\n  "searchPhrases": string[] (longer phrases to match),\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "maxResults": number (desired result cap),\n  "requireModel": boolean (true if model reasoning is essential),\n  "reasoning": string (brief explanation)\n}\n\nGuidance:\n- Reuse the heuristic range if it fits the request; otherwise tighten or broaden it as needed.\n- Include hostnames (like "youtube.com") in domainHints when the request targets a site.\n- Increase maxResults when the user asks for "all" or a broad list, up to ${MAX_RESULT_IDS}.\n- Set requireModel to true when semantic understanding beyond keyword filtering is necessary.\n- Leave arrays empty when they are not needed.`;
 }
 
 async function ensureSessionInstance(state) {
@@ -518,35 +817,65 @@ function createResultPayload(item) {
   return payload;
 }
 
-function maybeHandleLocally({ prompt, items, limit = LOCAL_RESULT_LIMIT, range, confidence }) {
-  const action = detectPromptAction(prompt);
-  if (action !== "show") {
+function maybeHandleLocally({
+  prompt,
+  annotatedItems,
+  limit = LOCAL_RESULT_LIMIT,
+  range,
+  confidence,
+  plan,
+}) {
+  const intent = plan?.intent || detectPromptAction(prompt);
+  if (intent !== "show") {
     return null;
   }
-  const keywords = extractMeaningfulKeywords(prompt);
-  const filteredItems = filterItemsByKeywords(items, keywords);
-  if (!filteredItems.length) {
+  if (plan?.requireModel) {
     return null;
   }
-  const limitedItems = filteredItems.slice(0, Math.max(1, limit));
-  const results = limitedItems.map((item) => createResultPayload(item)).filter(Boolean);
+  if (!Array.isArray(annotatedItems) || !annotatedItems.length) {
+    return null;
+  }
+
+  const maxPlanLimit = plan?.maxResults && Number.isFinite(plan.maxResults) ? plan.maxResults : null;
+  const limitCandidates = [Math.max(1, limit), LOCAL_RESULT_LIMIT, MAX_RESULT_IDS];
+  if (maxPlanLimit) {
+    limitCandidates.push(Math.max(1, Math.floor(maxPlanLimit)));
+  }
+  const effectiveLimit = Math.max(1, Math.min(...limitCandidates));
+  const limitedItems = annotatedItems.slice(0, effectiveLimit);
+  const results = limitedItems.map((entry) => createResultPayload(entry.item)).filter(Boolean);
   if (!results.length) {
     return null;
   }
 
+  const planKeywords = [];
+  if (Array.isArray(plan?.must) && plan.must.length) {
+    planKeywords.push(...plan.must.map((entry) => entry.value));
+  }
+  if (Array.isArray(plan?.should) && plan.should.length) {
+    planKeywords.push(...plan.should.map((entry) => entry.value));
+  }
+  if (!planKeywords.length) {
+    planKeywords.push(...extractMeaningfulKeywords(prompt));
+  }
+  const uniqueKeywords = Array.from(new Set(planKeywords.filter(Boolean)));
+
   let message;
-  if (keywords.length) {
-    const keywordText = keywords.map((keyword) => `"${keyword}"`).join(", ");
+  if (uniqueKeywords.length) {
+    const keywordText = uniqueKeywords.map((keyword) => `"${keyword}"`).join(", ");
     message = `Here are the history entries matching ${keywordText}.`;
   } else {
     message = "Here are the history entries from your selected time range.";
   }
 
-  const totalCount = filteredItems.length;
+  const totalCount = annotatedItems.length;
   const notesParts = [];
   notesParts.push(totalCount === 1 ? "Found 1 entry." : `Found ${totalCount} entries.`);
   if (results.length < totalCount) {
     notesParts.push(`Showing the first ${results.length}. Refine your request to narrow the results.`);
+  }
+  if (plan?.reasoning) {
+    notesParts.push(plan.reasoning);
   }
 
   return {
@@ -642,6 +971,8 @@ export function createHistoryAssistantService(options = {}) {
       throw new Error("Enter a history request to analyze");
     }
     const nowIso = new Date(now).toISOString();
+    const promptKeywords = extractMeaningfulKeywords(trimmed);
+    const heuristicIntent = detectPromptAction(trimmed);
     let session = null;
     let detectedRangeInfo = deriveTimeRangeFromPrompt(trimmed, now);
     let detectedRange = detectedRangeInfo?.range || null;
@@ -667,47 +998,153 @@ export function createHistoryAssistantService(options = {}) {
       detectedRange = fallbackTimeRange(now);
     }
 
-    const allRelevantItems = dedupeByUrl(selectHistoryItems(items, detectedRange));
-    const datasetSize = allRelevantItems.length;
-    if (!datasetSize) {
-      return {
-        action: "show",
-        message: "No history entries were found in that time range.",
-        results: [],
-        timeRange: {
-          start: formatIso(detectedRange.start),
-          end: formatIso(detectedRange.end),
-        },
-        datasetSize: 0,
-        confidence,
-      };
+    const heuristicRangeIso = {
+      start: formatIso(detectedRange.start),
+      end: formatIso(detectedRange.end),
+    };
+
+    let planResponse = null;
+    let plan = null;
+    try {
+      if (!session) {
+        session = await ensureSessionInstance(state);
+      }
+      let plannerSession = session;
+      if (plannerSession && typeof plannerSession.clone === "function") {
+        try {
+          plannerSession = await plannerSession.clone();
+        } catch (err) {
+          plannerSession = session;
+        }
+      }
+      planResponse = await runPrompt(
+        plannerSession,
+        buildSearchPlanPrompt({
+          prompt: trimmed,
+          nowIso,
+          range: heuristicRangeIso,
+          confidence,
+          keywords: promptKeywords,
+        }),
+        SEARCH_PLAN_SCHEMA
+      );
+    } catch (err) {
+      console.warn("Spotlight: search plan generation failed", err);
     }
 
-    const relevantItems = allRelevantItems.slice(0, MAX_DATASET_ENTRIES);
-    const dataset = relevantItems
-      .map((item) => toDatasetEntry(item))
-      .filter(Boolean);
+    plan = parseSearchPlan(planResponse, heuristicIntent);
+
+    if (plan?.rawTimeRange) {
+      const planRange = clampTimeRange(plan.rawTimeRange, now);
+      if (planRange) {
+        if (detectedRange) {
+          const intersectStart = Math.max(detectedRange.start, planRange.start);
+          const intersectEnd = Math.min(detectedRange.end, planRange.end);
+          if (intersectEnd > intersectStart) {
+            detectedRange = { start: intersectStart, end: intersectEnd };
+          } else {
+            detectedRange = planRange;
+          }
+        } else {
+          detectedRange = planRange;
+        }
+        confidence = typeof confidence === "number" ? Math.max(confidence, 0.75) : 0.75;
+      }
+    }
 
     const timeRangeIso = {
       start: formatIso(detectedRange.start),
       end: formatIso(detectedRange.end),
     };
 
+    const rangeItems = dedupeByUrl(selectHistoryItems(items, detectedRange));
+    const totalRangeCount = rangeItems.length;
+    if (!totalRangeCount) {
+      return {
+        action: "show",
+        message: "No history entries were found in that time range.",
+        results: [],
+        timeRange: timeRangeIso,
+        datasetSize: 0,
+        confidence,
+      };
+    }
+
+    let annotatedItems = applySearchPlanToItems(rangeItems, plan, promptKeywords);
+    if (!annotatedItems.length) {
+      annotatedItems = rangeItems.map((item) => ({
+        item,
+        score: Number(item.lastVisitTime) || 0,
+        matches: { required: [], optional: [], phrases: [], domains: [] },
+      }));
+    }
+    const planMatchCount = annotatedItems.length;
+
+    const datasetAnnotated = annotatedItems.slice(0, MAX_DATASET_ENTRIES);
+    const dataset = datasetAnnotated
+      .map(({ item, score, matches }) => {
+        const sanitizedMatches = {};
+        if (Array.isArray(matches?.required) && matches.required.length) {
+          sanitizedMatches.required = matches.required;
+        }
+        if (Array.isArray(matches?.optional) && matches.optional.length) {
+          sanitizedMatches.optional = matches.optional;
+        }
+        if (Array.isArray(matches?.phrases) && matches.phrases.length) {
+          sanitizedMatches.phrases = matches.phrases;
+        }
+        if (Array.isArray(matches?.domains) && matches.domains.length) {
+          sanitizedMatches.domains = matches.domains;
+        }
+        const annotations = { score: Math.round(score) };
+        if (Object.keys(sanitizedMatches).length) {
+          annotations.matches = sanitizedMatches;
+        }
+        return toDatasetEntry(item, annotations);
+      })
+      .filter(Boolean);
+
+    if (!dataset.length) {
+      return {
+        action: "show",
+        message: "No matching history entries were found for that request.",
+        results: [],
+        timeRange: timeRangeIso,
+        datasetSize: 0,
+        confidence,
+      };
+    }
+
+    const planSummary = summarizePlan(plan);
+    const maxReturn = plan?.maxResults ? Math.min(MAX_RESULT_IDS, Math.max(1, plan.maxResults)) : MAX_RESULT_IDS;
+
     const localResponse = maybeHandleLocally({
       prompt: trimmed,
-      items: allRelevantItems,
+      annotatedItems,
       limit: LOCAL_RESULT_LIMIT,
       range: timeRangeIso,
       confidence,
+      plan,
     });
 
     console.info("Spotlight history assistant dataset", {
       prompt: trimmed,
       timeRange: timeRangeIso,
       count: dataset.length,
-      total: datasetSize,
-      truncated: datasetSize > dataset.length,
+      planMatches: planMatchCount,
+      total: totalRangeCount,
+      truncated: planMatchCount > dataset.length,
       handledLocally: Boolean(localResponse),
+      plan: {
+        intent: plan?.intent || null,
+        must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
+        should: Array.isArray(plan?.should) ? plan.should.map((entry) => entry.value) : [],
+        exclude: Array.isArray(plan?.exclude) ? plan.exclude.map((entry) => entry.value) : [],
+        domainHints: Array.isArray(plan?.domainHints) ? plan.domainHints.map((entry) => entry.value) : [],
+        phrases: Array.isArray(plan?.phrases) ? plan.phrases.map((entry) => entry.value) : [],
+        maxResults: plan?.maxResults || null,
+        requireModel: Boolean(plan?.requireModel),
+      },
       tabs: dataset,
     });
 
@@ -715,7 +1152,7 @@ export function createHistoryAssistantService(options = {}) {
       return {
         ...localResponse,
         timeRange: timeRangeIso,
-        datasetSize,
+        datasetSize: planMatchCount,
         confidence: typeof localResponse.confidence === "number" ? localResponse.confidence : confidence,
       };
     }
@@ -741,6 +1178,10 @@ export function createHistoryAssistantService(options = {}) {
         nowIso,
         range: timeRangeIso,
         confidence,
+        planSummary,
+        datasetSize: planMatchCount,
+        totalAvailable: totalRangeCount,
+        maxReturn,
       }),
       INTERPRETATION_SCHEMA
     );
@@ -749,6 +1190,7 @@ export function createHistoryAssistantService(options = {}) {
     const requestedIds = Array.isArray(interpretation?.filteredResultIds)
       ? interpretation.filteredResultIds
       : [];
+    const idToAnnotated = new Map(datasetAnnotated.map((entry) => [entry.item.id, entry]));
     const idSet = new Set();
     const results = [];
     for (const idValue of requestedIds) {
@@ -760,15 +1202,15 @@ export function createHistoryAssistantService(options = {}) {
         continue;
       }
       idSet.add(numericId);
-      const match = relevantItems.find((entry) => entry.id === numericId);
-      if (!match) {
+      const annotated = idToAnnotated.get(numericId);
+      if (!annotated) {
         continue;
       }
-      const payload = createResultPayload(match);
+      const payload = createResultPayload(annotated.item);
       if (payload) {
         results.push(payload);
       }
-      if (results.length >= MAX_RESULT_IDS) {
+      if (results.length >= maxReturn) {
         break;
       }
     }
@@ -777,13 +1219,22 @@ export function createHistoryAssistantService(options = {}) {
       ? interpretation.outputMessage.trim()
       : buildFallbackMessage(detectedRange);
 
+    const interpretationNotes = typeof interpretation?.notes === "string" ? interpretation.notes.trim() : "";
+    const notesParts = [];
+    if (interpretationNotes) {
+      notesParts.push(interpretationNotes);
+    }
+    if (plan?.reasoning && (!interpretationNotes || !interpretationNotes.includes(plan.reasoning))) {
+      notesParts.push(plan.reasoning);
+    }
+
     return {
-      action: normalizedAction,
+      action: normalizedAction === "unknown" ? plan.intent : normalizedAction,
       message,
-      notes: typeof interpretation?.notes === "string" ? interpretation.notes.trim() : "",
+      notes: notesParts.join(" ").trim(),
       results,
       timeRange: timeRangeIso,
-      datasetSize,
+      datasetSize: planMatchCount,
       confidence,
     };
   }
