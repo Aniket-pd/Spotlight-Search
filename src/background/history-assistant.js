@@ -363,6 +363,18 @@ export function createHistoryAssistantService(options = {}) {
       .map((item) => toDatasetEntry(item))
       .filter(Boolean);
 
+    const timeRangeIso = {
+      start: formatIso(detectedRange.start),
+      end: formatIso(detectedRange.end),
+    };
+
+    console.info("Spotlight history assistant dataset", {
+      prompt: trimmed,
+      timeRange: timeRangeIso,
+      count: dataset.length,
+      tabs: dataset,
+    });
+
     let stage2Session = session;
     if (session && typeof session.clone === "function") {
       try {
@@ -378,10 +390,7 @@ export function createHistoryAssistantService(options = {}) {
         prompt: trimmed,
         dataset,
         nowIso,
-        range: {
-          start: formatIso(detectedRange.start),
-          end: formatIso(detectedRange.end),
-        },
+        range: timeRangeIso,
         confidence,
       }),
       INTERPRETATION_SCHEMA
@@ -419,17 +428,12 @@ export function createHistoryAssistantService(options = {}) {
       ? interpretation.outputMessage.trim()
       : buildFallbackMessage(detectedRange);
 
-    const timeRange = {
-      start: formatIso(detectedRange.start),
-      end: formatIso(detectedRange.end),
-    };
-
     return {
       action: normalizedAction,
       message,
       notes: typeof interpretation?.notes === "string" ? interpretation.notes.trim() : "",
       results,
-      timeRange,
+      timeRange: timeRangeIso,
       datasetSize: relevantItems.length,
       confidence,
     };
