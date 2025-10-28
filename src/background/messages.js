@@ -29,6 +29,10 @@ export function registerMessageHandlers({
               navigation: navigationState,
               webSearch: message.webSearch,
               historyAssistant,
+              historyAssistantPrompt:
+                typeof message.historyAssistantPrompt === "string"
+                  ? message.historyAssistantPrompt
+                  : undefined,
             }) || {}
           )
             .then((payload) => {

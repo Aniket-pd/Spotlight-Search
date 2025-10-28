@@ -298,6 +298,7 @@ export function createHistoryAssistantService() {
         confidence,
         timeRange: normalizedRange,
         hasResults: itemIds.length > 0,
+        prompt,
       };
     },
   };

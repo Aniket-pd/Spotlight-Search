@@ -17,6 +17,10 @@ let inputEl = null;
 let resultsEl = null;
 let resultsState = [];
 let historyAssistantState = null;
+let historyAssistantInputContainerEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantSubmitEl = null;
+let historyAssistantCommittedPrompt = "";
 let activeIndex = -1;
 let isOpen = false;
 let requestCounter = 0;
@@ -382,6 +386,34 @@ function createOverlay() {
   inputWrapper.appendChild(subfilterContainerEl);
   ensureBookmarkOrganizerControl();
 
+  historyAssistantInputContainerEl = document.createElement("div");
+  historyAssistantInputContainerEl.className = "spotlight-history-assistant-input-container";
+  historyAssistantInputContainerEl.setAttribute("role", "group");
+  historyAssistantInputContainerEl.setAttribute("aria-hidden", "true");
+  historyAssistantInputContainerEl.setAttribute("aria-label", "History assistant prompt");
+  const historyAssistantLabel = document.createElement("span");
+  historyAssistantLabel.className = "spotlight-history-assistant-input-label";
+  historyAssistantLabel.textContent = "History assistant";
+  const historyAssistantLabelId = "spotlight-history-assistant-label";
+  historyAssistantLabel.id = historyAssistantLabelId;
+  historyAssistantInputContainerEl.appendChild(historyAssistantLabel);
+  historyAssistantInputEl = document.createElement("input");
+  historyAssistantInputEl.type = "text";
+  historyAssistantInputEl.className = "spotlight-history-assistant-input";
+  historyAssistantInputEl.setAttribute("placeholder", "Ask your history assistant…");
+  historyAssistantInputEl.setAttribute("spellcheck", "true");
+  historyAssistantInputEl.setAttribute("aria-label", "Ask the history assistant");
+  historyAssistantInputEl.setAttribute("aria-labelledby", historyAssistantLabelId);
+  historyAssistantInputEl.id = "spotlight-history-assistant-input";
+  historyAssistantInputContainerEl.appendChild(historyAssistantInputEl);
+  historyAssistantSubmitEl = document.createElement("button");
+  historyAssistantSubmitEl.type = "button";
+  historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
+  historyAssistantSubmitEl.textContent = "Ask";
+  historyAssistantSubmitEl.setAttribute("aria-label", "Run history assistant");
+  historyAssistantInputContainerEl.appendChild(historyAssistantSubmitEl);
+  inputWrapper.appendChild(historyAssistantInputContainerEl);
+
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
   statusEl.textContent = "";
@@ -436,6 +468,32 @@ function createOverlay() {
       inputContainerEl.classList.remove("focused");
     }
   });
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.addEventListener("input", (event) => {
+      event.stopPropagation();
+      handleHistoryAssistantPromptInput();
+    });
+    historyAssistantInputEl.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      handleHistoryAssistantPromptKeydown(event);
+    });
+    historyAssistantInputEl.addEventListener("keyup", (event) => {
+      event.stopPropagation();
+    });
+    historyAssistantInputEl.addEventListener("focus", () => {
+      handleHistoryAssistantPromptInput();
+    });
+    historyAssistantInputEl.addEventListener("blur", () => {
+      handleHistoryAssistantPromptInput();
+    });
+  }
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleHistoryAssistantPromptSubmit(event);
+    });
+  }
+  updateHistoryAssistantInputVisibility();
   document.addEventListener("keydown", handleGlobalKeydown, true);
 
   installOverlayGuards();
@@ -519,6 +577,40 @@ function resetEngineMenuState() {
     engineMenuEl.classList.remove("visible");
     engineMenuEl.setAttribute("aria-hidden", "true");
     engineMenuEl.removeAttribute("aria-activedescendant");
+  }
+}
+
+function resetHistoryAssistantPrompt(options = {}) {
+  const { clearCommitted = true } = options;
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  if (historyAssistantInputContainerEl) {
+    historyAssistantInputContainerEl.classList.remove("focused");
+  }
+  if (clearCommitted) {
+    historyAssistantCommittedPrompt = "";
+  }
+}
+
+function updateHistoryAssistantInputVisibility() {
+  if (!historyAssistantInputContainerEl) {
+    return;
+  }
+  const shouldShow = activeFilter === "history";
+  historyAssistantInputContainerEl.classList.toggle("visible", shouldShow);
+  historyAssistantInputContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (historyAssistantInputEl) {
+    historyAssistantInputEl.toggleAttribute("disabled", !shouldShow);
+  }
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.toggleAttribute("disabled", !shouldShow);
+  }
+  if (!shouldShow) {
+    if (historyAssistantInputEl && document.activeElement === historyAssistantInputEl) {
+      historyAssistantInputEl.blur();
+    }
+    resetHistoryAssistantPrompt();
   }
 }
 
@@ -1260,6 +1352,7 @@ async function openOverlay() {
   activeIndex = -1;
   resultsState = [];
   historyAssistantState = null;
+  resetHistoryAssistantPrompt({ clearCommitted: true });
   lazyList.reset();
   statusEl.textContent = "";
   statusSticky = false;
@@ -1272,6 +1365,7 @@ async function openOverlay() {
   resetEngineMenuState();
   resetWebSearchSelection();
   pointerNavigationSuspended = true;
+  updateHistoryAssistantInputVisibility();
 
   if (!shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
@@ -1309,9 +1403,11 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  resetHistoryAssistantPrompt({ clearCommitted: true });
   historyAssistantState = null;
   resultsState = [];
   lazyList.reset();
+  updateHistoryAssistantInputVisibility();
   if (resultsEl) {
     resultsEl.innerHTML = "";
   }
@@ -1322,6 +1418,13 @@ function closeOverlay() {
 
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
+  if (
+    historyAssistantInputContainerEl &&
+    historyAssistantInputContainerEl.classList.contains("visible") &&
+    historyAssistantInputContainerEl.contains(event.target)
+  ) {
+    return;
+  }
   if (slashMenuVisible && slashMenuOptions.length) {
     return;
   }
@@ -1443,6 +1546,65 @@ function handleInputKeydown(event) {
   }
 }
 
+function handleHistoryAssistantPromptInput() {
+  if (!historyAssistantInputContainerEl) {
+    return;
+  }
+  historyAssistantInputContainerEl.classList.toggle(
+    "focused",
+    document.activeElement === historyAssistantInputEl && !historyAssistantInputEl.disabled
+  );
+}
+
+function submitHistoryAssistantPrompt() {
+  if (!historyAssistantInputEl || historyAssistantInputEl.disabled) {
+    return;
+  }
+  const raw = historyAssistantInputEl.value || "";
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    if (historyAssistantCommittedPrompt) {
+      historyAssistantCommittedPrompt = "";
+      historyAssistantState = null;
+      renderResults();
+      requestResults(inputEl ? inputEl.value : "", { historyAssistantPrompt: "" });
+    }
+    return;
+  }
+  historyAssistantCommittedPrompt = trimmed;
+  historyAssistantInputEl.value = trimmed;
+  historyAssistantState = null;
+  renderResults();
+  setStatus("Asking history assistant…", { force: true });
+  requestResults(inputEl ? inputEl.value : "", { historyAssistantPrompt: trimmed });
+}
+
+function handleHistoryAssistantPromptKeydown(event) {
+  if (!historyAssistantInputEl || historyAssistantInputEl.disabled) {
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+    event.preventDefault();
+    submitHistoryAssistantPrompt();
+    return;
+  }
+  if (event.key === "Escape") {
+    if (historyAssistantInputEl.value) {
+      event.preventDefault();
+      historyAssistantInputEl.value = "";
+      historyAssistantCommittedPrompt = "";
+      historyAssistantState = null;
+      renderResults();
+      requestResults(inputEl ? inputEl.value : "", { historyAssistantPrompt: "" });
+    }
+  }
+}
+
+function handleHistoryAssistantPromptSubmit(event) {
+  event.preventDefault();
+  submitHistoryAssistantPrompt();
+}
+
 function handleInputChange() {
   const query = inputEl.value;
   updateSlashMenu();
@@ -1497,7 +1659,7 @@ function handleInputChange() {
   }, 80);
 }
 
-function requestResults(query) {
+function requestResults(query, extraOptions = {}) {
   lastRequestId = ++requestCounter;
   const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
   if (selectedSubfilter && selectedSubfilter.type && selectedSubfilter.id) {
@@ -1506,6 +1668,19 @@ function requestResults(query) {
   const engineId = getActiveWebSearchEngineId();
   if (engineId) {
     message.webSearch = { engineId };
+  }
+  const hasPromptOverride = Object.prototype.hasOwnProperty.call(extraOptions, "historyAssistantPrompt");
+  if (hasPromptOverride) {
+    const override =
+      typeof extraOptions.historyAssistantPrompt === "string"
+        ? extraOptions.historyAssistantPrompt.trim()
+        : "";
+    historyAssistantCommittedPrompt = override;
+    if (override) {
+      message.historyAssistantPrompt = override;
+    }
+  } else if (historyAssistantCommittedPrompt) {
+    message.historyAssistantPrompt = historyAssistantCommittedPrompt;
   }
   chrome.runtime.sendMessage(
     message,
@@ -2248,6 +2423,8 @@ function renderResults() {
     return;
   }
 
+  updateHistoryAssistantInputVisibility();
+
   resultsEl.innerHTML = "";
 
   if (inputEl.value.trim() === "> reindex") {
@@ -2268,8 +2445,22 @@ function renderResults() {
     return;
   }
 
-  const assistantInfo =
+  let assistantInfo =
     historyAssistantState && historyAssistantState.filter === activeFilter ? historyAssistantState : null;
+  if (assistantInfo) {
+    const committedPrompt = historyAssistantCommittedPrompt || "";
+    const inputPrompt = inputEl && typeof inputEl.value === "string" ? inputEl.value.trim() : "";
+    if (assistantInfo.prompt) {
+      const normalizedPrompt = assistantInfo.prompt.trim();
+      const matchesCommitted = committedPrompt && normalizedPrompt === committedPrompt;
+      const matchesQuery = inputPrompt && normalizedPrompt === inputPrompt;
+      if (!matchesCommitted && !matchesQuery) {
+        assistantInfo = null;
+      }
+    } else if (committedPrompt) {
+      assistantInfo = null;
+    }
+  }
   if (assistantInfo) {
     const header = buildHistoryAssistantHeader(assistantInfo);
     if (header) {
@@ -2557,6 +2748,7 @@ function normalizeHistoryAssistantPayload(payload, filter) {
     typeof payload.confidence === "number" && Number.isFinite(payload.confidence) ? payload.confidence : null;
   const timeRange = normalizeAssistantTimeRange(payload.timeRange);
   const totalResults = Number.isFinite(payload.totalResults) ? payload.totalResults : null;
+  const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
   return {
     message,
     action,
@@ -2566,6 +2758,7 @@ function normalizeHistoryAssistantPayload(payload, filter) {
     timeRange,
     totalResults,
     filter,
+    prompt,
   };
 }
 

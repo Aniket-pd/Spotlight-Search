@@ -1509,8 +1509,10 @@ export async function runSearch(query, data, options = {}) {
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
   const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
+  const historyAssistantPrompt =
+    typeof options.historyAssistantPrompt === "string" ? options.historyAssistantPrompt.trim() : "";
 
-  if (!trimmed) {
+  const buildDefaultResponse = () => {
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()
@@ -1601,17 +1603,23 @@ export async function runSearch(query, data, options = {}) {
       filter: filterType,
       subfilters: subfilterPayload,
     };
+  };
+
+  if (!trimmed && !historyAssistantPrompt) {
+    return buildDefaultResponse();
   }
+
 
   if (filterType === "history" && options?.historyAssistant) {
     const historyAssistantService = options.historyAssistant;
-    if (historyAssistantService && typeof historyAssistantService.runSmartHistorySearch === "function") {
+    const assistantQuery = historyAssistantPrompt || trimmed;
+    if (assistantQuery && historyAssistantService && typeof historyAssistantService.runSmartHistorySearch === "function") {
       const assistantCandidates = historyItems.filter((item) =>
         matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)
       );
       if (assistantCandidates.length) {
         try {
-          const assistantResult = await historyAssistantService.runSmartHistorySearch(trimmed, {
+          const assistantResult = await historyAssistantService.runSmartHistorySearch(assistantQuery, {
             historyItems: assistantCandidates,
             now,
           });
@@ -1669,6 +1677,10 @@ export async function runSearch(query, data, options = {}) {
                 hasResults: assistantResult.hasResults !== false && limitedResults.length > 0,
                 empty: assistantResult.hasResults === false,
                 totalResults: mappedItems.length,
+                prompt:
+                  typeof assistantResult.prompt === "string" && assistantResult.prompt
+                    ? assistantResult.prompt
+                    : assistantQuery,
               },
             };
           }
@@ -1677,6 +1689,10 @@ export async function runSearch(query, data, options = {}) {
         }
       }
     }
+  }
+
+  if (!trimmed) {
+    return buildDefaultResponse();
   }
 
   const tokens = tokenize(trimmed);
