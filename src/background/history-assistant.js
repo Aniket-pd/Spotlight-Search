@@ -11,6 +11,31 @@ const SUMMARY_TOP_HOSTS_LIMIT = 8;
 const SUMMARY_TOP_KEYWORDS_LIMIT = 12;
 const SUMMARY_HIGHLIGHT_LIMIT = 40;
 
+const DEV_MODE =
+  typeof process !== "undefined" &&
+  process &&
+  process.env &&
+  process.env.NODE_ENV !== "production";
+
+const FILTER_STOP_KEYWORDS = new Set([
+  "visit",
+  "visits",
+  "visited",
+  "view",
+  "views",
+  "open",
+  "opened",
+  "opening",
+  "watch",
+  "watched",
+  "watching",
+  "history",
+  "tab",
+  "tabs",
+  "page",
+  "pages",
+]);
+
 const FOLLOWUP_HINT_REGEX = [
   /^(?:and|also|then|now|so)\b/,
   /\bwhat about\b/,
@@ -1011,6 +1036,45 @@ function normalizeDomainHint(value) {
     .toLowerCase();
 }
 
+function removeStopKeywordEntries(entries, removedCollector) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [];
+  }
+  const result = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry.normalized !== "string") {
+      continue;
+    }
+    const normalized = entry.normalized;
+    if (FILTER_STOP_KEYWORDS.has(normalized)) {
+      if (removedCollector && typeof removedCollector.add === "function") {
+        const label = typeof entry.value === "string" && entry.value.trim() ? entry.value.trim() : normalized;
+        removedCollector.add(label);
+      }
+      continue;
+    }
+    result.push(entry);
+  }
+  return result;
+}
+
+function extractHostname(value) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  return normalizeDomainHint(value);
+}
+
+function hostMatchesDomain(host, domain) {
+  if (!host || !domain) {
+    return false;
+  }
+  if (host === domain) {
+    return true;
+  }
+  return host.endsWith(`.${domain}`);
+}
+
 function normalizePromptKeywords(keywords) {
   if (!Array.isArray(keywords) || !keywords.length) {
     return [];
@@ -1068,15 +1132,23 @@ function parseSearchPlan(rawPlan, fallbackIntent = "show") {
 }
 
 function applySearchPlanToItems(items, plan, promptKeywords = []) {
+  const emptyMeta = {
+    domains: [],
+    required: [],
+    optional: [],
+    phrases: [],
+    removedStopwords: [],
+  };
+
   if (!Array.isArray(items)) {
-    return [];
+    return { items: [], meta: emptyMeta };
   }
 
-  const fallbackOptional = normalizePromptKeywords(promptKeywords);
-  const optionalEntries = plan && plan.should && plan.should.length
-    ? mergeEntrySets(plan.should, fallbackOptional)
-    : fallbackOptional;
-  const mustEntries = Array.isArray(plan?.must) ? plan.must : [];
+  const removedStopwordSet = new Set();
+  const fallbackOptional = removeStopKeywordEntries(normalizePromptKeywords(promptKeywords), removedStopwordSet);
+  const mustEntries = removeStopKeywordEntries(Array.isArray(plan?.must) ? plan.must : [], removedStopwordSet);
+  const shouldEntries = removeStopKeywordEntries(Array.isArray(plan?.should) ? plan.should : [], removedStopwordSet);
+  const optionalEntries = shouldEntries.length ? mergeEntrySets(shouldEntries, fallbackOptional) : fallbackOptional;
   const excludeEntries = Array.isArray(plan?.exclude) ? plan.exclude : [];
   const domainEntries = Array.isArray(plan?.domainHints) ? plan.domainHints : [];
   const phraseEntries = Array.isArray(plan?.phrases) ? plan.phrases : [];
@@ -1092,13 +1164,18 @@ function applySearchPlanToItems(items, plan, promptKeywords = []) {
       continue;
     }
 
-    const host = typeof item.host === "string" ? item.host.toLowerCase() : "";
-    const origin = typeof item.origin === "string" ? item.origin.toLowerCase() : "";
-    const url = typeof item.url === "string" ? item.url.toLowerCase() : "";
+    const host = typeof item.host === "string" && item.host ? item.host.toLowerCase() : "";
+    const originHost = extractHostname(item.origin);
+    const urlHost = extractHostname(item.url);
 
-    const domainMatches = domainEntries.filter(
-      (entry) => host.includes(entry.normalized) || origin.includes(entry.normalized) || url.includes(entry.normalized)
-    );
+    const domainMatches = domainEntries.filter((entry) => {
+      const normalized = entry.normalized;
+      return (
+        (host && hostMatchesDomain(host, normalized)) ||
+        (originHost && hostMatchesDomain(originHost, normalized)) ||
+        (urlHost && hostMatchesDomain(urlHost, normalized))
+      );
+    });
     if (domainEntries.length && !domainMatches.length) {
       continue;
     }
@@ -1153,10 +1230,30 @@ function applySearchPlanToItems(items, plan, promptKeywords = []) {
 
   if (plan?.maxResults && Number.isFinite(plan.maxResults)) {
     const limit = Math.max(1, Math.min(MAX_DATASET_ENTRIES, Math.floor(plan.maxResults)));
-    return annotated.slice(0, limit);
+    annotated.splice(limit);
   }
 
-  return annotated;
+  const meta = {
+    domains: domainEntries.map((entry) => entry.value),
+    required: mustEntries.map((entry) => entry.value),
+    optional: optionalEntries.map((entry) => entry.value),
+    phrases: phraseEntries.map((entry) => entry.value),
+    removedStopwords: Array.from(removedStopwordSet),
+  };
+
+  if (DEV_MODE && (meta.domains.length || meta.optional.length || meta.required.length || meta.removedStopwords.length)) {
+    console.debug("Spotlight history assistant filters", {
+      domains: meta.domains,
+      keywords: {
+        required: meta.required,
+        optional: meta.optional,
+        phrases: meta.phrases,
+      },
+      removedStopwords: meta.removedStopwords,
+    });
+  }
+
+  return { items: annotated, meta };
 }
 
 function summarizePlan(plan) {
@@ -1947,8 +2044,13 @@ export function createHistoryAssistantService(options = {}) {
       return responsePayload;
     }
 
-    let annotatedItems = applySearchPlanToItems(rangeItems, plan, promptKeywords);
+    const planApplication = applySearchPlanToItems(rangeItems, plan, promptKeywords);
+    let annotatedItems = planApplication.items;
+    const filterMeta = planApplication.meta ? { ...planApplication.meta, fallbackApplied: false } : null;
     if (!annotatedItems.length) {
+      if (filterMeta) {
+        filterMeta.fallbackApplied = true;
+      }
       annotatedItems = rangeItems.map((item) => ({
         item,
         score: Number(item.lastVisitTime) || 0,
@@ -2031,6 +2133,7 @@ export function createHistoryAssistantService(options = {}) {
       truncated: planMatchCount > dataset.length,
       handledLocally: Boolean(localResponse),
       followup: isFollowup,
+      filters: filterMeta,
       plan: {
         intent: plan?.intent || null,
         must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
