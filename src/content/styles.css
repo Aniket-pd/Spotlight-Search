@@ -507,6 +507,69 @@
   object-fit: cover;
 }
 
+.spotlight-assistant-message {
+  padding: 16px 20px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+}
+
+.spotlight-assistant-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spotlight-assistant-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(99, 137, 255, 0.28);
+  color: #f8fafc;
+}
+
+.spotlight-assistant-text {
+  font-size: 15px;
+  line-height: 1.45;
+  color: #f8fafc;
+}
+
+.spotlight-assistant-subtext {
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.spotlight-assistant-action-button {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #0f172a;
+  background: rgba(248, 250, 252, 0.9);
+  transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+.spotlight-assistant-action-button:hover:not(:disabled) {
+  background: #ffffff;
+  transform: translateY(-1px);
+}
+
+.spotlight-assistant-action-button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
 .spotlight-result:hover,
 .spotlight-result.active {
   background: rgba(99, 137, 255, 0.2);

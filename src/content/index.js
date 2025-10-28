@@ -17,6 +17,8 @@ let inputEl = null;
 let resultsEl = null;
 let resultsState = [];
 let activeIndex = -1;
+let assistantState = null;
+let assistantActionPending = false;
 let isOpen = false;
 let requestCounter = 0;
 let pendingQueryTimeout = null;
@@ -1308,6 +1310,8 @@ function closeOverlay() {
   resetEngineMenuState();
   resetWebSearchSelection();
   resultsState = [];
+  assistantState = null;
+  assistantActionPending = false;
   lazyList.reset();
   if (resultsEl) {
     resultsEl.innerHTML = "";
@@ -1494,6 +1498,68 @@ function handleInputChange() {
   }, 80);
 }
 
+function normalizeAssistantAction(value) {
+  if (typeof value !== "string") {
+    return "show";
+  }
+  const lowered = value.toLowerCase();
+  if (lowered === "show" || lowered === "open" || lowered === "delete" || lowered === "summarize") {
+    return lowered;
+  }
+  if (lowered.includes("delete")) {
+    return "delete";
+  }
+  if (lowered.includes("open")) {
+    return "open";
+  }
+  if (lowered.includes("summarize")) {
+    return "summarize";
+  }
+  return "show";
+}
+
+function normalizeAssistantPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  const action = normalizeAssistantAction(payload.action);
+  const itemIds = Array.isArray(payload.itemIds)
+    ? payload.itemIds
+        .map((value) => Number(value))
+        .filter((value, index, list) => Number.isInteger(value) && value >= 0 && list.indexOf(value) === index)
+    : [];
+  const rangeLabel = typeof payload.rangeLabel === "string" ? payload.rangeLabel.trim() : "";
+  const normalized = {
+    message,
+    action,
+    itemIds,
+  };
+  if (rangeLabel) {
+    normalized.rangeLabel = rangeLabel;
+  }
+  const timeRange = payload.timeRange;
+  if (timeRange && typeof timeRange === "object") {
+    const range = {};
+    if (typeof timeRange.start === "number" && Number.isFinite(timeRange.start)) {
+      range.start = timeRange.start;
+    }
+    if (typeof timeRange.end === "number" && Number.isFinite(timeRange.end)) {
+      range.end = timeRange.end;
+    }
+    if (typeof timeRange.confidence === "number" && Number.isFinite(timeRange.confidence)) {
+      range.confidence = Math.max(0, Math.min(1, timeRange.confidence));
+    }
+    if (Object.keys(range).length) {
+      normalized.timeRange = range;
+    }
+  }
+  if (!normalized.message && !normalized.itemIds.length && !normalized.rangeLabel) {
+    return null;
+  }
+  return normalized;
+}
+
 function requestResults(query) {
   lastRequestId = ++requestCounter;
   const message = { type: "SPOTLIGHT_QUERY", query, requestId: lastRequestId };
@@ -1513,11 +1579,16 @@ function requestResults(query) {
           setGhostText("");
           setStatus("", { force: true });
         }
+        assistantState = null;
+        assistantActionPending = false;
+        renderResults();
         return;
       }
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      assistantState = normalizeAssistantPayload(response.assistant);
+      assistantActionPending = false;
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
       pruneSummaryState();
@@ -2239,6 +2310,126 @@ function requestSummaryForResult(result, options = {}) {
   }
 }
 
+function formatAssistantActionLabel(action) {
+  const normalized = normalizeAssistantAction(action);
+  switch (normalized) {
+    case "delete":
+      return "Delete";
+    case "open":
+      return "Open";
+    case "summarize":
+      return "Summarize";
+    default:
+      return "";
+  }
+}
+
+function renderAssistantHeader(parent) {
+  if (!parent || !assistantState) {
+    return false;
+  }
+  const message = typeof assistantState.message === "string" ? assistantState.message : "";
+  const rangeLabel = typeof assistantState.rangeLabel === "string" ? assistantState.rangeLabel : "";
+  const hasActionChip = assistantState.action && assistantState.action !== "show";
+  if (!message && !rangeLabel && !hasActionChip) {
+    return false;
+  }
+  const item = document.createElement("li");
+  item.className = "spotlight-assistant-message";
+  item.setAttribute("role", "presentation");
+
+  if (hasActionChip) {
+    const label = formatAssistantActionLabel(assistantState.action);
+    if (label) {
+      const header = document.createElement("div");
+      header.className = "spotlight-assistant-header";
+      const chip = document.createElement("span");
+      chip.className = "spotlight-assistant-chip";
+      chip.textContent = label;
+      header.appendChild(chip);
+      item.appendChild(header);
+    }
+  }
+
+  if (message) {
+    const text = document.createElement("div");
+    text.className = "spotlight-assistant-text";
+    text.textContent = message;
+    item.appendChild(text);
+  }
+
+  if (rangeLabel) {
+    const range = document.createElement("div");
+    range.className = "spotlight-assistant-subtext";
+    range.textContent = rangeLabel;
+    item.appendChild(range);
+  }
+
+  if (assistantState.action === "delete" && Array.isArray(assistantState.itemIds) && assistantState.itemIds.length) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-assistant-action-button";
+    button.textContent = assistantActionPending
+      ? "Deleting…"
+      : `Delete ${assistantState.itemIds.length} ${assistantState.itemIds.length === 1 ? "item" : "items"}`;
+    if (assistantActionPending) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleAssistantDelete();
+    });
+    item.appendChild(button);
+  }
+
+  parent.appendChild(item);
+  return true;
+}
+
+function handleAssistantDelete() {
+  if (!assistantState || assistantState.action !== "delete" || assistantActionPending) {
+    return;
+  }
+  const itemIds = Array.isArray(assistantState.itemIds) ? assistantState.itemIds : [];
+  if (!itemIds.length) {
+    setStatus("No history entries to delete", { force: true });
+    return;
+  }
+  assistantActionPending = true;
+  renderResults();
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_HISTORY_DELETE", itemIds }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("Spotlight history delete error", chrome.runtime.lastError);
+      setStatus("Unable to delete history", { force: true });
+      assistantActionPending = false;
+      renderResults();
+      return;
+    }
+    if (!response || !response.success) {
+      const message = typeof response?.error === "string" && response.error ? response.error : "Unable to delete history";
+      setStatus(message, { force: true });
+      assistantActionPending = false;
+      renderResults();
+      return;
+    }
+    setStatus("History deleted", { force: true });
+    assistantActionPending = false;
+    assistantState = null;
+    resultsState = [];
+    lazyList.setItems(resultsState);
+    renderResults();
+    if (inputEl) {
+      requestResults(inputEl.value);
+    }
+  });
+}
+
 function renderResults() {
   if (!resultsEl) {
     return;
@@ -2263,6 +2454,8 @@ function renderResults() {
     }
     return;
   }
+
+  renderAssistantHeader(resultsEl);
 
   if (!resultsState.length) {
     const li = document.createElement("li");

@@ -1463,6 +1463,12 @@ function buildNavigationResults(filterType, query, navigationState) {
   return results.slice(0, MAX_NAVIGATION_RESULTS);
 }
 
+export function analyzeQuery(query) {
+  const initial = (query || "").trim();
+  const { filterType, remainder } = extractFilterPrefix(initial);
+  return { filterType, trimmed: remainder.trim(), remainder };
+}
+
 export function runSearch(query, data, options = {}) {
   const initial = (query || "").trim();
   const { filterType, remainder } = extractFilterPrefix(initial);
@@ -1783,4 +1789,8 @@ export function runSearch(query, data, options = {}) {
     subfilters: subfilterPayload,
     webSearch: webSearchInfo,
   };
+}
+
+export function createResultFromItem(item, scoreValue) {
+  return buildResultFromItem(item, scoreValue);
 }

@@ -1,4 +1,5 @@
 import "../shared/web-search.js";
+import { analyzeQuery, createResultFromItem } from "../search/search.js";
 
 export function registerMessageHandlers({
   context,
@@ -8,6 +9,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -19,11 +21,14 @@ export function registerMessageHandlers({
       const navigationState = navigation
         ? navigation.getStateForTab(senderTabId)
         : { tabId: senderTabId, back: [], forward: [] };
+      const queryString = typeof message.query === "string" ? message.query : "";
+      const queryAnalysis = analyzeQuery(queryString);
+      const requestTimestamp = Date.now();
       context
         .ensureIndex()
-        .then((data) => {
+        .then(async (data) => {
           const payload =
-            runSearch(message.query || "", data, {
+            runSearch(queryString || "", data, {
               subfilter: message.subfilter,
               navigation: navigationState,
               webSearch: message.webSearch,
@@ -31,11 +36,97 @@ export function registerMessageHandlers({
           if (!payload.results || !Array.isArray(payload.results)) {
             payload.results = [];
           }
+
+          const activeFilter = typeof payload.filter === "string" && payload.filter ? payload.filter : queryAnalysis.filterType;
+          const assistantPrompt = queryAnalysis.trimmed || queryString.trim();
+          if (
+            historyAssistant &&
+            typeof historyAssistant.processQuery === "function" &&
+            activeFilter === "history" &&
+            assistantPrompt
+          ) {
+            try {
+              const assistantResult = await historyAssistant.processQuery({
+                prompt: assistantPrompt,
+                items: data.items,
+                now: requestTimestamp,
+              });
+              if (assistantResult) {
+                const assistantResults = Array.isArray(assistantResult.items)
+                  ? assistantResult.items.map((item) => createResultFromItem(item)).filter(Boolean)
+                  : [];
+                payload.results = assistantResults;
+                payload.ghost = null;
+                payload.answer = "";
+                payload.webSearch = undefined;
+                payload.assistant = {
+                  message: typeof assistantResult.message === "string" ? assistantResult.message : "",
+                  action: assistantResult.action || "show",
+                  itemIds: Array.isArray(assistantResult.itemIds) ? assistantResult.itemIds : undefined,
+                  rangeLabel:
+                    typeof assistantResult.rangeLabel === "string" && assistantResult.rangeLabel
+                      ? assistantResult.rangeLabel
+                      : undefined,
+                  timeRange: assistantResult.timeRange || undefined,
+                };
+              }
+            } catch (error) {
+              console.warn("Spotlight: history assistant failed", error);
+            }
+          }
+
           sendResponse({ ...payload, requestId: message.requestId });
         })
         .catch((err) => {
           console.error("Spotlight: query failed", err);
           sendResponse({ results: [], error: true, requestId: message.requestId });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_DELETE") {
+      const rawIds = Array.isArray(message.itemIds) ? message.itemIds : [];
+      const itemIds = rawIds
+        .map((value) => Number(value))
+        .filter((value, index, list) => Number.isInteger(value) && value >= 0 && list.indexOf(value) === index);
+      if (!itemIds.length) {
+        sendResponse({ success: false, error: "No history items specified" });
+        return true;
+      }
+      context
+        .ensureIndex()
+        .then(async (data) => {
+          const items = itemIds
+            .map((id) => data.items?.[id])
+            .filter((item) => item && item.type === "history" && typeof item.url === "string" && item.url);
+          if (!items.length) {
+            sendResponse({ success: false, error: "History entries not found" });
+            return;
+          }
+          const urls = Array.from(new Set(items.map((item) => item.url)));
+          const results = await Promise.allSettled(
+            urls.map((url) =>
+              chrome.history
+                .deleteUrl({ url })
+                .catch((error) => {
+                  console.warn("Spotlight: failed to delete history url", url, error);
+                  throw error;
+                })
+            )
+          );
+          if (typeof context.scheduleRebuild === "function") {
+            context.scheduleRebuild(500);
+          }
+          const failures = results.filter((entry) => entry.status === "rejected");
+          if (failures.length) {
+            sendResponse({ success: false, deleted: items.map((item) => item.id) });
+            return;
+          }
+          sendResponse({ success: true, deleted: items.map((item) => item.id) });
+        })
+        .catch((error) => {
+          console.error("Spotlight: history delete failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to delete history" });
         });
       return true;
     }
