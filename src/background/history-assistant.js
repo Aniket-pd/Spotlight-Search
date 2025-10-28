@@ -7,6 +7,9 @@ const LOCAL_RESULT_LIMIT = 60;
 const MAX_CONVERSATION_TURNS = 6;
 const MAX_CONVERSATION_CHARS = 2400;
 const MAX_CONVERSATION_AGE_MS = 20 * 60 * 1000;
+const SUMMARY_TOP_HOSTS_LIMIT = 8;
+const SUMMARY_TOP_KEYWORDS_LIMIT = 12;
+const SUMMARY_HIGHLIGHT_LIMIT = 40;
 
 const FOLLOWUP_HINT_REGEX = [
   /^(?:and|also|then|now|so)\b/,
@@ -188,6 +191,16 @@ const GENERAL_GREETING_SCHEMA = {
       items: { type: "string" },
       maxItems: 8,
     },
+  },
+  required: ["message"],
+  additionalProperties: false,
+};
+
+const SUMMARY_MESSAGE_SCHEMA = {
+  type: "object",
+  properties: {
+    message: { type: "string" },
+    notes: { type: "string" },
   },
   required: ["message"],
   additionalProperties: false,
@@ -395,6 +408,40 @@ function formatIso(timestamp) {
   }
   try {
     return new Date(timestamp).toISOString();
+  } catch (err) {
+    return null;
+  }
+}
+
+function formatFriendlyRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const startValue = Date.parse(range.start);
+  const endValue = Date.parse(range.end);
+  if (!Number.isFinite(startValue) || !Number.isFinite(endValue) || endValue <= startValue) {
+    return null;
+  }
+  try {
+    const startDate = new Date(startValue);
+    const endDate = new Date(endValue);
+    const locale = undefined;
+    const monthFormatter = new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" });
+    const dayFormatter = new Intl.DateTimeFormat(locale, { day: "numeric", timeZone: "UTC" });
+    const yearFormatter = new Intl.DateTimeFormat(locale, { year: "numeric", timeZone: "UTC" });
+    const startMonth = monthFormatter.format(startDate);
+    const endMonth = monthFormatter.format(endDate);
+    const startDay = dayFormatter.format(startDate);
+    const endDay = dayFormatter.format(endDate);
+    const startYear = yearFormatter.format(startDate);
+    const endYear = yearFormatter.format(endDate);
+    if (startYear === endYear) {
+      if (startMonth === endMonth) {
+        return `${startMonth} ${startDay}–${endDay}, ${startYear}`;
+      }
+      return `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${startYear}`;
+    }
+    return `${startMonth} ${startDay}, ${startYear} – ${endMonth} ${endDay}, ${endYear}`;
   } catch (err) {
     return null;
   }
@@ -1193,6 +1240,238 @@ function toDatasetEntry(item, annotations = {}) {
   return entry;
 }
 
+function buildSummaryAnalytics(dataset, planKeywords = []) {
+  const entries = Array.isArray(dataset) ? dataset.filter((entry) => entry && typeof entry === "object") : [];
+  const hostMap = new Map();
+  const dayMap = new Map();
+  const keywordMap = new Map();
+  const highlights = [];
+  let totalVisitCount = 0;
+
+  for (const entry of entries) {
+    const visitCount = Number(entry.visitCount) || 0;
+    totalVisitCount += visitCount;
+
+    const host = typeof entry.host === "string" ? entry.host.toLowerCase() : "";
+    if (host) {
+      if (!hostMap.has(host)) {
+        hostMap.set(host, { host, count: 0, visitCount: 0 });
+      }
+      const hostStat = hostMap.get(host);
+      hostStat.count += 1;
+      hostStat.visitCount += visitCount;
+    }
+
+    if (typeof entry.lastVisitTime === "string" && entry.lastVisitTime) {
+      const dayKey = entry.lastVisitTime.slice(0, 10);
+      if (dayKey) {
+        if (!dayMap.has(dayKey)) {
+          dayMap.set(dayKey, { day: dayKey, count: 0 });
+        }
+        const dayStat = dayMap.get(dayKey);
+        dayStat.count += 1;
+      }
+    }
+
+    if (typeof entry.title === "string" && entry.title) {
+      const tokens = entry.title.toLowerCase().match(/[a-z0-9]+/g);
+      if (tokens) {
+        const seen = new Set();
+        for (const token of tokens) {
+          if (STOP_WORDS.has(token) || TIME_WORDS.has(token) || NUMBER_WORDS.has(token)) {
+            continue;
+          }
+          if (/^\d+$/.test(token)) {
+            continue;
+          }
+          if (token.length < 3) {
+            continue;
+          }
+          if (seen.has(token)) {
+            continue;
+          }
+          seen.add(token);
+          keywordMap.set(token, (keywordMap.get(token) || 0) + 1);
+        }
+      }
+    }
+
+    if (highlights.length < SUMMARY_HIGHLIGHT_LIMIT) {
+      highlights.push({
+        title: entry.title || "Untitled",
+        host: entry.host || "",
+        lastVisitTime: entry.lastVisitTime || null,
+        visitCount,
+        url: entry.url || "",
+      });
+    }
+  }
+
+  const topHosts = Array.from(hostMap.values())
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return b.visitCount - a.visitCount;
+    })
+    .slice(0, SUMMARY_TOP_HOSTS_LIMIT);
+
+  const topKeywords = Array.from(keywordMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, SUMMARY_TOP_KEYWORDS_LIMIT)
+    .map(([keyword, count]) => ({ keyword, count }));
+
+  const dayBuckets = Array.from(dayMap.values()).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+
+  const planKeywordList = Array.isArray(planKeywords)
+    ? planKeywords.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim())
+    : [];
+
+  return {
+    entries,
+    totalEntries: entries.length,
+    uniqueHosts: hostMap.size,
+    totalVisitCount,
+    topHosts,
+    topKeywords,
+    dayBuckets,
+    highlights,
+    planKeywords: planKeywordList,
+  };
+}
+
+function buildSummaryNarrativePrompt({
+  prompt,
+  nowIso,
+  timeRange,
+  rangeLabel,
+  analytics,
+  followup,
+  conversation,
+}) {
+  const rangeText = rangeLabel ? `${rangeLabel}` : "Unknown";
+  const hostJson = JSON.stringify(analytics.topHosts, null, 2);
+  const keywordJson = JSON.stringify(analytics.topKeywords, null, 2);
+  const dayJson = JSON.stringify(analytics.dayBuckets, null, 2);
+  const highlightJson = JSON.stringify(analytics.highlights, null, 2);
+  const conversationText = conversation ? `\nConversation context:\n${conversation}` : "";
+  const planKeywordText = analytics.planKeywords.length ? analytics.planKeywords.join(", ") : "(none)";
+  const followupText = followup ? "yes" : "no";
+  const totalVisitsText = Number.isFinite(analytics.totalVisitCount)
+    ? analytics.totalVisitCount
+    : 0;
+  return `You are the Smart History Search Assistant. Craft a professional, friendly summary similar to ChatGPT.${conversationText}
+
+Current UTC time: ${nowIso}
+Follow-up request: ${followupText}
+User request: """${prompt}"""
+Time range: ${rangeText}
+Detected ISO range: ${timeRange && timeRange.start && timeRange.end ? `${timeRange.start} to ${timeRange.end}` : "unknown"}
+Entries analyzed: ${analytics.totalEntries}
+Unique sites: ${analytics.uniqueHosts}
+Aggregate visit count (approximate time investment): ${totalVisitsText}
+Plan keywords: ${planKeywordText}
+
+Top sites by activity:
+${hostJson}
+
+Top recurring keywords:
+${keywordJson}
+
+Daily activity counts (ISO date, matches per day):
+${dayJson}
+
+Recent highlights (most recent first):
+${highlightJson}
+
+Instructions:
+- Open with a short line that frames the summary and repeats the natural-language time window, similar to "Here’s a short summary of what you’ve done...".
+- Include at least two titled sections with emoji headers (for example, "🧠 Main Focus Areas" and "💻 Tech & Product Browsing").
+- Highlight the main topics, frequently visited domains, and any notable patterns in how time was spent.
+- Reference hosts, titles, or keywords from the data to make the summary feel specific and useful.
+- Close with an overall takeaway sentence.
+- Use Markdown bullet lists inside the sections. Keep the whole message under 1,800 characters.
+- If the data seems sparse, acknowledge that briefly but still provide helpful observations.
+
+Respond with JSON only:
+{
+  "message": string,
+  "notes": string (optional)
+}`;
+}
+
+function buildSummaryFallbackMessage(analytics, rangeLabel) {
+  const headerRange = rangeLabel ? `${rangeLabel}` : "your recent history";
+  const lines = [];
+  lines.push(`Here’s a quick summary of ${headerRange}:`);
+  lines.push("");
+  lines.push("🧠 Main Focus Areas");
+  if (analytics.topHosts.length) {
+    for (const host of analytics.topHosts.slice(0, 3)) {
+      lines.push(`- ${host.host} — ${host.count} visits${host.visitCount ? ` (approx. ${host.visitCount} total hits)` : ""}`);
+    }
+  } else {
+    lines.push("- Activity was spread across a variety of sites.");
+  }
+  lines.push("");
+  lines.push("🔍 Frequent Topics");
+  if (analytics.topKeywords.length) {
+    const keywordBullets = analytics.topKeywords.slice(0, 5).map((entry) => entry.keyword);
+    lines.push(`- ${keywordBullets.join(", ")}`);
+  } else {
+    lines.push("- No clear recurring topics surfaced.");
+  }
+  lines.push("");
+  lines.push("🧩 Overall Summary");
+  const totalEntriesText = analytics.totalEntries === 1 ? "1 history entry" : `${analytics.totalEntries} history entries`;
+  const uniqueHostsText = analytics.uniqueHosts === 1 ? "1 site" : `${analytics.uniqueHosts} sites`;
+  lines.push(`- Reviewed ${totalEntriesText} across ${uniqueHostsText}.`);
+  return lines.join("\n");
+}
+
+async function generateSummaryNarrative(session, options) {
+  if (!options || !options.analytics || !options.analytics.entries.length) {
+    return null;
+  }
+  const rangeLabel = formatFriendlyRange(options.timeRange);
+  const prompt = buildSummaryNarrativePrompt({
+    prompt: options.prompt,
+    nowIso: options.nowIso,
+    timeRange: options.timeRange,
+    rangeLabel,
+    analytics: options.analytics,
+    followup: options.followup,
+    conversation: options.conversation,
+  });
+
+  if (!session) {
+    return {
+      message: buildSummaryFallbackMessage(options.analytics, rangeLabel),
+      notes: "Summary generated locally (Prompt API unavailable).",
+      usedModel: false,
+    };
+  }
+
+  try {
+    const response = await runPrompt(session, prompt, SUMMARY_MESSAGE_SCHEMA);
+    if (response && typeof response.message === "string" && response.message.trim()) {
+      return {
+        message: response.message.trim(),
+        notes: typeof response.notes === "string" ? response.notes.trim() : "",
+        usedModel: true,
+      };
+    }
+  } catch (error) {
+    console.warn("Spotlight: summary narrative generation failed", error);
+  }
+
+  return {
+    message: buildSummaryFallbackMessage(options.analytics, rangeLabel),
+    notes: "Summary generated locally (Prompt API fallback).",
+    usedModel: false,
+  };
+}
+
 function buildInterpretationPrompt({
   prompt,
   dataset,
@@ -1702,6 +1981,8 @@ export function createHistoryAssistantService(options = {}) {
       })
       .filter(Boolean);
 
+    const summaryAnalytics = buildSummaryAnalytics(dataset, planKeywordsForRecord);
+
     if (!dataset.length) {
       const responsePayload = {
         action: "show",
@@ -1851,7 +2132,7 @@ export function createHistoryAssistantService(options = {}) {
       }
     }
 
-    const message = typeof interpretation?.outputMessage === "string" && interpretation.outputMessage
+    let message = typeof interpretation?.outputMessage === "string" && interpretation.outputMessage
       ? interpretation.outputMessage.trim()
       : buildFallbackMessage(detectedRange);
 
@@ -1862,6 +2143,44 @@ export function createHistoryAssistantService(options = {}) {
     }
     if (plan?.reasoning && (!interpretationNotes || !interpretationNotes.includes(plan.reasoning))) {
       notesParts.push(plan.reasoning);
+    }
+
+    let summarySource = null;
+    if (
+      summaryAnalytics.entries.length &&
+      (normalizedAction === "summarize" || (normalizedAction === "unknown" && plan?.intent === "summarize"))
+    ) {
+      let summarySession = stage2Session;
+      if (summarySession && typeof summarySession.clone === "function") {
+        try {
+          summarySession = await summarySession.clone();
+        } catch (error) {
+          summarySession = stage2Session;
+        }
+      }
+      const summaryResult = await generateSummaryNarrative(summarySession, {
+        prompt: trimmed,
+        nowIso,
+        timeRange: timeRangeIso,
+        analytics: summaryAnalytics,
+        followup: isFollowup,
+        conversation: conversationContext,
+      });
+      if (summaryResult && summaryResult.message) {
+        message = summaryResult.message;
+      }
+      if (summaryResult && summaryResult.notes) {
+        notesParts.push(summaryResult.notes);
+      }
+      summarySource = summaryResult ? (summaryResult.usedModel ? "promptApi" : "fallback") : null;
+      console.info("Spotlight history assistant summary", {
+        prompt: trimmed,
+        timeRange: timeRangeIso,
+        summarySource,
+        entriesAnalyzed: summaryAnalytics.totalEntries,
+        uniqueHosts: summaryAnalytics.uniqueHosts,
+        topHosts: summaryAnalytics.topHosts,
+      });
     }
 
     const responsePayload = {
@@ -1888,6 +2207,7 @@ export function createHistoryAssistantService(options = {}) {
       followup: isFollowup,
       confidence,
       source: "promptApi",
+      summarySource,
     });
 
     return responsePayload;
