@@ -112,6 +112,61 @@ const TIME_WORDS = new Set([
   "night",
 ]);
 
+const HISTORY_ACTION_HINTS = [
+  "list",
+  "show",
+  "find",
+  "search",
+  "open",
+  "delete",
+  "remove",
+  "clear",
+  "erase",
+  "locate",
+  "look",
+  "summarize",
+  "summarise",
+  "recap",
+];
+
+const HISTORY_OBJECT_HINTS = [
+  "tab",
+  "tabs",
+  "history",
+  "site",
+  "sites",
+  "page",
+  "pages",
+  "visit",
+  "visits",
+  "activity",
+  "records",
+  "entries",
+  "browsing",
+];
+
+const GENERAL_INQUIRY_REGEX = [
+  /\bwho\s+are\s+(you|u)\b/,
+  /\bwhat\s+(are|is)\s+(you|this|spotlight)\b/,
+  /\bwhat\s+can\s+(you|this)\s+do\b/,
+  /\bwhat\s+do\s+(you|this)\s+do\b/,
+  /\bhow\s+(can|do|are)\s+(you|this)\s+(help|assist|support)\b/,
+  /\bhow\s+(can|do|are)\s+(you|this)\s+usef(?:ul|ull)\b/,
+  /\bwhat\s+can\s+you\s+help\s+with\b/,
+  /\bwhat\s+are\s+your\s+capabilities\b/,
+  /\bwhat\s+can\s+i\s+ask\b/,
+  /\btell\s+me\s+about\s+(yourself|you)\b/,
+  /\bintroduce\s+yourself\b/,
+  /\bhow\s+do\s+i\s+use\s+(you|this|spotlight)\b/,
+];
+
+const GENERAL_RESPONSE_SUGGESTIONS = [
+  "List all YouTube tabs from yesterday.",
+  "Summarize what I did this morning.",
+  "Delete Google results from the last hour.",
+  "Open the sites I visited 20 minutes ago.",
+];
+
 const TIME_RANGE_SCHEMA = {
   type: "object",
   properties: {
@@ -397,6 +452,55 @@ function extractMeaningfulKeywords(prompt) {
     keywords.push(token);
   }
   return keywords;
+}
+
+function maybeHandleGeneralInquiryPrompt(prompt) {
+  if (!prompt || typeof prompt !== "string") {
+    return null;
+  }
+  const collapsed = prompt.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!collapsed) {
+    return null;
+  }
+  const cleaned = collapsed.replace(/[^a-z0-9\s?]/g, " ");
+  const padded = ` ${cleaned} `;
+
+  const actionHint = HISTORY_ACTION_HINTS.some((keyword) => padded.includes(` ${keyword} `));
+  const objectHint = HISTORY_OBJECT_HINTS.some((keyword) => padded.includes(` ${keyword} `));
+  const hasHistoryIntent = actionHint && objectHint;
+
+  const matchesGeneralRegex = GENERAL_INQUIRY_REGEX.some((regex) => regex.test(padded));
+  const containsGeneralKeyword = /\b(usef(?:ul|ull)|capab(?:le|ilities?|ility)|capabilities|abilities)\b/.test(
+    padded
+  );
+  const helpOnly =
+    /\bhelp\b/.test(padded) &&
+    !/\bhelp\s+me\s+(find|show|locate|search|open|delete|clear|remove|summarize|summarise|list|look)\b/.test(
+      padded
+    );
+
+  if (!(matchesGeneralRegex || containsGeneralKeyword || helpOnly)) {
+    return null;
+  }
+
+  if (hasHistoryIntent) {
+    return null;
+  }
+
+  const message =
+    "I'm the Spotlight history assistant. I can search, open, delete, and summarize your browsing history with natural language.";
+  const suggestions = GENERAL_RESPONSE_SUGGESTIONS.map((example) => `"${example}"`).join(" ");
+  const notes = suggestions ? `Try prompts like ${suggestions}` : "";
+
+  return {
+    action: "show",
+    message,
+    notes,
+    results: [],
+    timeRange: null,
+    datasetSize: 0,
+    confidence: 1,
+  };
 }
 
 function itemMatchesKeyword(item, keyword) {
@@ -969,6 +1073,14 @@ export function createHistoryAssistantService(options = {}) {
     const trimmed = typeof prompt === "string" ? prompt.trim() : "";
     if (!trimmed) {
       throw new Error("Enter a history request to analyze");
+    }
+    const generalResponse = maybeHandleGeneralInquiryPrompt(trimmed);
+    if (generalResponse) {
+      console.info("Spotlight history assistant general inquiry", {
+        prompt: trimmed,
+        handled: "general",
+      });
+      return generalResponse;
     }
     const nowIso = new Date(now).toISOString();
     const promptKeywords = extractMeaningfulKeywords(trimmed);
