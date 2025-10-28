@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -22,16 +23,25 @@ export function registerMessageHandlers({
       context
         .ensureIndex()
         .then((data) => {
-          const payload =
+          return Promise.resolve(
             runSearch(message.query || "", data, {
               subfilter: message.subfilter,
               navigation: navigationState,
               webSearch: message.webSearch,
-            }) || {};
-          if (!payload.results || !Array.isArray(payload.results)) {
-            payload.results = [];
-          }
-          sendResponse({ ...payload, requestId: message.requestId });
+              historyAssistant,
+            }) || {}
+          )
+            .then((payload) => {
+              const normalized = payload && typeof payload === "object" ? payload : {};
+              if (!Array.isArray(normalized.results)) {
+                normalized.results = [];
+              }
+              sendResponse({ ...normalized, requestId: message.requestId });
+            })
+            .catch((err) => {
+              console.error("Spotlight: query failed", err);
+              sendResponse({ results: [], error: true, requestId: message.requestId });
+            });
         })
         .catch((err) => {
           console.error("Spotlight: query failed", err);

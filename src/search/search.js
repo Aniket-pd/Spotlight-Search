@@ -1463,11 +1463,12 @@ function buildNavigationResults(filterType, query, navigationState) {
   return results.slice(0, MAX_NAVIGATION_RESULTS);
 }
 
-export function runSearch(query, data, options = {}) {
+export async function runSearch(query, data, options = {}) {
   const initial = (query || "").trim();
   const { filterType, remainder } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
   const { index, termBuckets, items, metadata = {} } = data;
+  const now = Date.now();
   const tabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
@@ -1492,7 +1493,8 @@ export function runSearch(query, data, options = {}) {
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
   const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
   const topSiteItems = items.filter((item) => item.type === "topSite");
-  const historyBoundaries = computeHistoryBoundaries(Date.now());
+  const historyItems = items.filter((item) => item.type === "history");
+  const historyBoundaries = computeHistoryBoundaries(now);
   const availableSubfilters = buildSubfilterOptions(filterType, {
     tabs,
     bookmarks: bookmarkItems,
@@ -1599,6 +1601,82 @@ export function runSearch(query, data, options = {}) {
       filter: filterType,
       subfilters: subfilterPayload,
     };
+  }
+
+  if (filterType === "history" && options?.historyAssistant) {
+    const historyAssistantService = options.historyAssistant;
+    if (historyAssistantService && typeof historyAssistantService.runSmartHistorySearch === "function") {
+      const assistantCandidates = historyItems.filter((item) =>
+        matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)
+      );
+      if (assistantCandidates.length) {
+        try {
+          const assistantResult = await historyAssistantService.runSmartHistorySearch(trimmed, {
+            historyItems: assistantCandidates,
+            now,
+          });
+          const hasExplicitEmpty = assistantResult && assistantResult.hasResults === false;
+          if (
+            assistantResult &&
+            typeof assistantResult.message === "string" &&
+            assistantResult.message &&
+            ((Array.isArray(assistantResult.itemIds) && assistantResult.itemIds.length) || hasExplicitEmpty)
+          ) {
+            const seenIds = new Set();
+            const mappedItems = [];
+            if (Array.isArray(assistantResult.itemIds)) {
+              for (const entryId of assistantResult.itemIds) {
+                const normalizedId = typeof entryId === "number" ? entryId : Number.parseInt(entryId, 10);
+                if (!Number.isInteger(normalizedId) || seenIds.has(normalizedId)) {
+                  continue;
+                }
+                const item = items[normalizedId];
+                if (!item || item.type !== "history") {
+                  continue;
+                }
+                if (!matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)) {
+                  continue;
+                }
+                const mapped = buildResultFromItem(item);
+                if (mapped) {
+                  mappedItems.push(mapped);
+                  seenIds.add(normalizedId);
+                }
+              }
+            }
+            const limit = getResultLimit(filterType);
+            const limitedResults = sliceResultsForLimit(mappedItems, limit);
+            return {
+              results: limitedResults,
+              ghost: null,
+              answer: "",
+              filter: filterType,
+              subfilters: subfilterPayload,
+              historyAssistant: {
+                message: assistantResult.message,
+                action:
+                  typeof assistantResult.action === "string" && assistantResult.action
+                    ? assistantResult.action
+                    : "show",
+                confidence:
+                  typeof assistantResult.confidence === "number" && Number.isFinite(assistantResult.confidence)
+                    ? assistantResult.confidence
+                    : null,
+                timeRange:
+                  assistantResult.timeRange && typeof assistantResult.timeRange === "object"
+                    ? assistantResult.timeRange
+                    : null,
+                hasResults: assistantResult.hasResults !== false && limitedResults.length > 0,
+                empty: assistantResult.hasResults === false,
+                totalResults: mappedItems.length,
+              },
+            };
+          }
+        } catch (error) {
+          console.warn("Spotlight: history assistant search failed", error);
+        }
+      }
+    }
   }
 
   const tokens = tokenize(trimmed);

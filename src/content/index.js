@@ -16,6 +16,7 @@ let containerEl = null;
 let inputEl = null;
 let resultsEl = null;
 let resultsState = [];
+let historyAssistantState = null;
 let activeIndex = -1;
 let isOpen = false;
 let requestCounter = 0;
@@ -1258,6 +1259,7 @@ async function openOverlay() {
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
+  historyAssistantState = null;
   lazyList.reset();
   statusEl.textContent = "";
   statusSticky = false;
@@ -1307,6 +1309,7 @@ function closeOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  historyAssistantState = null;
   resultsState = [];
   lazyList.reset();
   if (resultsEl) {
@@ -1518,6 +1521,7 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      historyAssistantState = normalizeHistoryAssistantPayload(response.historyAssistant, response.filter);
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
       pruneSummaryState();
@@ -2264,13 +2268,31 @@ function renderResults() {
     return;
   }
 
+  const assistantInfo =
+    historyAssistantState && historyAssistantState.filter === activeFilter ? historyAssistantState : null;
+  if (assistantInfo) {
+    const header = buildHistoryAssistantHeader(assistantInfo);
+    if (header) {
+      resultsEl.appendChild(header);
+    }
+  }
+
   if (!resultsState.length) {
-    const li = document.createElement("li");
-    li.className = "spotlight-result empty";
-    const scopeLabel = getFilterStatusLabel(activeFilter);
-    const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
-    li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
-    resultsEl.appendChild(li);
+    if (assistantInfo) {
+      if (assistantInfo.empty) {
+        const empty = document.createElement("li");
+        empty.className = "spotlight-result empty";
+        empty.textContent = "No history results matched that request";
+        resultsEl.appendChild(empty);
+      }
+    } else {
+      const li = document.createElement("li");
+      li.className = "spotlight-result empty";
+      const scopeLabel = getFilterStatusLabel(activeFilter);
+      const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
+      li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
+      resultsEl.appendChild(li);
+    }
     if (inputEl) {
       inputEl.removeAttribute("aria-activedescendant");
     }
@@ -2495,6 +2517,151 @@ function formatWebSearchStatus(info) {
     return `Web search: ${engineName}`;
   }
   return "";
+}
+
+function normalizeAssistantTimeRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const start = typeof range.start === "string" ? range.start : "";
+  const end = typeof range.end === "string" ? range.end : "";
+  if (!start || !end) {
+    return null;
+  }
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return null;
+  }
+  if (startDate.getTime() > endDate.getTime()) {
+    return null;
+  }
+  return { start: startDate.toISOString(), end: endDate.toISOString() };
+}
+
+function normalizeHistoryAssistantPayload(payload, filter) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (filter !== "history") {
+    return null;
+  }
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  if (!message) {
+    return null;
+  }
+  const action = typeof payload.action === "string" ? payload.action : "";
+  const hasResults = Boolean(payload.hasResults);
+  const empty = Boolean(payload.empty);
+  const confidence =
+    typeof payload.confidence === "number" && Number.isFinite(payload.confidence) ? payload.confidence : null;
+  const timeRange = normalizeAssistantTimeRange(payload.timeRange);
+  const totalResults = Number.isFinite(payload.totalResults) ? payload.totalResults : null;
+  return {
+    message,
+    action,
+    hasResults,
+    empty,
+    confidence,
+    timeRange,
+    totalResults,
+    filter,
+  };
+}
+
+function formatHistoryAssistantAction(action) {
+  switch ((action || "").toLowerCase()) {
+    case "open":
+      return "Open";
+    case "delete":
+      return "Delete";
+    case "summarize":
+      return "Summarize";
+    case "show":
+      return "Show";
+    default:
+      return "History";
+  }
+}
+
+function formatHistoryAssistantRange(range) {
+  if (!range || !range.start || !range.end) {
+    return "";
+  }
+  const start = new Date(range.start);
+  const end = new Date(range.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "";
+  }
+  const locale = typeof navigator !== "undefined" && navigator.language ? navigator.language : undefined;
+  const dateOptions = { month: "short", day: "numeric", year: "numeric" };
+  if (start.toDateString() === end.toDateString()) {
+    const dateLabel = start.toLocaleDateString(locale, dateOptions);
+    const startTime = start.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+    const endTime = end.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+    return `${dateLabel} · ${startTime} – ${endTime}`;
+  }
+  const startLabel = start.toLocaleDateString(locale, dateOptions);
+  const endLabel = end.toLocaleDateString(locale, dateOptions);
+  return `${startLabel} – ${endLabel}`;
+}
+
+function buildHistoryAssistantHeader(info) {
+  if (!info || !info.message) {
+    return null;
+  }
+  const header = document.createElement("li");
+  header.className = "spotlight-history-assistant";
+  header.setAttribute("role", "presentation");
+
+  const message = document.createElement("div");
+  message.className = "spotlight-history-assistant-message";
+  message.textContent = info.message;
+  header.appendChild(message);
+
+  const meta = document.createElement("div");
+  meta.className = "spotlight-history-assistant-meta";
+  let hasMeta = false;
+
+  const actionLabel = formatHistoryAssistantAction(info.action);
+  if (actionLabel) {
+    const badge = document.createElement("span");
+    badge.className = "spotlight-history-assistant-badge";
+    badge.textContent = actionLabel;
+    meta.appendChild(badge);
+    hasMeta = true;
+  }
+
+  const rangeLabel = formatHistoryAssistantRange(info.timeRange);
+  if (rangeLabel) {
+    const range = document.createElement("span");
+    range.className = "spotlight-history-assistant-range";
+    range.textContent = rangeLabel;
+    meta.appendChild(range);
+    hasMeta = true;
+  }
+
+  if (typeof info.totalResults === "number" && info.totalResults > 0) {
+    const count = document.createElement("span");
+    count.className = "spotlight-history-assistant-count";
+    count.textContent = info.totalResults === 1 ? "1 result" : `${info.totalResults} results`;
+    meta.appendChild(count);
+    hasMeta = true;
+  }
+
+  if (info.empty) {
+    const empty = document.createElement("span");
+    empty.className = "spotlight-history-assistant-count";
+    empty.textContent = "No matching history";
+    meta.appendChild(empty);
+    hasMeta = true;
+  }
+
+  if (hasMeta) {
+    header.appendChild(meta);
+  }
+
+  return header;
 }
 
 const DOWNLOAD_STATE_LABELS = {
