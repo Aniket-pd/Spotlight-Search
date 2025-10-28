@@ -1,8 +1,116 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LOOKBACK_MS = 7 * DAY_MS;
 const MAX_DATASET_ENTRIES = 160;
-const MAX_RESULT_IDS = 12;
+const MAX_RESULT_IDS = 24;
 const MAX_ACTION_TABS = 8;
+const LOCAL_RESULT_LIMIT = 50;
+
+const NUMBER_WORDS = new Map([
+  ["zero", 0],
+  ["one", 1],
+  ["two", 2],
+  ["three", 3],
+  ["four", 4],
+  ["five", 5],
+  ["six", 6],
+  ["seven", 7],
+  ["eight", 8],
+  ["nine", 9],
+  ["ten", 10],
+  ["eleven", 11],
+  ["twelve", 12],
+  ["thirteen", 13],
+  ["fourteen", 14],
+  ["fifteen", 15],
+  ["sixteen", 16],
+  ["seventeen", 17],
+  ["eighteen", 18],
+  ["nineteen", 19],
+  ["twenty", 20],
+  ["thirty", 30],
+  ["forty", 40],
+  ["fifty", 50],
+  ["sixty", 60],
+  ["seventy", 70],
+  ["eighty", 80],
+  ["ninety", 90],
+]);
+
+const STOP_WORDS = new Set([
+  "a",
+  "about",
+  "all",
+  "an",
+  "and",
+  "any",
+  "ask",
+  "assistant",
+  "at",
+  "be",
+  "browser",
+  "browsing",
+  "can",
+  "did",
+  "do",
+  "entries",
+  "entry",
+  "for",
+  "from",
+  "have",
+  "history",
+  "i",
+  "in",
+  "just",
+  "list",
+  "me",
+  "my",
+  "of",
+  "on",
+  "please",
+  "records",
+  "show",
+  "site",
+  "sites",
+  "tab",
+  "tabs",
+  "the",
+  "these",
+  "those",
+  "visit",
+  "visited",
+  "was",
+  "were",
+  "what",
+  "which",
+]);
+
+const TIME_WORDS = new Set([
+  "ago",
+  "earlier",
+  "day",
+  "days",
+  "hour",
+  "hours",
+  "minute",
+  "minutes",
+  "month",
+  "months",
+  "past",
+  "previous",
+  "recent",
+  "recently",
+  "this",
+  "today",
+  "week",
+  "weeks",
+  "yesterday",
+  "last",
+  "tonight",
+  "morning",
+  "afternoon",
+  "evening",
+  "night",
+]);
 
 const TIME_RANGE_SCHEMA = {
   type: "object",
@@ -50,6 +158,107 @@ const INTERPRETATION_SCHEMA = {
   additionalProperties: false,
 };
 
+function startOfLocalDay(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function endOfLocalDay(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(23, 59, 59, 999);
+  return date.getTime();
+}
+
+function parseQuantityToken(token, fallback = 1) {
+  if (!token) {
+    return fallback;
+  }
+  const numeric = Number(token);
+  if (Number.isFinite(numeric)) {
+    return numeric;
+  }
+  const normalized = token.toLowerCase();
+  if (NUMBER_WORDS.has(normalized)) {
+    return NUMBER_WORDS.get(normalized);
+  }
+  if (normalized === "a" || normalized === "an") {
+    return 1;
+  }
+  if (normalized === "couple") {
+    return 2;
+  }
+  if (normalized === "few" || normalized === "several") {
+    return 3;
+  }
+  return fallback;
+}
+
+function deriveTimeRangeFromPrompt(prompt, now = Date.now()) {
+  if (!prompt || typeof prompt !== "string") {
+    return null;
+  }
+  const normalized = prompt.toLowerCase();
+
+  if (normalized.includes("yesterday")) {
+    const end = startOfLocalDay(now);
+    const start = Math.max(0, end - DAY_MS);
+    if (end > start) {
+      return { range: { start, end }, confidence: 0.9 };
+    }
+  }
+
+  if (normalized.includes("today")) {
+    const start = startOfLocalDay(now);
+    const end = Math.max(start + 60 * 1000, Math.min(now, endOfLocalDay(now)));
+    if (end > start) {
+      return { range: { start, end }, confidence: 0.75 };
+    }
+  }
+
+  const relativeMatch = normalized.match(
+    /\b(?:past|last)\s+(?:the\s+)?(?:(\d+|[a-z]+)\s+)?(minute|hour|day|week|month)s?\b/
+  );
+  if (relativeMatch) {
+    const [, quantityToken, unit] = relativeMatch;
+    const count = parseQuantityToken(quantityToken, 1);
+    const unitLower = unit.toLowerCase();
+    const unitToMs = {
+      minute: 60 * 1000,
+      hour: 60 * 60 * 1000,
+      day: DAY_MS,
+      week: 7 * DAY_MS,
+      month: 30 * DAY_MS,
+    };
+    const duration = unitToMs[unitLower];
+    if (duration) {
+      const total = duration * Math.max(1, count);
+      if (unitLower === "day") {
+        const alignedStart = startOfLocalDay(now - (count - 1) * DAY_MS);
+        const end = Math.min(now, endOfLocalDay(now));
+        if (end > alignedStart) {
+          return { range: { start: Math.max(0, alignedStart), end }, confidence: 0.8 };
+        }
+      }
+      const start = Math.max(0, now - total);
+      if (now > start) {
+        return { range: { start, end: now }, confidence: 0.8 };
+      }
+    }
+  }
+
+  const lastWeekMatch = normalized.match(/\b(last|previous)\s+week\b/);
+  if (lastWeekMatch) {
+    const end = startOfLocalDay(now);
+    const start = Math.max(0, end - 7 * DAY_MS);
+    if (end > start) {
+      return { range: { start, end }, confidence: 0.7 };
+    }
+  }
+
+  return null;
+}
+
 function formatIso(timestamp) {
   if (!Number.isFinite(timestamp)) {
     return null;
@@ -93,6 +302,73 @@ function normalizeAction(action) {
     return normalized;
   }
   return "show";
+}
+
+function detectPromptAction(prompt) {
+  const normalized = typeof prompt === "string" ? prompt.toLowerCase() : "";
+  if (/\b(delete|remove|clear|erase|forget)\b/.test(normalized)) {
+    return "delete";
+  }
+  if (/\b(open|reopen|launch|restore)\b/.test(normalized)) {
+    return "open";
+  }
+  if (
+    /\b(summarize|summary|recap|overview|explain)\b/.test(normalized) ||
+    /\bwhat\s+(did|have)\s+i\s+(do|done)\b/.test(normalized)
+  ) {
+    return "summarize";
+  }
+  return "show";
+}
+
+function extractMeaningfulKeywords(prompt) {
+  if (!prompt || typeof prompt !== "string") {
+    return [];
+  }
+  const tokens = prompt.toLowerCase().match(/[a-z0-9]+/g);
+  if (!tokens) {
+    return [];
+  }
+  const keywords = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    if (STOP_WORDS.has(token) || TIME_WORDS.has(token) || NUMBER_WORDS.has(token)) {
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      continue;
+    }
+    if (token.length < 2) {
+      continue;
+    }
+    if (seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    keywords.push(token);
+  }
+  return keywords;
+}
+
+function itemMatchesKeyword(item, keyword) {
+  if (!item || !keyword) {
+    return false;
+  }
+  const normalized = keyword.toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const title = typeof item.title === "string" ? item.title.toLowerCase() : "";
+  const url = typeof item.url === "string" ? item.url.toLowerCase() : "";
+  const origin = typeof item.origin === "string" ? item.origin.toLowerCase() : "";
+  return title.includes(normalized) || url.includes(normalized) || origin.includes(normalized);
+}
+
+function filterItemsByKeywords(items, keywords) {
+  if (!Array.isArray(items) || !keywords?.length) {
+    return Array.isArray(items) ? items.slice() : [];
+  }
+  return items.filter((item) => keywords.every((keyword) => itemMatchesKeyword(item, keyword)));
 }
 
 function dedupeByUrl(items) {
@@ -242,6 +518,48 @@ function createResultPayload(item) {
   return payload;
 }
 
+function maybeHandleLocally({ prompt, items, limit = LOCAL_RESULT_LIMIT, range, confidence }) {
+  const action = detectPromptAction(prompt);
+  if (action !== "show") {
+    return null;
+  }
+  const keywords = extractMeaningfulKeywords(prompt);
+  const filteredItems = filterItemsByKeywords(items, keywords);
+  if (!filteredItems.length) {
+    return null;
+  }
+  const limitedItems = filteredItems.slice(0, Math.max(1, limit));
+  const results = limitedItems.map((item) => createResultPayload(item)).filter(Boolean);
+  if (!results.length) {
+    return null;
+  }
+
+  let message;
+  if (keywords.length) {
+    const keywordText = keywords.map((keyword) => `"${keyword}"`).join(", ");
+    message = `Here are the history entries matching ${keywordText}.`;
+  } else {
+    message = "Here are the history entries from your selected time range.";
+  }
+
+  const totalCount = filteredItems.length;
+  const notesParts = [];
+  notesParts.push(totalCount === 1 ? "Found 1 entry." : `Found ${totalCount} entries.`);
+  if (results.length < totalCount) {
+    notesParts.push(`Showing the first ${results.length}. Refine your request to narrow the results.`);
+  }
+
+  return {
+    action: "show",
+    message,
+    notes: notesParts.join(" ").trim(),
+    results,
+    timeRange: range,
+    datasetSize: totalCount,
+    confidence: typeof confidence === "number" ? confidence : null,
+  };
+}
+
 function buildFallbackMessage(range) {
   if (!range) {
     return "Here are the history results I found.";
@@ -323,29 +641,35 @@ export function createHistoryAssistantService(options = {}) {
     if (!trimmed) {
       throw new Error("Enter a history request to analyze");
     }
-    const session = await ensureSessionInstance(state);
     const nowIso = new Date(now).toISOString();
-    let detectedRange = null;
-    let confidence = null;
-    try {
-      const timeResponse = await runPrompt(session, buildTimeRangePrompt(trimmed, nowIso), TIME_RANGE_SCHEMA);
-      const clamped = clampTimeRange(timeResponse?.timeRange, now);
-      if (clamped) {
-        detectedRange = clamped;
+    let session = null;
+    let detectedRangeInfo = deriveTimeRangeFromPrompt(trimmed, now);
+    let detectedRange = detectedRangeInfo?.range || null;
+    let confidence = typeof detectedRangeInfo?.confidence === "number" ? detectedRangeInfo.confidence : null;
+
+    if (!detectedRange) {
+      session = await ensureSessionInstance(state);
+      try {
+        const timeResponse = await runPrompt(session, buildTimeRangePrompt(trimmed, nowIso), TIME_RANGE_SCHEMA);
+        const clamped = clampTimeRange(timeResponse?.timeRange, now);
+        if (clamped) {
+          detectedRange = clamped;
+        }
+        if (typeof timeResponse?.confidence === "number") {
+          confidence = Math.max(0, Math.min(1, timeResponse.confidence));
+        }
+      } catch (err) {
+        console.warn("Spotlight: time range detection failed", err);
       }
-      if (typeof timeResponse?.confidence === "number") {
-        confidence = Math.max(0, Math.min(1, timeResponse.confidence));
-      }
-    } catch (err) {
-      console.warn("Spotlight: time range detection failed", err);
     }
 
     if (!detectedRange) {
       detectedRange = fallbackTimeRange(now);
     }
 
-    const relevantItems = dedupeByUrl(selectHistoryItems(items, detectedRange)).slice(0, MAX_DATASET_ENTRIES);
-    if (!relevantItems.length) {
+    const allRelevantItems = dedupeByUrl(selectHistoryItems(items, detectedRange));
+    const datasetSize = allRelevantItems.length;
+    if (!datasetSize) {
       return {
         action: "show",
         message: "No history entries were found in that time range.",
@@ -359,6 +683,7 @@ export function createHistoryAssistantService(options = {}) {
       };
     }
 
+    const relevantItems = allRelevantItems.slice(0, MAX_DATASET_ENTRIES);
     const dataset = relevantItems
       .map((item) => toDatasetEntry(item))
       .filter(Boolean);
@@ -368,12 +693,36 @@ export function createHistoryAssistantService(options = {}) {
       end: formatIso(detectedRange.end),
     };
 
+    const localResponse = maybeHandleLocally({
+      prompt: trimmed,
+      items: allRelevantItems,
+      limit: LOCAL_RESULT_LIMIT,
+      range: timeRangeIso,
+      confidence,
+    });
+
     console.info("Spotlight history assistant dataset", {
       prompt: trimmed,
       timeRange: timeRangeIso,
       count: dataset.length,
+      total: datasetSize,
+      truncated: datasetSize > dataset.length,
+      handledLocally: Boolean(localResponse),
       tabs: dataset,
     });
+
+    if (localResponse) {
+      return {
+        ...localResponse,
+        timeRange: timeRangeIso,
+        datasetSize,
+        confidence: typeof localResponse.confidence === "number" ? localResponse.confidence : confidence,
+      };
+    }
+
+    if (!session) {
+      session = await ensureSessionInstance(state);
+    }
 
     let stage2Session = session;
     if (session && typeof session.clone === "function") {
@@ -434,7 +783,7 @@ export function createHistoryAssistantService(options = {}) {
       notes: typeof interpretation?.notes === "string" ? interpretation.notes.trim() : "",
       results,
       timeRange: timeRangeIso,
-      datasetSize: relevantItems.length,
+      datasetSize,
       confidence,
     };
   }
