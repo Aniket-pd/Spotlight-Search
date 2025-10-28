@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -94,6 +95,44 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      const requestId = message.requestId;
+      const prompt = typeof message.prompt === "string" ? message.prompt.trim() : "";
+      if (!historyAssistant || typeof historyAssistant.runAssistant !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable", requestId });
+        return true;
+      }
+      if (!prompt) {
+        sendResponse({ success: false, error: "Enter a history prompt", requestId });
+        return true;
+      }
+      context
+        .ensureIndex()
+        .then((data) => historyAssistant.runAssistant({ prompt, data, now: Date.now() }))
+        .then((result) => {
+          const payload = {
+            success: true,
+            requestId,
+            filter: "history",
+            results: Array.isArray(result?.results) ? result.results : [],
+            message: typeof result?.outputMessage === "string" ? result.outputMessage : "",
+            action: typeof result?.action === "string" ? result.action : "show",
+            summary: typeof result?.summary === "string" ? result.summary : "",
+            performedAction: result?.performedAction || null,
+            timeRange: result?.timeRange || null,
+            datasetSize: typeof result?.datasetSize === "number" ? result.datasetSize : undefined,
+            usedFallbackRange: Boolean(result?.usedFallbackRange),
+          };
+          sendResponse(payload);
+        })
+        .catch((err) => {
+          console.error("Spotlight: history assistant failed", err);
+          const errorMessage = err?.message || "Unable to run history assistant";
+          sendResponse({ success: false, error: errorMessage, requestId });
         });
       return true;
     }

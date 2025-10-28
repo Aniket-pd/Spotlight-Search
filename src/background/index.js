@@ -8,6 +8,7 @@ import { registerMessageHandlers } from "./messages.js";
 import { createNavigationService, registerNavigationListeners } from "./navigation.js";
 import { createSummarizerService } from "./summarizer.js";
 import { createBookmarkOrganizerService } from "./bookmark-organizer.js";
+import { createHistoryAssistantService } from "./history-assistant.js";
 import {
   registerLifecycleEvents,
   registerCommandShortcuts,
@@ -26,6 +27,7 @@ const executeCommand = createCommandExecutor({
 const { resolveFaviconForTarget } = createFaviconService({ cache: context.faviconCache });
 const navigation = createNavigationService();
 const summaries = createSummarizerService();
+const historyAssistant = createHistoryAssistantService({ scheduleRebuild: context.scheduleRebuild });
 
 registerNavigationListeners(navigation);
 
@@ -37,6 +39,7 @@ registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 });
 
 registerLifecycleEvents(context);

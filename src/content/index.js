@@ -51,6 +51,15 @@ let engineMenuAnchor = null;
 let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
+let historyAssistantEl = null;
+let historyAssistantFormEl = null;
+let historyAssistantInputEl = null;
+let historyAssistantSubmitEl = null;
+let historyAssistantStatusEl = null;
+let historyAssistantOutputEl = null;
+let historyAssistantOutputMessageEl = null;
+let historyAssistantOutputMetaEl = null;
+let historyAssistantSummaryEl = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -60,6 +69,23 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const historyAssistantState = {
+  visible: false,
+  loading: false,
+  active: false,
+  pendingRequestId: 0,
+  blockedRequestId: 0,
+  message: "",
+  summary: "",
+  action: "",
+  error: "",
+  timeRange: null,
+  performedAction: null,
+  lastPrompt: "",
+  usedFallback: false,
+  datasetSize: null,
+};
+let historyAssistantRequestCounter = 0;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -387,6 +413,11 @@ function createOverlay() {
   statusEl.setAttribute("role", "status");
   inputWrapper.appendChild(statusEl);
 
+  const assistantElement = createHistoryAssistantElements();
+  if (assistantElement) {
+    inputWrapper.appendChild(assistantElement);
+  }
+
   resultsEl = document.createElement("ul");
   resultsEl.className = "spotlight-results";
   resultsEl.setAttribute("role", "listbox");
@@ -494,6 +525,431 @@ function installOverlayGuards() {
       shadowRootEl.addEventListener(type, stopKeys);
     });
   }
+}
+
+function setHistoryAssistantStatus(message, options = {}) {
+  if (!historyAssistantStatusEl) {
+    return;
+  }
+  const opts = typeof options === "object" && options ? options : {};
+  const { error = false, loading = false } = opts;
+  historyAssistantStatusEl.textContent = message || "";
+  historyAssistantStatusEl.classList.toggle("error", Boolean(error && message));
+  historyAssistantStatusEl.classList.toggle("loading", Boolean(loading && message));
+}
+
+function setHistoryAssistantLoading(isLoading) {
+  const loading = Boolean(isLoading);
+  historyAssistantState.loading = loading;
+  if (historyAssistantSubmitEl) {
+    historyAssistantSubmitEl.disabled = loading;
+  }
+  if (historyAssistantInputEl) {
+    if (loading) {
+      historyAssistantInputEl.setAttribute("aria-busy", "true");
+    } else {
+      historyAssistantInputEl.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function formatHistoryAssistantRange(range) {
+  if (!range || typeof range !== "object") {
+    return "";
+  }
+  const start = typeof range.start === "number" ? range.start : Number(range.start);
+  const end = typeof range.end === "number" ? range.end : Number(range.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    return "";
+  }
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return "";
+  }
+  const sameDay =
+    startDate.getFullYear() === endDate.getFullYear() &&
+    startDate.getMonth() === endDate.getMonth() &&
+    startDate.getDate() === endDate.getDate();
+  const dateOptions = { month: "short", day: "numeric" };
+  const nowYear = new Date().getFullYear();
+  if (startDate.getFullYear() !== nowYear || endDate.getFullYear() !== nowYear) {
+    dateOptions.year = "numeric";
+  }
+  const dateFormatter = new Intl.DateTimeFormat(undefined, dateOptions);
+  const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) {
+    return `${dateFormatter.format(startDate)} ${timeFormatter.format(startDate)} – ${timeFormatter.format(endDate)} (local time)`;
+  }
+  const endDateOptions = { month: "short", day: "numeric" };
+  if (endDate.getFullYear() !== nowYear) {
+    endDateOptions.year = "numeric";
+  }
+  const endDateFormatter = new Intl.DateTimeFormat(undefined, endDateOptions);
+  return `${dateFormatter.format(startDate)} ${timeFormatter.format(startDate)} → ${endDateFormatter.format(endDate)} ${timeFormatter.format(endDate)} (local time)`;
+}
+
+function formatHistoryAssistantActionMeta(action) {
+  if (!action || typeof action !== "object") {
+    return "";
+  }
+  const { type, count, limited } = action;
+  if (!type) {
+    return "";
+  }
+  const suffix = limited ? " (limited)" : "";
+  if (type === "open") {
+    if (!Number.isFinite(count) || count <= 0) {
+      return `opened requested tabs${suffix}`;
+    }
+    return `opened ${count} tab${count === 1 ? "" : "s"}${suffix}`;
+  }
+  if (type === "delete") {
+    if (!Number.isFinite(count) || count <= 0) {
+      return `removed selected history${suffix}`;
+    }
+    return `removed ${count} item${count === 1 ? "" : "s"}${suffix}`;
+  }
+  return "";
+}
+
+function updateHistoryAssistantOutput() {
+  if (!historyAssistantOutputEl) {
+    return;
+  }
+  const message = historyAssistantState.message || "";
+  const summary = historyAssistantState.summary || "";
+  const hasContent = Boolean(message || summary);
+  if (!hasContent) {
+    historyAssistantOutputEl.classList.remove("visible");
+    if (historyAssistantOutputMessageEl) {
+      historyAssistantOutputMessageEl.textContent = "";
+    }
+    if (historyAssistantOutputMetaEl) {
+      historyAssistantOutputMetaEl.textContent = "";
+    }
+    if (historyAssistantSummaryEl) {
+      historyAssistantSummaryEl.textContent = "";
+      historyAssistantSummaryEl.style.display = "none";
+    }
+    return;
+  }
+  historyAssistantOutputEl.classList.add("visible");
+  if (historyAssistantOutputMessageEl) {
+    historyAssistantOutputMessageEl.textContent = message || (summary ? "Summary of recent browsing." : "");
+  }
+  const metaParts = [];
+  const rangeLabel = formatHistoryAssistantRange(historyAssistantState.timeRange);
+  if (rangeLabel) {
+    metaParts.push(rangeLabel);
+  }
+  const confidenceValue = historyAssistantState.timeRange && typeof historyAssistantState.timeRange.confidence === "number"
+    ? historyAssistantState.timeRange.confidence
+    : null;
+  if (confidenceValue !== null && Number.isFinite(confidenceValue)) {
+    const percent = Math.round(Math.max(0, Math.min(1, confidenceValue)) * 100);
+    metaParts.push(`confidence ${percent}%`);
+  }
+  if (historyAssistantState.usedFallback) {
+    metaParts.push("estimated window");
+  }
+  if (Number.isFinite(historyAssistantState.datasetSize) && historyAssistantState.datasetSize !== null) {
+    metaParts.push(`${historyAssistantState.datasetSize} entries scanned`);
+  }
+  const actionMeta = formatHistoryAssistantActionMeta(historyAssistantState.performedAction);
+  if (actionMeta) {
+    metaParts.push(actionMeta);
+  }
+  if (historyAssistantOutputMetaEl) {
+    historyAssistantOutputMetaEl.textContent = metaParts.join(" · ");
+  }
+  if (historyAssistantSummaryEl) {
+    if (summary) {
+      historyAssistantSummaryEl.textContent = summary;
+      historyAssistantSummaryEl.style.display = "block";
+    } else {
+      historyAssistantSummaryEl.textContent = "";
+      historyAssistantSummaryEl.style.display = "none";
+    }
+  }
+}
+
+function normalizeAssistantRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const start = typeof range.start === "number" ? range.start : Number(range.start);
+  const end = typeof range.end === "number" ? range.end : Number(range.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    return null;
+  }
+  const confidence = typeof range.confidence === "number" ? Math.max(0, Math.min(1, range.confidence)) : null;
+  return { start, end, confidence };
+}
+
+function updateHistoryAssistantStatusBar() {
+  if (!isOpen) {
+    return;
+  }
+  const parts = [];
+  const filterLabel = getFilterStatusLabel(activeFilter);
+  if (filterLabel) {
+    parts.push(`Filtering ${filterLabel}`);
+  }
+  if (historyAssistantState.active) {
+    const rangeLabel = formatHistoryAssistantRange(historyAssistantState.timeRange);
+    if (rangeLabel) {
+      parts.push(rangeLabel);
+    }
+    const actionMeta = formatHistoryAssistantActionMeta(historyAssistantState.performedAction);
+    if (actionMeta) {
+      parts.push(actionMeta);
+    }
+  }
+  if (!parts.length) {
+    return;
+  }
+  setStatus(parts.join(" · "), { force: true, sticky: Boolean(filterLabel) });
+}
+
+function clearHistoryAssistantResults(options = {}) {
+  const opts = typeof options === "object" && options ? options : {};
+  const { preservePrompt = true } = opts;
+  historyAssistantState.active = false;
+  historyAssistantState.message = "";
+  historyAssistantState.summary = "";
+  historyAssistantState.action = "";
+  historyAssistantState.performedAction = null;
+  historyAssistantState.timeRange = null;
+  historyAssistantState.usedFallback = false;
+  historyAssistantState.datasetSize = null;
+  historyAssistantState.blockedRequestId = 0;
+  if (!preservePrompt && historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  setHistoryAssistantStatus("");
+  updateHistoryAssistantOutput();
+  setStatus("", { force: true });
+}
+
+function cancelPendingHistoryAssistantRequest() {
+  if (historyAssistantState.pendingRequestId) {
+    historyAssistantState.pendingRequestId = 0;
+  }
+  if (historyAssistantState.loading) {
+    setHistoryAssistantLoading(false);
+  }
+}
+
+function resetHistoryAssistantState(options = {}) {
+  const opts = typeof options === "object" && options ? options : {};
+  const { resetInput = false } = opts;
+  cancelPendingHistoryAssistantRequest();
+  clearHistoryAssistantResults({ preservePrompt: !resetInput });
+  historyAssistantState.error = "";
+  if (resetInput && historyAssistantInputEl) {
+    historyAssistantInputEl.value = "";
+  }
+  if (historyAssistantOutputEl) {
+    historyAssistantOutputEl.classList.remove("visible");
+  }
+  if (historyAssistantOutputMessageEl) {
+    historyAssistantOutputMessageEl.textContent = "";
+  }
+  if (historyAssistantOutputMetaEl) {
+    historyAssistantOutputMetaEl.textContent = "";
+  }
+  if (historyAssistantSummaryEl) {
+    historyAssistantSummaryEl.textContent = "";
+    historyAssistantSummaryEl.style.display = "none";
+  }
+}
+
+function updateHistoryAssistantVisibility() {
+  if (!historyAssistantEl) {
+    return;
+  }
+  const shouldShow = isOpen && activeFilter === "history";
+  if (shouldShow) {
+    historyAssistantEl.setAttribute("aria-hidden", "false");
+    historyAssistantState.visible = true;
+  } else {
+    historyAssistantEl.setAttribute("aria-hidden", "true");
+    if (historyAssistantState.visible) {
+      resetHistoryAssistantState({ resetInput: false });
+    }
+    historyAssistantState.visible = false;
+  }
+}
+
+function handleHistoryAssistantError(message) {
+  setHistoryAssistantLoading(false);
+  historyAssistantState.pendingRequestId = 0;
+  historyAssistantState.error = message || "History assistant unavailable";
+  historyAssistantState.active = false;
+  historyAssistantState.blockedRequestId = 0;
+  setHistoryAssistantStatus(historyAssistantState.error, { error: true });
+  updateHistoryAssistantOutput();
+}
+
+function applyHistoryAssistantResponse(response) {
+  setHistoryAssistantLoading(false);
+  historyAssistantState.pendingRequestId = 0;
+  historyAssistantState.error = "";
+  historyAssistantState.active = true;
+  historyAssistantState.blockedRequestId = lastRequestId;
+  historyAssistantState.message = typeof response.message === "string" ? response.message : "";
+  historyAssistantState.summary = typeof response.summary === "string" ? response.summary : "";
+  historyAssistantState.action = typeof response.action === "string" ? response.action : "show";
+  historyAssistantState.performedAction =
+    response.performedAction && typeof response.performedAction === "object"
+      ? { ...response.performedAction }
+      : null;
+  historyAssistantState.timeRange = normalizeAssistantRange(response.timeRange);
+  historyAssistantState.usedFallback = Boolean(response.usedFallbackRange);
+  historyAssistantState.datasetSize = Number.isFinite(response.datasetSize) ? response.datasetSize : null;
+  updateHistoryAssistantOutput();
+  activeFilter = "history";
+  updateHistoryAssistantVisibility();
+  resultsState = Array.isArray(response.results) ? response.results.slice() : [];
+  lazyList.setItems(resultsState);
+  pruneSummaryState();
+  applyCachedFavicons(resultsState);
+  activeIndex = resultsState.length > 0 ? 0 : -1;
+  pointerNavigationSuspended = true;
+  renderResults();
+  updateHistoryAssistantStatusBar();
+}
+
+function sendHistoryAssistantPrompt(prompt) {
+  if (!prompt) {
+    return;
+  }
+  const requestId = ++historyAssistantRequestCounter;
+  historyAssistantState.pendingRequestId = requestId;
+  historyAssistantState.lastPrompt = prompt;
+  historyAssistantState.message = "";
+  historyAssistantState.summary = "";
+  historyAssistantState.action = "";
+  historyAssistantState.performedAction = null;
+  historyAssistantState.timeRange = null;
+  historyAssistantState.usedFallback = false;
+  historyAssistantState.datasetSize = null;
+  historyAssistantState.blockedRequestId = 0;
+  historyAssistantState.error = "";
+  setHistoryAssistantLoading(true);
+  setHistoryAssistantStatus("Understanding your request…", { loading: true });
+  updateHistoryAssistantOutput();
+  chrome.runtime.sendMessage(
+    { type: "SPOTLIGHT_HISTORY_ASSISTANT", prompt, requestId },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        handleHistoryAssistantError(chrome.runtime.lastError.message || "History assistant unavailable");
+        return;
+      }
+      if (!response || response.requestId !== requestId) {
+        return;
+      }
+      if (!historyAssistantState.pendingRequestId || historyAssistantState.pendingRequestId !== requestId) {
+        return;
+      }
+      if (!response.success) {
+        handleHistoryAssistantError(response.error || "History assistant unavailable");
+        return;
+      }
+      applyHistoryAssistantResponse(response);
+    }
+  );
+}
+
+function handleHistoryAssistantSubmit(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (historyAssistantState.loading) {
+    return;
+  }
+  const prompt = historyAssistantInputEl ? historyAssistantInputEl.value.trim() : "";
+  if (!prompt) {
+    setHistoryAssistantStatus("Enter a request to ask the assistant.", { error: true });
+    return;
+  }
+  sendHistoryAssistantPrompt(prompt);
+}
+
+function createHistoryAssistantElements() {
+  historyAssistantEl = document.createElement("div");
+  historyAssistantEl.className = "spotlight-history-assistant";
+  historyAssistantEl.setAttribute("aria-hidden", "true");
+
+  const header = document.createElement("div");
+  header.className = "spotlight-history-assistant-header";
+  const title = document.createElement("div");
+  title.className = "spotlight-history-assistant-title";
+  title.textContent = "Smart history search assistant";
+  const description = document.createElement("div");
+  description.className = "spotlight-history-assistant-description";
+  description.textContent = "Ask Spotlight to find, open, or clean up your browsing history.";
+  header.appendChild(title);
+  header.appendChild(description);
+  historyAssistantEl.appendChild(header);
+
+  historyAssistantFormEl = document.createElement("form");
+  historyAssistantFormEl.className = "spotlight-history-assistant-form";
+
+  historyAssistantInputEl = document.createElement("input");
+  historyAssistantInputEl.type = "text";
+  historyAssistantInputEl.className = "spotlight-history-assistant-input";
+  historyAssistantInputEl.setAttribute("placeholder", "Ask in natural language…");
+  historyAssistantInputEl.setAttribute("spellcheck", "false");
+  historyAssistantInputEl.setAttribute("aria-label", "History assistant prompt");
+  historyAssistantFormEl.appendChild(historyAssistantInputEl);
+
+  historyAssistantSubmitEl = document.createElement("button");
+  historyAssistantSubmitEl.type = "submit";
+  historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
+  historyAssistantSubmitEl.textContent = "Ask";
+  historyAssistantFormEl.appendChild(historyAssistantSubmitEl);
+
+  historyAssistantEl.appendChild(historyAssistantFormEl);
+
+  historyAssistantStatusEl = document.createElement("div");
+  historyAssistantStatusEl.className = "spotlight-history-assistant-status";
+  historyAssistantStatusEl.textContent = "";
+  historyAssistantEl.appendChild(historyAssistantStatusEl);
+
+  historyAssistantOutputEl = document.createElement("div");
+  historyAssistantOutputEl.className = "spotlight-history-assistant-output";
+  historyAssistantOutputMessageEl = document.createElement("div");
+  historyAssistantOutputMessageEl.className = "spotlight-history-assistant-output-message";
+  historyAssistantOutputMetaEl = document.createElement("div");
+  historyAssistantOutputMetaEl.className = "spotlight-history-assistant-output-meta";
+  historyAssistantSummaryEl = document.createElement("div");
+  historyAssistantSummaryEl.className = "spotlight-history-assistant-summary";
+  historyAssistantSummaryEl.style.display = "none";
+  historyAssistantOutputEl.appendChild(historyAssistantOutputMessageEl);
+  historyAssistantOutputEl.appendChild(historyAssistantOutputMetaEl);
+  historyAssistantOutputEl.appendChild(historyAssistantSummaryEl);
+  historyAssistantEl.appendChild(historyAssistantOutputEl);
+
+  historyAssistantFormEl.addEventListener("submit", handleHistoryAssistantSubmit);
+  historyAssistantInputEl.addEventListener("input", () => {
+    if (historyAssistantState.error) {
+      historyAssistantState.error = "";
+      setHistoryAssistantStatus("");
+    }
+  });
+  historyAssistantInputEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  });
+  historyAssistantSubmitEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+  });
+
+  setHistoryAssistantStatus("");
+  setHistoryAssistantLoading(false);
+  updateHistoryAssistantOutput();
+
+  return historyAssistantEl;
 }
 
 function resetSlashMenuState() {
@@ -1269,6 +1725,8 @@ async function openOverlay() {
   resetSlashMenuState();
   resetEngineMenuState();
   resetWebSearchSelection();
+  resetHistoryAssistantState({ resetInput: true });
+  updateHistoryAssistantVisibility();
   pointerNavigationSuspended = true;
 
   if (!shadowHostEl.parentElement) {
@@ -1302,6 +1760,8 @@ function closeOverlay() {
   }
   statusSticky = false;
   activeFilter = null;
+  resetHistoryAssistantState({ resetInput: true });
+  updateHistoryAssistantVisibility();
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
@@ -1442,6 +1902,8 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  cancelPendingHistoryAssistantRequest();
+  clearHistoryAssistantResults({ preservePrompt: true });
   updateSlashMenu();
   updateEngineMenu();
   const trimmed = query.trim();
@@ -1518,12 +1980,26 @@ function requestResults(query) {
       if (!response || response.requestId !== lastRequestId) {
         return;
       }
+      if (
+        historyAssistantState.active &&
+        historyAssistantState.blockedRequestId &&
+        response.requestId <= historyAssistantState.blockedRequestId
+      ) {
+        return;
+      }
+      if (!historyAssistantState.loading && historyAssistantState.active) {
+        clearHistoryAssistantResults({ preservePrompt: true });
+      }
+      if (!historyAssistantState.loading) {
+        historyAssistantState.blockedRequestId = 0;
+      }
       resultsState = Array.isArray(response.results) ? response.results.slice() : [];
       lazyList.setItems(resultsState);
       pruneSummaryState();
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateHistoryAssistantVisibility();
       pointerNavigationSuspended = true;
       renderResults();
       updateSubfilterState(response.subfilters);
@@ -2267,9 +2743,14 @@ function renderResults() {
   if (!resultsState.length) {
     const li = document.createElement("li");
     li.className = "spotlight-result empty";
-    const scopeLabel = getFilterStatusLabel(activeFilter);
-    const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
-    li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
+    if (historyAssistantState.active) {
+      const emptyMessage = historyAssistantState.message || "No matching history entries found.";
+      li.textContent = emptyMessage;
+    } else {
+      const scopeLabel = getFilterStatusLabel(activeFilter);
+      const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
+      li.textContent = emptyLabel ? `No ${emptyLabel} match your search` : "No matches";
+    }
     resultsEl.appendChild(li);
     if (inputEl) {
       inputEl.removeAttribute("aria-activedescendant");

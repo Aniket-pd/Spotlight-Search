@@ -731,7 +731,7 @@ function interleaveTopSiteResults(primaryResults, topSiteResults, limit) {
   return merged.slice(0, normalizedLimit);
 }
 
-function buildResultFromItem(item, scoreValue) {
+export function buildResultFromItem(item, scoreValue) {
   if (!item) {
     return null;
   }
