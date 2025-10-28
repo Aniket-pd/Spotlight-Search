@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
@@ -36,6 +37,61 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: query failed", err);
           sendResponse({ results: [], error: true, requestId: message.requestId });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
+      if (!historyAssistant || typeof historyAssistant.analyzeHistoryRequest !== "function") {
+        sendResponse({
+          success: false,
+          error: "History assistant unavailable",
+          requestId: message.requestId,
+        });
+        return true;
+      }
+      const prompt = typeof message.prompt === "string" ? message.prompt.trim() : "";
+      if (!prompt) {
+        sendResponse({
+          success: false,
+          error: "Enter a request for the history assistant",
+          requestId: message.requestId,
+        });
+        return true;
+      }
+      context
+        .ensureIndex()
+        .then((data) =>
+          historyAssistant.analyzeHistoryRequest({ prompt, items: data?.items || [], now: Date.now() })
+        )
+        .then((result) => {
+          sendResponse({ success: true, ...result, requestId: message.requestId });
+        })
+        .catch((err) => {
+          const errorMessage = err?.message || "History assistant unavailable";
+          console.warn("Spotlight: history assistant request failed", err);
+          sendResponse({ success: false, error: errorMessage, requestId: message.requestId });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_ACTION") {
+      if (!historyAssistant || typeof historyAssistant.executeAction !== "function") {
+        sendResponse({ success: false, error: "History assistant unavailable" });
+        return true;
+      }
+      context
+        .ensureIndex()
+        .then((data) =>
+          historyAssistant.executeAction(message.action, message.itemIds, data?.items || [])
+        )
+        .then((result) => {
+          sendResponse({ success: true, ...result });
+        })
+        .catch((err) => {
+          const errorMessage = err?.message || "Unable to complete action";
+          console.warn("Spotlight: history assistant action failed", err);
+          sendResponse({ success: false, error: errorMessage });
         });
       return true;
     }
