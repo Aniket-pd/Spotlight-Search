@@ -8,6 +8,7 @@ export function registerMessageHandlers({
   navigation,
   summaries,
   organizer,
+  focus,
   historyAssistant,
 }) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -150,6 +151,42 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_FOCUS_STATUS_REQUEST") {
+      const tabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      const respond = (payload) => {
+        try {
+          sendResponse(payload);
+        } catch (err) {
+          console.warn("Spotlight: focus status response failed", err);
+        }
+      };
+
+      if (!focus || typeof focus.getState !== "function") {
+        respond({ focused: false });
+        return true;
+      }
+
+      focus
+        .getState()
+        .then((state) => {
+          if (!state || tabId === null || state.tabId !== tabId) {
+            respond({ focused: false });
+            return;
+          }
+          respond({
+            focused: true,
+            accentColor: focus.getAccentColor ? focus.getAccentColor() : undefined,
+            titlePrefix: focus.getTitlePrefix ? focus.getTitlePrefix() : undefined,
+            label: focus.getLabel ? focus.getLabel() : undefined,
+          });
+        })
+        .catch((err) => {
+          console.warn("Spotlight: focus status lookup failed", err);
+          respond({ focused: false });
         });
       return true;
     }

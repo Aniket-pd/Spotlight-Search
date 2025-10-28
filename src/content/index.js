@@ -69,6 +69,11 @@ const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+let focusBannerEl = null;
+let focusStyleEl = null;
+let focusOriginalTitle = null;
+let focusTitlePrefix = "";
+let focusActive = false;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -3528,6 +3533,122 @@ function collectPageTextForSummary() {
   }
 }
 
+const FOCUS_STYLE_ID = "spotlight-focus-style";
+
+function ensureFocusStyles() {
+  if (focusStyleEl && focusStyleEl.isConnected) {
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = FOCUS_STYLE_ID;
+  style.textContent = `#spotlight-focus-banner {position: fixed;top: 0;left: 0;width: 100%;height: 4px;background: var(--spotlight-focus-color, #f97316);z-index: 2147483646;pointer-events: none;box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);}#spotlight-focus-banner::after {content: attr(data-label);position: absolute;top: 6px;right: 16px;padding: 3px 12px;border-radius: 999px;font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;font-size: 11px;font-weight: 600;letter-spacing: 0.08em;text-transform: uppercase;color: #fff;background: var(--spotlight-focus-color, #f97316);box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);pointer-events: none;opacity: 0.94;}`;
+  (document.head || document.documentElement || document.body || document).appendChild(style);
+  focusStyleEl = style;
+}
+
+function ensureFocusBanner(accentColor, label) {
+  if (!document.body && !document.documentElement) {
+    return null;
+  }
+  ensureFocusStyles();
+  if (!focusBannerEl || !focusBannerEl.isConnected) {
+    const banner = document.createElement("div");
+    banner.id = "spotlight-focus-banner";
+    banner.setAttribute("aria-hidden", "true");
+    const parent = document.body || document.documentElement;
+    parent.appendChild(banner);
+    focusBannerEl = banner;
+  }
+  if (accentColor) {
+    focusBannerEl.style.setProperty("--spotlight-focus-color", accentColor);
+  }
+  focusBannerEl.dataset.label = label || "Focus";
+  focusBannerEl.hidden = false;
+  return focusBannerEl;
+}
+
+function stripFocusPrefix(title, prefix) {
+  const text = typeof title === "string" ? title : "";
+  const activePrefix = prefix || focusTitlePrefix || "";
+  if (activePrefix && text.startsWith(activePrefix)) {
+    return text.slice(activePrefix.length);
+  }
+  if (focusTitlePrefix && text.startsWith(focusTitlePrefix)) {
+    return text.slice(focusTitlePrefix.length);
+  }
+  return text;
+}
+
+function applyFocusIndicator(payload = {}) {
+  if (window.top && window.top !== window) {
+    return;
+  }
+  const accentColor = typeof payload.accentColor === "string" && payload.accentColor ? payload.accentColor : "#f97316";
+  const prefix = typeof payload.titlePrefix === "string" && payload.titlePrefix ? payload.titlePrefix : "⭑ Focus · ";
+  const label = typeof payload.label === "string" && payload.label ? payload.label : "Focus";
+
+  const banner = ensureFocusBanner(accentColor, label);
+  if (!banner) {
+    return;
+  }
+
+  if (!focusActive) {
+    focusOriginalTitle = stripFocusPrefix(document.title, prefix);
+  }
+
+  const baseTitle = focusOriginalTitle || stripFocusPrefix(document.title, prefix);
+  document.title = `${prefix}${baseTitle}`;
+  focusTitlePrefix = prefix;
+  focusActive = true;
+}
+
+function clearFocusIndicator() {
+  if (window.top && window.top !== window) {
+    focusActive = false;
+    focusOriginalTitle = null;
+    focusTitlePrefix = "";
+    return;
+  }
+  if (focusBannerEl && focusBannerEl.isConnected) {
+    focusBannerEl.remove();
+  }
+  focusBannerEl = null;
+
+  if (focusActive) {
+    const restored = focusOriginalTitle || stripFocusPrefix(document.title, focusTitlePrefix);
+    if (typeof restored === "string") {
+      document.title = restored;
+    }
+  }
+
+  focusActive = false;
+  focusOriginalTitle = null;
+  focusTitlePrefix = "";
+}
+
+function requestFocusStatus() {
+  if (window.top && window.top !== window) {
+    return;
+  }
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage({ type: "SPOTLIGHT_FOCUS_STATUS_REQUEST" }, (response) => {
+      if (chrome.runtime.lastError) {
+        return;
+      }
+      if (response && response.focused) {
+        applyFocusIndicator(response);
+      } else {
+        clearFocusIndicator();
+      }
+    });
+  } catch (err) {
+    console.warn("Spotlight: focus status request failed", err);
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
     return undefined;
@@ -3544,6 +3665,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleSummaryProgress(message);
     return undefined;
   }
+  if (message.type === "SPOTLIGHT_FOCUS_APPLY") {
+    applyFocusIndicator(message);
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_FOCUS_CLEAR") {
+    clearFocusIndicator();
+    return undefined;
+  }
   if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {
     setTimeout(() => {
       const payload = collectPageTextForSummary();
@@ -3558,14 +3687,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return undefined;
 });
 
-if (document.readyState === "loading") {
-  document.addEventListener(
-    "DOMContentLoaded",
-    () => {
-      ensureShadowRoot();
-    },
-    { once: true }
-  );
-} else {
+function initializeSpotlightContent() {
   ensureShadowRoot();
+  requestFocusStatus();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeSpotlightContent, { once: true });
+} else {
+  initializeSpotlightContent();
 }

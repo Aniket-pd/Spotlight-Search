@@ -981,7 +981,7 @@ function getTabDomain(tab) {
   }
 }
 
-function findMatchingTabsForCloseCommand(tabs, query) {
+function findMatchingTabsByQuery(tabs, query, limit = 6) {
   const normalizedQuery = query.trim().toLowerCase();
   const scored = [];
 
@@ -1015,7 +1015,8 @@ function findMatchingTabsForCloseCommand(tabs, query) {
     return (b.recency || 0) - (a.recency || 0);
   });
 
-  return scored.slice(0, 6).map((entry) => entry.tab);
+  const cap = Number.isFinite(limit) ? Math.max(1, limit) : 6;
+  return scored.slice(0, cap).map((entry) => entry.tab);
 }
 
 function normalizeWord(word) {
@@ -1118,7 +1119,7 @@ function collectTabCloseSuggestions(query, context) {
     return collectCloseAllSuggestions(remainderWords.slice(1), context);
   }
 
-  const matchingTabs = findMatchingTabsForCloseCommand(tabs, remainder);
+  const matchingTabs = findMatchingTabsByQuery(tabs, remainder, 6);
   if (!matchingTabs.length) {
     return {
       results: [],
@@ -1138,6 +1139,225 @@ function collectTabCloseSuggestions(query, context) {
     ghost: results[0]?.title || null,
     answer: "",
   };
+}
+
+function buildFocusCommandDescription(tabLike) {
+  const domain = getTabDomain(tabLike);
+  const windowLabel = formatWindowLabel(tabLike);
+  const descriptionParts = [];
+  if (domain) {
+    descriptionParts.push(domain);
+  }
+  if (windowLabel) {
+    descriptionParts.push(windowLabel);
+  }
+  const joined = descriptionParts.join(" · ");
+  if (joined) {
+    return joined;
+  }
+  if (tabLike && typeof tabLike.url === "string") {
+    return tabLike.url;
+  }
+  return "";
+}
+
+function buildFocusTabCommandResult(tab) {
+  if (!tab) {
+    return null;
+  }
+  const tabId =
+    typeof tab.tabId === "number"
+      ? tab.tabId
+      : typeof tab.id === "number"
+      ? tab.id
+      : null;
+  if (tabId === null) {
+    return null;
+  }
+  const description = buildFocusCommandDescription(tab);
+  return {
+    id: `command:focus-tab:${tabId}`,
+    title: `Focus “${tab.title || tab.url || "Untitled"}”`,
+    url: description,
+    description,
+    type: "command",
+    command: "tab-focus",
+    args: { tabId },
+    label: "Command",
+    score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
+  };
+}
+
+function buildFocusJumpCommandResult(focusedTab, options = {}) {
+  if (!focusedTab || typeof focusedTab.tabId !== "number") {
+    return null;
+  }
+  const { shortcut = false } = options;
+  const titleText = focusedTab.title || focusedTab.url || "Focused tab";
+  const description = buildFocusCommandDescription(focusedTab);
+  return {
+    id: shortcut ? "command:focus-jump-shortcut" : "command:focus-jump",
+    title: shortcut ? `⭐ Focused Tab · ${titleText}` : `Jump to Focused tab “${titleText}”`,
+    url: description,
+    description: description || focusedTab.url || "",
+    type: "command",
+    command: "tab-focus-jump",
+    label: "Command",
+    score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
+  };
+}
+
+function buildFocusRemoveCommandResult(focusedTab) {
+  if (!focusedTab || typeof focusedTab.tabId !== "number") {
+    return null;
+  }
+  const titleText = focusedTab.title || focusedTab.url || "Focused tab";
+  const description = buildFocusCommandDescription(focusedTab);
+  return {
+    id: "command:focus-unfocus",
+    title: "Remove Focus highlight",
+    url: description,
+    description: `Restore “${titleText}” to its normal state`,
+    type: "command",
+    command: "tab-unfocus",
+    label: "Command",
+    score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
+  };
+}
+
+function collectFocusCommandSuggestions(query, context) {
+  const trimmed = (query || "").trim();
+  if (!trimmed) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (!tokens.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const lower = trimmed.toLowerCase();
+  const focusedTab = context?.focusedTab || null;
+  const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+  const activeTab = tabs.find((tab) => tab.active);
+  const firstWord = tokens[0]?.toLowerCase() || "";
+  const wantsUnfocus = firstWord.startsWith("unfocus") || lower.startsWith("remove focus");
+  const wantsFocus = firstWord.startsWith("focus") || lower.startsWith("focus on");
+  const wantsJump = lower.startsWith("jump to focus") || (lower.includes("jump") && lower.includes("focus"));
+
+  const results = [];
+  const seenIds = new Set();
+  let ghost = null;
+  let answer = "";
+
+  const pushResult = (result) => {
+    if (!result || !result.id || seenIds.has(result.id)) {
+      return;
+    }
+    seenIds.add(result.id);
+    results.push(result);
+  };
+
+  if (wantsUnfocus) {
+    if (focusedTab) {
+      const result = buildFocusRemoveCommandResult(focusedTab);
+      pushResult(result);
+      ghost = ghost || "Unfocus tab";
+      answer = answer || "Removes the Focus highlight and restores the tab.";
+    } else {
+      answer = answer || "No tab is currently focused.";
+    }
+    return { results, ghost, answer };
+  }
+
+  if (wantsJump && focusedTab) {
+    pushResult(buildFocusJumpCommandResult(focusedTab));
+    ghost = ghost || "Jump to focused tab";
+    answer = answer || "Instantly switches to the focused tab.";
+    if (!wantsFocus) {
+      return { results, ghost, answer };
+    }
+  }
+
+  if (!wantsFocus) {
+    return { results, ghost, answer };
+  }
+
+  const remainder = trimmed.slice(tokens[0].length).trim();
+  const remainderLower = remainder.toLowerCase();
+
+  if (!remainder || remainderLower === "tab" || remainderLower === "the tab") {
+    if (focusedTab) {
+      pushResult(buildFocusJumpCommandResult(focusedTab));
+      ghost = ghost || "Jump to focused tab";
+      answer = answer || "Instantly switches to the focused tab.";
+    }
+    if (activeTab && (!focusedTab || activeTab.tabId !== focusedTab.tabId)) {
+      const focusResult = buildFocusTabCommandResult(activeTab);
+      pushResult(focusResult);
+      if (focusResult && !ghost) {
+        ghost = focusResult.title;
+      }
+      answer = answer || "Pins and highlights the current tab so it stands out.";
+    }
+    return { results, ghost, answer };
+  }
+
+  const normalizedRemainder = remainderLower.replace(/^(this|the|that|my)\s+/, "").trim();
+  if (normalizedRemainder === "tab" || normalizedRemainder === "current tab") {
+    if (activeTab) {
+      const focusResult = buildFocusTabCommandResult(activeTab);
+      pushResult(focusResult);
+      if (focusResult && !ghost) {
+        ghost = focusResult.title;
+      }
+      answer = answer || "Pins and highlights the current tab so it stands out.";
+    }
+    return { results, ghost, answer };
+  }
+
+  const matches = findMatchingTabsByQuery(tabs, remainder, 5);
+  if (matches.length) {
+    matches.forEach((tab) => {
+      const result = buildFocusTabCommandResult(tab);
+      pushResult(result);
+    });
+    if (!ghost && results.length) {
+      ghost = results[0]?.title || null;
+    }
+    answer = answer || "Marks the chosen tab as your Focus tab.";
+    return { results, ghost, answer };
+  }
+
+  if (focusedTab) {
+    pushResult(buildFocusJumpCommandResult(focusedTab));
+    ghost = ghost || "Jump to focused tab";
+    answer = answer || "Instantly switches back to your focused tab.";
+  }
+
+  return { results, ghost, answer };
+}
+
+function prependFocusShortcut(results, focusInfo, limit) {
+  const list = Array.isArray(results) ? results.slice() : [];
+  if (!focusInfo || typeof focusInfo.tabId !== "number") {
+    return list;
+  }
+  const shortcut = buildFocusJumpCommandResult(focusInfo, { shortcut: true });
+  if (!shortcut) {
+    return list;
+  }
+  if (list.some((item) => item && item.id === shortcut.id)) {
+    return list;
+  }
+  list.unshift(shortcut);
+  if (Number.isFinite(limit) && list.length > limit) {
+    return list.slice(0, limit);
+  }
+  return list;
 }
 
 function collectCloseAllSuggestions(words, context) {
@@ -1263,22 +1483,39 @@ function collectDomainMatches(tabs, query) {
 
 function collectCommandSuggestions(query, context) {
   const suggestions = [];
+  const seenIds = new Set();
   let ghost = null;
   let answer = "";
 
+  const pushSuggestion = (result) => {
+    if (!result || !result.id || seenIds.has(result.id)) {
+      return;
+    }
+    seenIds.add(result.id);
+    suggestions.push({ ...result, commandRank: suggestions.length });
+  };
+
   const staticMatch = findBestStaticCommand(query, context);
   if (staticMatch) {
-    const ranked = { ...staticMatch.result, commandRank: suggestions.length };
-    suggestions.push(ranked);
+    pushSuggestion(staticMatch.result);
     ghost = ghost || staticMatch.ghostText;
     answer = answer || staticMatch.answer;
   }
 
+  const focusSuggestions = collectFocusCommandSuggestions(query, context);
+  if (focusSuggestions.results.length) {
+    focusSuggestions.results.forEach((result) => pushSuggestion(result));
+    if (!ghost && focusSuggestions.ghost) {
+      ghost = focusSuggestions.ghost;
+    }
+    if (!answer && focusSuggestions.answer) {
+      answer = focusSuggestions.answer;
+    }
+  }
+
   const closeSuggestions = collectTabCloseSuggestions(query, context);
   if (closeSuggestions.results.length) {
-    closeSuggestions.results.forEach((result) => {
-      suggestions.push({ ...result, commandRank: suggestions.length });
-    });
+    closeSuggestions.results.forEach((result) => pushSuggestion(result));
     if (!ghost && closeSuggestions.ghost) {
       ghost = closeSuggestions.ghost;
     }
@@ -1474,6 +1711,7 @@ export function runSearch(query, data, options = {}) {
   const bookmarkCount = typeof metadata.bookmarkCount === "number"
     ? metadata.bookmarkCount
     : items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0);
+  const focusedTabInfo = metadata && typeof metadata.focusedTab === "object" ? metadata.focusedTab : null;
 
   const navigationState = options.navigation || null;
 
@@ -1505,7 +1743,7 @@ export function runSearch(query, data, options = {}) {
       : null;
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
-  const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount };
+  const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount, focusedTab: focusedTabInfo };
   const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
@@ -1583,7 +1821,7 @@ export function runSearch(query, data, options = {}) {
         .filter(Boolean);
       const merged = interleaveTopSiteResults(baseResults, topSiteResults, limit);
       return {
-        results: merged,
+        results: prependFocusShortcut(merged, focusedTabInfo, limit),
         ghost: null,
         answer: "",
         filter: filterType,
@@ -1592,8 +1830,10 @@ export function runSearch(query, data, options = {}) {
     }
 
     const limitedItems = sliceResultsForLimit(defaultItems, limit);
+    const baseList = limitedItems.map((item) => buildResultFromItem(item)).filter(Boolean);
+    const withShortcut = filterType === "tab" ? prependFocusShortcut(baseList, focusedTabInfo, limit) : baseList;
     return {
-      results: limitedItems.map((item) => buildResultFromItem(item)).filter(Boolean),
+      results: withShortcut,
       ghost: null,
       answer: "",
       filter: filterType,
