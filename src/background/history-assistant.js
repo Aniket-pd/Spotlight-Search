@@ -4,6 +4,18 @@ const MAX_DATASET_ENTRIES = 240;
 const MAX_RESULT_IDS = 48;
 const MAX_ACTION_TABS = 8;
 const LOCAL_RESULT_LIMIT = 60;
+const MAX_CONVERSATION_TURNS = 6;
+const MAX_CONVERSATION_CHARS = 2400;
+const MAX_CONVERSATION_AGE_MS = 20 * 60 * 1000;
+
+const FOLLOWUP_HINT_REGEX = [
+  /^(?:and|also|then|now|so)\b/,
+  /\bwhat about\b/,
+  /\b(?:also|too|else|besides|add|include|including|excluding|except|remove)\b/,
+  /\b(?:those|them|that(?: list| set| one| ones)?|these|the rest|same ones?)\b/,
+  /\b(?:another|others?|more of|keep going)\b/,
+  /\bagain\b/,
+];
 
 const NUMBER_WORDS = new Map([
   ["zero", 0],
@@ -468,6 +480,338 @@ function extractMeaningfulKeywords(prompt) {
   return keywords;
 }
 
+function isLikelyFollowupPrompt(prompt) {
+  if (!prompt || typeof prompt !== "string") {
+    return false;
+  }
+  const normalized = prompt.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  for (const regex of FOLLOWUP_HINT_REGEX) {
+    if (regex.test(normalized)) {
+      return true;
+    }
+  }
+  if (normalized.split(" ").length <= 4 && /\b(it|that|them|those|ones?)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function dedupeStrings(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function truncateForContext(text, maxLength = 240) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function summarizeStringsForContext(values, limit = 4) {
+  const list = dedupeStrings(values);
+  if (!list.length) {
+    return "";
+  }
+  const limited = list.slice(0, limit);
+  const suffix = list.length > limit ? ", …" : "";
+  return `${limited.join(", ")}${suffix}`;
+}
+
+function normalizeRangeMs(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const start = Number(range.start);
+  const end = Number(range.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  if (end <= start) {
+    return null;
+  }
+  return { start, end };
+}
+
+function normalizeIsoRange(range) {
+  if (!range || typeof range !== "object") {
+    return null;
+  }
+  const start = typeof range.start === "string" && range.start ? range.start : null;
+  const end = typeof range.end === "string" && range.end ? range.end : null;
+  if (!start && !end) {
+    return null;
+  }
+  return { start, end };
+}
+
+function convertRangeToIso(range) {
+  const normalized = normalizeRangeMs(range);
+  if (!normalized) {
+    return null;
+  }
+  const start = formatIso(normalized.start);
+  const end = formatIso(normalized.end);
+  if (!start && !end) {
+    return null;
+  }
+  return { start, end };
+}
+
+function serializePlanForConversation(plan) {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  const toValues = (entries) =>
+    Array.isArray(entries) ? entries.map((entry) => (entry && entry.value) || "").filter(Boolean) : [];
+  const serialized = {
+    intent: plan.intent || "show",
+    must: toValues(plan.must),
+    should: toValues(plan.should),
+    exclude: toValues(plan.exclude),
+    domainHints: toValues(plan.domainHints),
+    phrases: toValues(plan.phrases),
+    reasoning: typeof plan.reasoning === "string" ? plan.reasoning : "",
+    requireModel: Boolean(plan.requireModel),
+  };
+  if (plan.maxResults && Number.isFinite(plan.maxResults)) {
+    serialized.maxResults = plan.maxResults;
+  }
+  const rawRange = convertRangeToIso(plan.rawTimeRange);
+  if (rawRange) {
+    serialized.timeRange = rawRange;
+  }
+  return serialized;
+}
+
+function formatConversationRange(range) {
+  if (!range || typeof range !== "object") {
+    return "";
+  }
+  const start = typeof range.start === "string" && range.start ? range.start : "";
+  const end = typeof range.end === "string" && range.end ? range.end : "";
+  if (start && end) {
+    return `${start} → ${end}`;
+  }
+  return start || end || "";
+}
+
+function formatConversationTurn(turn) {
+  if (!turn || typeof turn !== "object") {
+    return "";
+  }
+  const lines = [];
+  lines.push(turn.type === "general" ? "General inquiry:" : "History request:");
+  if (turn.prompt) {
+    lines.push(`User: ${truncateForContext(turn.prompt, 260)}`);
+  }
+  if (turn.followup) {
+    lines.push("Follow-up: yes");
+  }
+  if (turn.plan && turn.plan.intent) {
+    lines.push(`Intent: ${turn.plan.intent}`);
+  }
+  if (turn.timeRangeIso) {
+    const rangeText = formatConversationRange(turn.timeRangeIso);
+    if (rangeText) {
+      lines.push(`Time range: ${rangeText}`);
+    }
+  }
+  if (turn.plan && Array.isArray(turn.plan.domainHints) && turn.plan.domainHints.length) {
+    const domains = summarizeStringsForContext(turn.plan.domainHints, 3);
+    if (domains) {
+      lines.push(`Domain hints: ${domains}`);
+    }
+  }
+  if (Array.isArray(turn.keywords) && turn.keywords.length) {
+    const keywords = summarizeStringsForContext(turn.keywords, 5);
+    if (keywords) {
+      lines.push(`Keywords: ${keywords}`);
+    }
+  }
+  if (Number.isFinite(turn.datasetSize)) {
+    lines.push(`Matches considered: ${turn.datasetSize}`);
+  }
+  if (Number.isFinite(turn.resultsCount)) {
+    lines.push(`Results shared: ${turn.resultsCount}`);
+  }
+  if (typeof turn.responseMessage === "string" && turn.responseMessage) {
+    lines.push(`Assistant: ${truncateForContext(turn.responseMessage, 280)}`);
+  }
+  if (typeof turn.responseNotes === "string" && turn.responseNotes) {
+    lines.push(`Notes: ${truncateForContext(turn.responseNotes, 200)}`);
+  }
+  if (turn.plan && typeof turn.plan.reasoning === "string" && turn.plan.reasoning) {
+    lines.push(`Reasoning: ${truncateForContext(turn.plan.reasoning, 200)}`);
+  }
+  if (typeof turn.confidence === "number") {
+    lines.push(`Confidence: ${turn.confidence.toFixed(2)}`);
+  }
+  if (typeof turn.source === "string" && turn.source) {
+    lines.push(`Response source: ${turn.source}`);
+  }
+  if (Array.isArray(turn.suggestions) && turn.suggestions.length) {
+    const suggestions = summarizeStringsForContext(turn.suggestions, 3);
+    if (suggestions) {
+      lines.push(`Suggestions: ${suggestions}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function buildConversationContext(turns) {
+  if (!Array.isArray(turns) || !turns.length) {
+    return "";
+  }
+  const recent = turns.slice(-MAX_CONVERSATION_TURNS);
+  const formatted = recent.map((turn) => formatConversationTurn(turn)).filter(Boolean);
+  if (!formatted.length) {
+    return "";
+  }
+  const segments = formatted.slice();
+  let context = segments.join("\n---\n");
+  while (context.length > MAX_CONVERSATION_CHARS && segments.length > 1) {
+    segments.shift();
+    context = segments.join("\n---\n");
+  }
+  if (context.length > MAX_CONVERSATION_CHARS) {
+    context = context.slice(context.length - MAX_CONVERSATION_CHARS);
+  }
+  return context.trim();
+}
+
+function getLastHistoryTurn(state) {
+  if (!state || !Array.isArray(state.conversation)) {
+    return null;
+  }
+  for (let index = state.conversation.length - 1; index >= 0; index -= 1) {
+    const entry = state.conversation[index];
+    if (entry && entry.type === "history") {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function gatherPlanKeywords(plan, promptKeywords = []) {
+  const add = (list, value) => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+    const key = trimmed.toLowerCase();
+    if (list.seen.has(key)) {
+      return;
+    }
+    list.seen.add(key);
+    list.values.push(trimmed);
+  };
+  const data = { seen: new Set(), values: [] };
+  if (plan && typeof plan === "object") {
+    for (const entry of [].concat(plan.must || [], plan.should || [], plan.phrases || [])) {
+      if (entry && typeof entry.value === "string") {
+        add(data, entry.value);
+      }
+    }
+  }
+  if (Array.isArray(promptKeywords)) {
+    for (const keyword of promptKeywords) {
+      add(data, keyword);
+    }
+  }
+  return data.values;
+}
+
+function recordConversationTurn(state, entry) {
+  if (!state) {
+    return;
+  }
+  if (!Array.isArray(state.conversation)) {
+    state.conversation = [];
+  }
+  const now = Date.now();
+  state.conversation = state.conversation.filter((turn) => {
+    if (!turn || typeof turn.timestamp !== "number") {
+      return true;
+    }
+    return now - turn.timestamp <= MAX_CONVERSATION_AGE_MS;
+  });
+
+  const response = entry && typeof entry === "object" ? entry.response || {} : {};
+  const normalizedRangeMs = normalizeRangeMs(entry?.rangeMs) || null;
+  const normalizedIsoRange =
+    normalizeIsoRange(entry?.timeRangeIso) ||
+    normalizeIsoRange(response?.timeRange) ||
+    convertRangeToIso(normalizedRangeMs);
+
+  const datasetSize = Number.isFinite(entry?.datasetSize)
+    ? Math.max(0, Math.floor(entry.datasetSize))
+    : Number.isFinite(response?.datasetSize)
+    ? Math.max(0, Math.floor(response.datasetSize))
+    : null;
+  const responseResults = Array.isArray(response?.results) ? response.results.length : null;
+  const resultsCount = Number.isFinite(entry?.resultsCount)
+    ? Math.max(0, Math.floor(entry.resultsCount))
+    : responseResults;
+
+  const normalizedEntry = {
+    type: entry?.type === "general" ? "general" : "history",
+    prompt: typeof entry?.prompt === "string" ? entry.prompt.trim() : "",
+    responseMessage: typeof response?.message === "string" ? response.message.trim() : "",
+    responseNotes: typeof response?.notes === "string" ? response.notes.trim() : "",
+    action: typeof response?.action === "string" ? response.action : "show",
+    timeRangeIso: normalizedIsoRange,
+    rangeMs: normalizedRangeMs,
+    datasetSize,
+    resultsCount,
+    totalAvailable: Number.isFinite(entry?.totalAvailable)
+      ? Math.max(0, Math.floor(entry.totalAvailable))
+      : null,
+    planSummary: typeof entry?.planSummary === "string" ? entry.planSummary : "",
+    plan: serializePlanForConversation(entry?.plan),
+    keywords: dedupeStrings(entry?.keywords || []),
+    suggestions: dedupeStrings(entry?.suggestions || []),
+    followup: Boolean(entry?.followup),
+    confidence: typeof entry?.confidence === "number" ? Math.max(0, Math.min(1, entry.confidence)) : null,
+    source: typeof entry?.source === "string" ? entry.source : null,
+    timestamp: now,
+  };
+
+  state.conversation.push(normalizedEntry);
+  if (state.conversation.length > MAX_CONVERSATION_TURNS) {
+    state.conversation = state.conversation.slice(-MAX_CONVERSATION_TURNS);
+  }
+}
+
 function isGeneralInquiryPrompt(prompt) {
   if (!prompt || typeof prompt !== "string") {
     return false;
@@ -500,11 +844,14 @@ function isGeneralInquiryPrompt(prompt) {
   return matchesGeneralRegex || containsGeneralKeyword || helpOnly;
 }
 
-function buildGeneralInquiryPrompt(prompt) {
-  return `You are the Smart History Search Assistant living inside the Spotlight interface of a web browser. A user who has the history filter enabled asked: """${prompt}""".\n\nRespond with JSON that matches this schema exactly:\n{\n  "message": string (a single friendly sentence that explains how you can help with browsing history),\n  "suggestions": string[] (up to four short example requests they can try next, each under 80 characters)\n}\n\nGuidelines:\n- Keep the message in the second person (e.g., "I can help you...").\n- Highlight that you understand natural language history questions and can search, open, delete, or summarize entries.\n- Tailor the wording so it feels responsive to the user's question.\n- Provide diverse suggestions that demonstrate useful history-related prompts.`;
+function buildGeneralInquiryPrompt(prompt, conversation) {
+  const contextText = conversation
+    ? `Here is the recent conversation context between you and the user:\n${conversation}\n\n`
+    : "";
+  return `You are the Smart History Search Assistant living inside the Spotlight interface of a web browser. ${contextText}A user who has the history filter enabled asked: """${prompt}""".\n\nRespond with JSON that matches this schema exactly:\n{\n  "message": string (a single friendly sentence that explains how you can help with browsing history),\n  "suggestions": string[] (up to four short example requests they can try next, each under 80 characters)\n}\n\nGuidelines:\n- Keep the message in the second person (e.g., "I can help you...").\n- Highlight that you understand natural language history questions and can search, open, delete, or summarize entries.\n- Tailor the wording so it feels responsive to the user's question.\n- Keep the tone professional yet approachable, similar to ChatGPT.\n- Provide diverse suggestions that demonstrate useful history-related prompts.`;
 }
 
-async function buildGeneralInquiryResponse(state, prompt) {
+async function buildGeneralInquiryResponse(state, prompt, conversation) {
   const defaultMessage =
     "I'm the Spotlight history assistant. I can search, open, delete, and summarize your browsing history with natural language.";
   let message = defaultMessage;
@@ -513,7 +860,11 @@ async function buildGeneralInquiryResponse(state, prompt) {
 
   try {
     const session = await ensureSessionInstance(state);
-    const result = await runPrompt(session, buildGeneralInquiryPrompt(prompt), GENERAL_GREETING_SCHEMA);
+    const result = await runPrompt(
+      session,
+      buildGeneralInquiryPrompt(prompt, conversation),
+      GENERAL_GREETING_SCHEMA
+    );
     const parsedMessage = typeof result?.message === "string" ? result.message.trim() : "";
     if (parsedMessage) {
       message = parsedMessage;
@@ -533,7 +884,7 @@ async function buildGeneralInquiryResponse(state, prompt) {
   }
 
   const suggestionText = suggestionList.length
-    ? `Try prompts like ${suggestionList.map((example) => `"${example}"`).join(" ")}`
+    ? `Here are a few ideas: ${suggestionList.map((example) => `"${example}"`).join(" ")}`
     : "";
 
   return {
@@ -852,6 +1203,8 @@ function buildInterpretationPrompt({
   datasetSize,
   totalAvailable,
   maxReturn,
+  conversation,
+  followup,
 }) {
   const datasetJson = JSON.stringify(dataset, null, 2);
   const rangeText = range ? `\nDetected range: ${range.start} to ${range.end}` : "";
@@ -859,18 +1212,28 @@ function buildInterpretationPrompt({
   const summaryText = planSummary ? `\nSearch plan:\n${planSummary}` : "";
   const datasetInfo = `\nProvided dataset entries: ${dataset.length} (focused from ${datasetSize} plan matches, ${totalAvailable} total in range)`;
   const returnLimit = Math.max(1, Math.min(MAX_RESULT_IDS, maxReturn || MAX_RESULT_IDS));
-  return `You are the Smart History Search Assistant. Interpret the user's request using the provided browser history entries.\n\nCurrent UTC time: ${nowIso}${rangeText}${confidenceText}${summaryText}${datasetInfo}\nUser request: """${prompt}"""\n\nThe dataset below contains browser history entries in reverse chronological order. Only use these entries when selecting results. Return JSON that matches this schema exactly:\n{\n  "action": "show" | "open" | "delete" | "summarize" | "unknown",\n  "outputMessage": string,\n  "filteredResultIds": number[],\n  "notes": string (optional explanatory text)\n}\n\nRules:\n- Choose result ids only from the dataset.\n- Limit filteredResultIds to at most ${returnLimit} entries, ordered by relevance.\n- Prefer entries that match the user's intent, domains, or topics.\n- When the user asks for "all" or a broad result, include as many entries as allowed by the limit.\n- If nothing matches, return an empty filteredResultIds array and craft a helpful outputMessage explaining that no history was found.\n- Use the "delete" action only if the user clearly wants to remove history entries.\n- Use the "open" action only if the user wants tabs reopened. Otherwise default to "show".\n- Summaries should still list relevant result ids.\n- Respond with JSON only.\n\nHistory dataset:\n${datasetJson}`;
+  const conversationText = conversation ? `\nConversation context:\n${conversation}` : "";
+  const followupText = followup
+    ? "\nFollow-up request: yes. Use the conversation context to interpret references back to previous answers."
+    : "\nFollow-up request: no.";
+  return `You are the Smart History Search Assistant. Interpret the user's request using the provided browser history entries.${followupText}${conversationText}\n\nCurrent UTC time: ${nowIso}${rangeText}${confidenceText}${summaryText}${datasetInfo}\nUser request: """${prompt}"""\n\nThe dataset below contains browser history entries in reverse chronological order. Only use these entries when selecting results. Return JSON that matches this schema exactly:\n{\n  "action": "show" | "open" | "delete" | "summarize" | "unknown",\n  "outputMessage": string,\n  "filteredResultIds": number[],\n  "notes": string (optional explanatory text)\n}\n\nRules:\n- Choose result ids only from the dataset.\n- Limit filteredResultIds to at most ${returnLimit} entries, ordered by relevance.\n- Prefer entries that match the user's intent, domains, or topics.\n- When the user asks for "all" or a broad result, include as many entries as allowed by the limit.\n- If nothing matches, return an empty filteredResultIds array and craft a helpful outputMessage explaining that no history was found.\n- Use the "delete" action only if the user clearly wants to remove history entries.\n- Use the "open" action only if the user wants tabs reopened. Otherwise default to "show".\n- Summaries should still list relevant result ids.\n- Write the outputMessage in a professional yet friendly tone, similar to ChatGPT.\n- Respond with JSON only.\n\nHistory dataset:\n${datasetJson}`;
 }
 
-function buildTimeRangePrompt(prompt, nowIso) {
-  return `You analyze natural language history queries and extract an explicit UTC time range.\nCurrent UTC time: ${nowIso}\nUser request: """${prompt}"""\n\nRespond with JSON only:\n{\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "confidence": number between 0 and 1 (optional)\n}\n\nGuidance:\n- Interpret relative phrases like "past 3 hours" or "23 minutes ago".\n- When the request mentions a single instant (for example "around 9 PM"), create a narrow window that includes that instant.\n- Clamp the end time so it is not in the future.\n- If you cannot determine a range, return null.`;
+function buildTimeRangePrompt(prompt, nowIso, conversation, followup) {
+  const followupText = followup
+    ? "\nThe user is following up on an earlier request. Use the conversation context to resolve implicit references."
+    : "";
+  const conversationText = conversation ? `\nConversation context:\n${conversation}` : "";
+  return `You analyze natural language history queries and extract an explicit UTC time range.${followupText}${conversationText}\n\nCurrent UTC time: ${nowIso}\nUser request: """${prompt}"""\n\nRespond with JSON only:\n{\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "confidence": number between 0 and 1 (optional)\n}\n\nGuidance:\n- Interpret relative phrases like "past 3 hours" or "23 minutes ago".\n- When the request mentions a single instant (for example "around 9 PM"), create a narrow window that includes that instant.\n- Clamp the end time so it is not in the future.\n- If you cannot determine a range, return null.`;
 }
 
-function buildSearchPlanPrompt({ prompt, nowIso, range, confidence, keywords }) {
+function buildSearchPlanPrompt({ prompt, nowIso, range, confidence, keywords, conversation, followup }) {
   const keywordText = keywords?.length ? keywords.join(", ") : "(none)";
   const rangeText = range ? `start=${range.start}, end=${range.end}` : "(none)";
   const confidenceText = Number.isFinite(confidence) ? confidence.toFixed(2) : "unknown";
-  return `You are a planning agent that translates natural language history questions into structured search filters.\nCurrent UTC time: ${nowIso}\nUser request: """${prompt}"""\nHeuristic time range: ${rangeText}\nHeuristic confidence: ${confidenceText}\nCandidate keywords from prompt: ${keywordText}\n\nRespond with JSON only:\n{\n  "intent": "show" | "open" | "delete" | "summarize" | "unknown",\n  "mustInclude": string[] (terms that must appear),\n  "shouldInclude": string[] (terms to boost),\n  "exclude": string[] (terms to remove),\n  "domainHints": string[] (hostnames or domains),\n  "searchPhrases": string[] (longer phrases to match),\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "maxResults": number (desired result cap),\n  "requireModel": boolean (true if model reasoning is essential),\n  "reasoning": string (brief explanation)\n}\n\nGuidance:\n- Reuse the heuristic range if it fits the request; otherwise tighten or broaden it as needed.\n- Include hostnames (like "youtube.com") in domainHints when the request targets a site.\n- Increase maxResults when the user asks for "all" or a broad list, up to ${MAX_RESULT_IDS}.\n- Set requireModel to true when semantic understanding beyond keyword filtering is necessary.\n- Leave arrays empty when they are not needed.`;
+  const conversationText = conversation ? `Conversation context:\n${conversation}\n\n` : "";
+  const followupText = followup ? "yes" : "no";
+  return `You are a planning agent that translates natural language history questions into structured search filters.\nFollow-up request: ${followupText}.\n${conversationText}Current UTC time: ${nowIso}\nUser request: """${prompt}"""\nHeuristic time range: ${rangeText}\nHeuristic confidence: ${confidenceText}\nCandidate keywords from prompt: ${keywordText}\n\nRespond with JSON only:\n{\n  "intent": "show" | "open" | "delete" | "summarize" | "unknown",\n  "mustInclude": string[] (terms that must appear),\n  "shouldInclude": string[] (terms to boost),\n  "exclude": string[] (terms to remove),\n  "domainHints": string[] (hostnames or domains),\n  "searchPhrases": string[] (longer phrases to match),\n  "timeRange": { "start": "<ISO8601 UTC>", "end": "<ISO8601 UTC>" } | null,\n  "maxResults": number (desired result cap),\n  "requireModel": boolean (true if model reasoning is essential),\n  "reasoning": string (brief explanation)\n}\n\nGuidance:\n- Reuse the heuristic range if it fits the request; otherwise tighten or broaden it as needed.\n- Include hostnames (like "youtube.com") in domainHints when the request targets a site.\n- Increase maxResults when the user asks for "all" or a broad list, up to ${MAX_RESULT_IDS}.\n- Set requireModel to true when semantic understanding beyond keyword filtering is necessary.\n- When the request is a follow-up, reuse relevant domains, keywords, or time windows from the conversation context.\n- Leave arrays empty when they are not needed.`;
 }
 
 async function ensureSessionInstance(state) {
@@ -976,6 +1339,7 @@ function maybeHandleLocally({
   range,
   confidence,
   plan,
+  followup = false,
 }) {
   const intent = plan?.intent || detectPromptAction(prompt);
   if (intent !== "show") {
@@ -1015,20 +1379,31 @@ function maybeHandleLocally({
   let message;
   if (uniqueKeywords.length) {
     const keywordText = uniqueKeywords.map((keyword) => `"${keyword}"`).join(", ");
-    message = `Here are the history entries matching ${keywordText}.`;
+    message = followup
+      ? `Here's an updated set of history entries matching ${keywordText}.`
+      : `I found history entries that match ${keywordText}.`;
   } else {
-    message = "Here are the history entries from your selected time range.";
+    message = followup
+      ? "Here's an updated view of your recent history."
+      : "Here's what I found in your history for that time frame.";
   }
 
   const totalCount = annotatedItems.length;
   const notesParts = [];
-  notesParts.push(totalCount === 1 ? "Found 1 entry." : `Found ${totalCount} entries.`);
+  notesParts.push(totalCount === 1 ? "Found 1 matching entry." : `Found ${totalCount} matching entries.`);
   if (results.length < totalCount) {
-    notesParts.push(`Showing the first ${results.length}. Refine your request to narrow the results.`);
+    notesParts.push(
+      `Showing the first ${results.length}. Ask me to narrow it down for more precise results.`
+    );
   }
   if (plan?.reasoning) {
     notesParts.push(plan.reasoning);
   }
+  notesParts.push(
+    followup
+      ? "Tell me if you'd like to adjust the filters further."
+      : "Feel free to ask follow-up questions to refine the list."
+  );
 
   return {
     action: "show",
@@ -1114,6 +1489,7 @@ export function createHistoryAssistantService(options = {}) {
   const state = {
     sessionInstance: null,
     sessionPromise: null,
+    conversation: [],
   };
   const { scheduleRebuild } = options;
 
@@ -1122,8 +1498,20 @@ export function createHistoryAssistantService(options = {}) {
     if (!trimmed) {
       throw new Error("Enter a history request to analyze");
     }
+    const conversationContext = buildConversationContext(state.conversation);
+    const lastHistoryTurn = getLastHistoryTurn(state);
+    const followupCandidate = isLikelyFollowupPrompt(trimmed);
+    const isFollowup = followupCandidate && Boolean(lastHistoryTurn);
+
     if (isGeneralInquiryPrompt(trimmed)) {
-      const generalInquiry = await buildGeneralInquiryResponse(state, trimmed);
+      const generalInquiry = await buildGeneralInquiryResponse(state, trimmed, conversationContext);
+      recordConversationTurn(state, {
+        type: "general",
+        prompt: trimmed,
+        response: generalInquiry.response,
+        suggestions: generalInquiry.suggestions,
+        source: generalInquiry.usedModel ? "promptApi" : "fallback",
+      });
       console.info("Spotlight history assistant general inquiry", {
         prompt: trimmed,
         handled: "general",
@@ -1131,21 +1519,44 @@ export function createHistoryAssistantService(options = {}) {
         suggestionCount: Array.isArray(generalInquiry.suggestions)
           ? generalInquiry.suggestions.length
           : 0,
+        contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
       });
       return generalInquiry.response;
     }
     const nowIso = new Date(now).toISOString();
-    const promptKeywords = extractMeaningfulKeywords(trimmed);
+    let promptKeywords = extractMeaningfulKeywords(trimmed);
+    const keywordSet = new Set(promptKeywords);
+    if (isFollowup && lastHistoryTurn && Array.isArray(lastHistoryTurn.keywords)) {
+      for (const keyword of lastHistoryTurn.keywords) {
+        if (typeof keyword !== "string") {
+          continue;
+        }
+        const normalizedKeyword = keyword.toLowerCase();
+        if (normalizedKeyword && !keywordSet.has(normalizedKeyword)) {
+          promptKeywords.push(normalizedKeyword);
+          keywordSet.add(normalizedKeyword);
+        }
+      }
+    }
     const heuristicIntent = detectPromptAction(trimmed);
     let session = null;
     let detectedRangeInfo = deriveTimeRangeFromPrompt(trimmed, now);
     let detectedRange = detectedRangeInfo?.range || null;
     let confidence = typeof detectedRangeInfo?.confidence === "number" ? detectedRangeInfo.confidence : null;
 
+    if (!detectedRange && isFollowup && lastHistoryTurn?.rangeMs) {
+      detectedRange = { ...lastHistoryTurn.rangeMs };
+      confidence = typeof confidence === "number" ? Math.max(confidence, 0.6) : 0.6;
+    }
+
     if (!detectedRange) {
       session = await ensureSessionInstance(state);
       try {
-        const timeResponse = await runPrompt(session, buildTimeRangePrompt(trimmed, nowIso), TIME_RANGE_SCHEMA);
+        const timeResponse = await runPrompt(
+          session,
+          buildTimeRangePrompt(trimmed, nowIso, conversationContext, isFollowup),
+          TIME_RANGE_SCHEMA
+        );
         const clamped = clampTimeRange(timeResponse?.timeRange, now);
         if (clamped) {
           detectedRange = clamped;
@@ -1181,22 +1592,26 @@ export function createHistoryAssistantService(options = {}) {
           plannerSession = session;
         }
       }
-      planResponse = await runPrompt(
-        plannerSession,
-        buildSearchPlanPrompt({
-          prompt: trimmed,
-          nowIso,
-          range: heuristicRangeIso,
-          confidence,
-          keywords: promptKeywords,
-        }),
-        SEARCH_PLAN_SCHEMA
-      );
+        planResponse = await runPrompt(
+          plannerSession,
+          buildSearchPlanPrompt({
+            prompt: trimmed,
+            nowIso,
+            range: heuristicRangeIso,
+            confidence,
+            keywords: promptKeywords,
+            conversation: conversationContext,
+            followup: isFollowup,
+          }),
+          SEARCH_PLAN_SCHEMA
+        );
     } catch (err) {
       console.warn("Spotlight: search plan generation failed", err);
     }
 
     plan = parseSearchPlan(planResponse, heuristicIntent);
+    const planSummary = summarizePlan(plan);
+    const planKeywordsForRecord = gatherPlanKeywords(plan, promptKeywords);
 
     if (plan?.rawTimeRange) {
       const planRange = clampTimeRange(plan.rawTimeRange, now);
@@ -1216,15 +1631,18 @@ export function createHistoryAssistantService(options = {}) {
       }
     }
 
-    const timeRangeIso = {
-      start: formatIso(detectedRange.start),
-      end: formatIso(detectedRange.end),
-    };
+    const finalRangeMs = detectedRange ? { start: detectedRange.start, end: detectedRange.end } : null;
+    const timeRangeIso = finalRangeMs
+      ? {
+          start: formatIso(finalRangeMs.start),
+          end: formatIso(finalRangeMs.end),
+        }
+      : { start: null, end: null };
 
     const rangeItems = dedupeByUrl(selectHistoryItems(items, detectedRange));
     const totalRangeCount = rangeItems.length;
     if (!totalRangeCount) {
-      return {
+      const responsePayload = {
         action: "show",
         message: "No history entries were found in that time range.",
         results: [],
@@ -1232,6 +1650,22 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: 0,
         confidence,
       };
+      recordConversationTurn(state, {
+        type: "history",
+        prompt: trimmed,
+        response: responsePayload,
+        plan,
+        planSummary,
+        rangeMs: finalRangeMs,
+        timeRangeIso,
+        datasetSize: 0,
+        totalAvailable: 0,
+        keywords: planKeywordsForRecord,
+        followup: isFollowup,
+        confidence,
+        source: "local",
+      });
+      return responsePayload;
     }
 
     let annotatedItems = applySearchPlanToItems(rangeItems, plan, promptKeywords);
@@ -1269,7 +1703,7 @@ export function createHistoryAssistantService(options = {}) {
       .filter(Boolean);
 
     if (!dataset.length) {
-      return {
+      const responsePayload = {
         action: "show",
         message: "No matching history entries were found for that request.",
         results: [],
@@ -1277,9 +1711,24 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: 0,
         confidence,
       };
+      recordConversationTurn(state, {
+        type: "history",
+        prompt: trimmed,
+        response: responsePayload,
+        plan,
+        planSummary,
+        rangeMs: finalRangeMs,
+        timeRangeIso,
+        datasetSize: 0,
+        totalAvailable: totalRangeCount,
+        keywords: planKeywordsForRecord,
+        followup: isFollowup,
+        confidence,
+        source: "local",
+      });
+      return responsePayload;
     }
 
-    const planSummary = summarizePlan(plan);
     const maxReturn = plan?.maxResults ? Math.min(MAX_RESULT_IDS, Math.max(1, plan.maxResults)) : MAX_RESULT_IDS;
 
     const localResponse = maybeHandleLocally({
@@ -1289,6 +1738,7 @@ export function createHistoryAssistantService(options = {}) {
       range: timeRangeIso,
       confidence,
       plan,
+      followup: isFollowup,
     });
 
     console.info("Spotlight history assistant dataset", {
@@ -1299,6 +1749,7 @@ export function createHistoryAssistantService(options = {}) {
       total: totalRangeCount,
       truncated: planMatchCount > dataset.length,
       handledLocally: Boolean(localResponse),
+      followup: isFollowup,
       plan: {
         intent: plan?.intent || null,
         must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
@@ -1310,15 +1761,34 @@ export function createHistoryAssistantService(options = {}) {
         requireModel: Boolean(plan?.requireModel),
       },
       tabs: dataset,
+      contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
     });
 
     if (localResponse) {
-      return {
+      const responseConfidence =
+        typeof localResponse.confidence === "number" ? localResponse.confidence : confidence;
+      const responsePayload = {
         ...localResponse,
         timeRange: timeRangeIso,
         datasetSize: planMatchCount,
-        confidence: typeof localResponse.confidence === "number" ? localResponse.confidence : confidence,
+        confidence: responseConfidence,
       };
+      recordConversationTurn(state, {
+        type: "history",
+        prompt: trimmed,
+        response: responsePayload,
+        plan,
+        planSummary,
+        rangeMs: finalRangeMs,
+        timeRangeIso,
+        datasetSize: planMatchCount,
+        totalAvailable: totalRangeCount,
+        keywords: planKeywordsForRecord,
+        followup: isFollowup,
+        confidence: responseConfidence,
+        source: "local",
+      });
+      return responsePayload;
     }
 
     if (!session) {
@@ -1346,6 +1816,8 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: planMatchCount,
         totalAvailable: totalRangeCount,
         maxReturn,
+        conversation: conversationContext,
+        followup: isFollowup,
       }),
       INTERPRETATION_SCHEMA
     );
@@ -1392,7 +1864,7 @@ export function createHistoryAssistantService(options = {}) {
       notesParts.push(plan.reasoning);
     }
 
-    return {
+    const responsePayload = {
       action: normalizedAction === "unknown" ? plan.intent : normalizedAction,
       message,
       notes: notesParts.join(" ").trim(),
@@ -1401,6 +1873,24 @@ export function createHistoryAssistantService(options = {}) {
       datasetSize: planMatchCount,
       confidence,
     };
+
+    recordConversationTurn(state, {
+      type: "history",
+      prompt: trimmed,
+      response: responsePayload,
+      plan,
+      planSummary,
+      rangeMs: finalRangeMs,
+      timeRangeIso,
+      datasetSize: planMatchCount,
+      totalAvailable: totalRangeCount,
+      keywords: planKeywordsForRecord,
+      followup: isFollowup,
+      confidence,
+      source: "promptApi",
+    });
+
+    return responsePayload;
   }
 
   async function executeAction(action, itemIds, items) {
