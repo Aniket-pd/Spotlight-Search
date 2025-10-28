@@ -45,7 +45,9 @@ When listing entries, reference them by their "entryId" exactly as given. \
 Only choose entries that were supplied. \
 If nothing is relevant, use intent "info" with an explanatory reason.`;
 
-const MAX_HISTORY_RESULTS = 200;
+const MAX_HISTORY_RESULTS = 1000;
+const MAX_HISTORY_RESULTS_PER_QUERY = 200;
+const MAX_HISTORY_SEARCH_ITERATIONS = Math.ceil(MAX_HISTORY_RESULTS / MAX_HISTORY_RESULTS_PER_QUERY);
 const MAX_PROMPT_ENTRIES = 60;
 
 const HISTORY_REASONING_SCHEMA = {
@@ -749,21 +751,95 @@ async function extractTimeRange(session, text) {
 }
 
 async function fetchHistoryEntries(bounds) {
-  const options = { text: "", maxResults: MAX_HISTORY_RESULTS };
-  if (Number.isFinite(bounds?.from)) {
-    options.startTime = bounds.from;
+  const from = Number.isFinite(bounds?.from) ? Math.max(0, Math.floor(bounds.from)) : null;
+  const initialTo = Number.isFinite(bounds?.to) ? Math.max(0, Math.floor(bounds.to)) : null;
+  const aggregated = [];
+  const seenKeys = new Set();
+
+  let remaining = MAX_HISTORY_RESULTS;
+  let endTime = initialTo;
+  let iterations = 0;
+
+  while (remaining > 0 && iterations < MAX_HISTORY_SEARCH_ITERATIONS) {
+    iterations += 1;
+    const options = {
+      text: "",
+      maxResults: Math.min(MAX_HISTORY_RESULTS_PER_QUERY, remaining),
+    };
+    if (from !== null) {
+      options.startTime = from;
+    }
+    if (endTime !== null) {
+      options.endTime = endTime;
+    }
+
+    let batch = [];
+    try {
+      batch = await chrome.history.search(options);
+    } catch (error) {
+      console.warn("Spotlight: history search failed", error);
+      break;
+    }
+
+    if (!Array.isArray(batch) || !batch.length) {
+      break;
+    }
+
+    let earliestTimestamp = null;
+    for (const entry of batch) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const timestamp = Number.isFinite(entry.lastVisitTime)
+        ? Math.floor(entry.lastVisitTime)
+        : Number.isFinite(entry.timeStamp)
+        ? Math.floor(entry.timeStamp)
+        : null;
+      if (timestamp !== null) {
+        if (earliestTimestamp === null || timestamp < earliestTimestamp) {
+          earliestTimestamp = timestamp;
+        }
+      }
+      const key = typeof entry.id === "string" && entry.id.trim()
+        ? `id:${entry.id.trim()}`
+        : typeof entry.url === "string" && entry.url.trim()
+        ? `url:${entry.url.trim()}|${timestamp !== null ? timestamp : ""}`
+        : null;
+      if (key && seenKeys.has(key)) {
+        continue;
+      }
+      if (key) {
+        seenKeys.add(key);
+      }
+      aggregated.push(entry);
+      if (aggregated.length >= MAX_HISTORY_RESULTS) {
+        break;
+      }
+    }
+
+    if (earliestTimestamp === null) {
+      break;
+    }
+
+    remaining = Math.max(0, MAX_HISTORY_RESULTS - aggregated.length);
+    if (remaining <= 0) {
+      break;
+    }
+    if (from !== null && earliestTimestamp <= from) {
+      break;
+    }
+
+    const nextEndTime = earliestTimestamp - 1;
+    if (endTime !== null && nextEndTime >= endTime) {
+      break;
+    }
+    if (nextEndTime <= 0) {
+      break;
+    }
+    endTime = nextEndTime;
   }
-  if (Number.isFinite(bounds?.to)) {
-    options.endTime = bounds.to;
-  }
-  let results = [];
-  try {
-    results = await chrome.history.search(options);
-  } catch (error) {
-    console.warn("Spotlight: history search failed", error);
-    return [];
-  }
-  return sanitizeHistoryEntries(results, bounds);
+
+  return sanitizeHistoryEntries(aggregated, { from, to: initialTo });
 }
 
 async function analyzeHistory(session, { query, timeRange, entries }) {
