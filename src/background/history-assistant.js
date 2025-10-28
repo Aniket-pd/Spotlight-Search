@@ -10,6 +10,23 @@ const MAX_CONVERSATION_AGE_MS = 20 * 60 * 1000;
 const SUMMARY_TOP_HOSTS_LIMIT = 8;
 const SUMMARY_TOP_KEYWORDS_LIMIT = 12;
 const SUMMARY_HIGHLIGHT_LIMIT = 40;
+const SUMMARY_META_PATTERNS = [
+  /respond\s+with\s+json/i,
+  /return\s+json/i,
+  /json\s+schema/i,
+  /schema\s+exactly/i,
+  /instructions?\s+(?:say|state|require|specify)/i,
+  /this\s+requires/i,
+  /i\s+interpreted/i,
+  /as\s+an\s+ai/i,
+  /i\s+am\s+an\s+ai/i,
+  /the\s+dataset\s+(?:below|provided|above)/i,
+  /the\s+prompt\s+(?:says|states|provided)/i,
+  /the\s+model\s+(?:decided|will|should)/i,
+  /analysis:/i,
+  /meta-response/i,
+  /here'?s\s+how\s+(?:i|we)\s+(?:would|will)\s+(?:approach|handle)/i,
+];
 
 const DEV_MODE =
   typeof process !== "undefined" &&
@@ -871,6 +888,7 @@ function recordConversationTurn(state, entry) {
     planSummary: typeof entry?.planSummary === "string" ? entry.planSummary : "",
     plan: serializePlanForConversation(entry?.plan),
     keywords: dedupeStrings(entry?.keywords || []),
+    domains: dedupeStrings(entry?.domains || []),
     suggestions: dedupeStrings(entry?.suggestions || []),
     followup: Boolean(entry?.followup),
     confidence: typeof entry?.confidence === "number" ? Math.max(0, Math.min(1, entry.confidence)) : null,
@@ -1337,13 +1355,20 @@ function toDatasetEntry(item, annotations = {}) {
   return entry;
 }
 
-function buildSummaryAnalytics(dataset, planKeywords = []) {
+function buildSummaryAnalytics(dataset, planKeywords = [], planDomains = []) {
   const entries = Array.isArray(dataset) ? dataset.filter((entry) => entry && typeof entry === "object") : [];
   const hostMap = new Map();
   const dayMap = new Map();
   const keywordMap = new Map();
-  const highlights = [];
+  let highlights = [];
   let totalVisitCount = 0;
+
+  const planDomainList = Array.isArray(planDomains)
+    ? planDomains
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const normalizedPlanDomains = planDomainList.map((domain) => normalizeDomainHint(domain)).filter(Boolean);
 
   for (const entry of entries) {
     const visitCount = Number(entry.visitCount) || 0;
@@ -1413,12 +1438,32 @@ function buildSummaryAnalytics(dataset, planKeywords = []) {
     })
     .slice(0, SUMMARY_TOP_HOSTS_LIMIT);
 
+  let focusHosts = topHosts;
+  if (normalizedPlanDomains.length) {
+    const filteredHosts = topHosts.filter((hostEntry) =>
+      normalizedPlanDomains.some((domain) => hostMatchesDomain(hostEntry.host, domain))
+    );
+    if (filteredHosts.length) {
+      focusHosts = filteredHosts;
+    }
+  }
+
   const topKeywords = Array.from(keywordMap.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, SUMMARY_TOP_KEYWORDS_LIMIT)
     .map(([keyword, count]) => ({ keyword, count }));
 
   const dayBuckets = Array.from(dayMap.values()).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+
+  if (normalizedPlanDomains.length) {
+    const filteredHighlights = highlights.filter((entry) => {
+      const host = typeof entry.host === "string" ? entry.host.toLowerCase() : "";
+      return normalizedPlanDomains.some((domain) => hostMatchesDomain(host, domain));
+    });
+    if (filteredHighlights.length) {
+      highlights = filteredHighlights;
+    }
+  }
 
   const planKeywordList = Array.isArray(planKeywords)
     ? planKeywords.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim())
@@ -1429,11 +1474,12 @@ function buildSummaryAnalytics(dataset, planKeywords = []) {
     totalEntries: entries.length,
     uniqueHosts: hostMap.size,
     totalVisitCount,
-    topHosts,
+    topHosts: focusHosts,
     topKeywords,
     dayBuckets,
     highlights,
     planKeywords: planKeywordList,
+    planDomains: planDomainList,
   };
 }
 
@@ -1453,11 +1499,20 @@ function buildSummaryNarrativePrompt({
   const highlightJson = JSON.stringify(analytics.highlights, null, 2);
   const conversationText = conversation ? `\nConversation context:\n${conversation}` : "";
   const planKeywordText = analytics.planKeywords.length ? analytics.planKeywords.join(", ") : "(none)";
+  const planDomainText = analytics.planDomains.length ? analytics.planDomains.join(", ") : "(none)";
   const followupText = followup ? "yes" : "no";
   const totalVisitsText = Number.isFinite(analytics.totalVisitCount)
     ? analytics.totalVisitCount
     : 0;
-  return `You are the Smart History Search Assistant. Craft a professional, friendly summary similar to ChatGPT.${conversationText}
+  const sufficiency =
+    analytics.totalEntries >= 6
+      ? "ample"
+      : analytics.totalEntries >= 3
+      ? "moderate"
+      : analytics.totalEntries > 0
+      ? "sparse"
+      : "empty";
+  return `You are the Smart History Search Assistant. Craft a professional, friendly summary similar to ChatGPT.${conversationText}`;
 
 Current UTC time: ${nowIso}
 Follow-up request: ${followupText}
@@ -1468,6 +1523,8 @@ Entries analyzed: ${analytics.totalEntries}
 Unique sites: ${analytics.uniqueHosts}
 Aggregate visit count (approximate time investment): ${totalVisitsText}
 Plan keywords: ${planKeywordText}
+Plan domain hints (treat as strict focus): ${planDomainText}
+Data sufficiency classification: ${sufficiency}
 
 Top sites by activity:
 ${hostJson}
@@ -1487,8 +1544,11 @@ Instructions:
 - Highlight the main topics, frequently visited domains, and any notable patterns in how time was spent.
 - Reference hosts, titles, or keywords from the data to make the summary feel specific and useful.
 - Close with an overall takeaway sentence.
-- Use Markdown bullet lists inside the sections. Keep the whole message under 1,800 characters.
-- If the data seems sparse, acknowledge that briefly but still provide helpful observations.
+- Use Markdown bullet lists inside the sections. Keep the whole message under 1,200 characters.
+- Stay focused on the requested scope. If domain hints are provided, ignore unrelated sites and highlight only matching activity.
+- Do not mention JSON, schemas, instructions, or how you interpreted the request. Never reference the Prompt API or internal reasoning.
+- Do not describe what you are going to do. Provide the user-facing summary directly.
+- If the data is classified as "sparse" or "empty", acknowledge the limited history and keep the summary brief (you may mention that there is not enough data).
 
 Respond with JSON only:
 {
@@ -1497,11 +1557,25 @@ Respond with JSON only:
 }`;
 }
 
+
 function buildSummaryFallbackMessage(analytics, rangeLabel) {
   const headerRange = rangeLabel ? `${rangeLabel}` : "your recent history";
   const lines = [];
   lines.push(`Here’s a quick summary of ${headerRange}:`);
   lines.push("");
+  if (analytics.totalEntries > 0 && analytics.totalEntries < 3) {
+    lines.push("🧠 Main Focus Areas");
+    lines.push("- Not enough browsing history to surface strong themes yet.");
+    lines.push("");
+    lines.push("🕒 Activity Snapshot");
+    lines.push(`- Reviewed ${analytics.totalEntries === 1 ? "1 entry" : `${analytics.totalEntries} entries`} across ${
+      analytics.uniqueHosts === 1 ? "1 site" : `${analytics.uniqueHosts} sites`
+    }.`);
+    lines.push("");
+    lines.push("🧩 Overall Summary");
+    lines.push("- Try broadening the time range or exploring more sites for richer insights.");
+    return lines.join("\n");
+  }
   lines.push("🧠 Main Focus Areas");
   if (analytics.topHosts.length) {
     for (const host of analytics.topHosts.slice(0, 3)) {
@@ -1524,6 +1598,48 @@ function buildSummaryFallbackMessage(analytics, rangeLabel) {
   const uniqueHostsText = analytics.uniqueHosts === 1 ? "1 site" : `${analytics.uniqueHosts} sites`;
   lines.push(`- Reviewed ${totalEntriesText} across ${uniqueHostsText}.`);
   return lines.join("\n");
+}
+
+function gatherPlanDomains(plan) {
+  const domains = [];
+  const seen = new Set();
+  if (plan && Array.isArray(plan.domainHints)) {
+    for (const entry of plan.domainHints) {
+      if (!entry || typeof entry.value !== "string") {
+        continue;
+      }
+      const trimmed = entry.value.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const lower = trimmed.toLowerCase();
+      if (seen.has(lower)) {
+        continue;
+      }
+      seen.add(lower);
+      domains.push(trimmed);
+    }
+  }
+  return domains;
+}
+
+function isSummaryMetaMessage(message) {
+  if (typeof message !== "string") {
+    return true;
+  }
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return true;
+  }
+  if (trimmed.length > 1800) {
+    return true;
+  }
+  for (const pattern of SUMMARY_META_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function generateSummaryNarrative(session, options) {
@@ -1549,22 +1665,31 @@ async function generateSummaryNarrative(session, options) {
     };
   }
 
+  let fallbackNote = "Summary generated locally (Prompt API fallback).";
+
   try {
     const response = await runPrompt(session, prompt, SUMMARY_MESSAGE_SCHEMA);
-    if (response && typeof response.message === "string" && response.message.trim()) {
+    const parsedMessage = response && typeof response.message === "string" ? response.message.trim() : "";
+    const parsedNotes = response && typeof response.notes === "string" ? response.notes.trim() : "";
+    if (parsedMessage && !isSummaryMetaMessage(parsedMessage)) {
       return {
-        message: response.message.trim(),
-        notes: typeof response.notes === "string" ? response.notes.trim() : "",
+        message: parsedMessage,
+        notes: parsedNotes,
         usedModel: true,
       };
     }
+    if (parsedMessage) {
+      console.warn("Spotlight: summary narrative flagged as meta", { preview: parsedMessage.slice(0, 160) });
+      fallbackNote = "Summary generated locally (model output filtered).";
+    }
   } catch (error) {
     console.warn("Spotlight: summary narrative generation failed", error);
+    fallbackNote = "Summary generated locally (Prompt API error).";
   }
 
   return {
     message: buildSummaryFallbackMessage(options.analytics, rangeLabel),
-    notes: "Summary generated locally (Prompt API fallback).",
+    notes: fallbackNote,
     usedModel: false,
   };
 }
@@ -1988,6 +2113,7 @@ export function createHistoryAssistantService(options = {}) {
     plan = parseSearchPlan(planResponse, heuristicIntent);
     const planSummary = summarizePlan(plan);
     const planKeywordsForRecord = gatherPlanKeywords(plan, promptKeywords);
+    const planDomainsForRecord = gatherPlanDomains(plan);
 
     if (plan?.rawTimeRange) {
       const planRange = clampTimeRange(plan.rawTimeRange, now);
@@ -2037,6 +2163,7 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: 0,
         totalAvailable: 0,
         keywords: planKeywordsForRecord,
+        domains: planDomainsForRecord,
         followup: isFollowup,
         confidence,
         source: "local",
@@ -2083,7 +2210,7 @@ export function createHistoryAssistantService(options = {}) {
       })
       .filter(Boolean);
 
-    const summaryAnalytics = buildSummaryAnalytics(dataset, planKeywordsForRecord);
+    const summaryAnalytics = buildSummaryAnalytics(dataset, planKeywordsForRecord, planDomainsForRecord);
 
     if (!dataset.length) {
       const responsePayload = {
@@ -2105,6 +2232,7 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: 0,
         totalAvailable: totalRangeCount,
         keywords: planKeywordsForRecord,
+        domains: planDomainsForRecord,
         followup: isFollowup,
         confidence,
         source: "local",
@@ -2283,6 +2411,7 @@ export function createHistoryAssistantService(options = {}) {
         entriesAnalyzed: summaryAnalytics.totalEntries,
         uniqueHosts: summaryAnalytics.uniqueHosts,
         topHosts: summaryAnalytics.topHosts,
+        focusDomains: planDomainsForRecord,
       });
     }
 
@@ -2296,22 +2425,23 @@ export function createHistoryAssistantService(options = {}) {
       confidence,
     };
 
-    recordConversationTurn(state, {
-      type: "history",
-      prompt: trimmed,
-      response: responsePayload,
-      plan,
-      planSummary,
-      rangeMs: finalRangeMs,
-      timeRangeIso,
-      datasetSize: planMatchCount,
-      totalAvailable: totalRangeCount,
-      keywords: planKeywordsForRecord,
-      followup: isFollowup,
-      confidence,
-      source: "promptApi",
-      summarySource,
-    });
+      recordConversationTurn(state, {
+        type: "history",
+        prompt: trimmed,
+        response: responsePayload,
+        plan,
+        planSummary,
+        rangeMs: finalRangeMs,
+        timeRangeIso,
+        datasetSize: planMatchCount,
+        totalAvailable: totalRangeCount,
+        keywords: planKeywordsForRecord,
+        domains: planDomainsForRecord,
+        followup: isFollowup,
+        confidence,
+        source: "promptApi",
+        summarySource,
+      });
 
     return responsePayload;
   }
