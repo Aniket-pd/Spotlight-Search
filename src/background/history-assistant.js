@@ -1512,13 +1512,17 @@ function buildSummaryNarrativePrompt({
       : analytics.totalEntries > 0
       ? "sparse"
       : "empty";
-  return `You are the Smart History Search Assistant. Craft a professional, friendly summary similar to ChatGPT.${conversationText}`;
+  return `You are the Smart History Search Assistant. Craft a professional, friendly summary similar to ChatGPT.${conversationText}
 
 Current UTC time: ${nowIso}
 Follow-up request: ${followupText}
 User request: """${prompt}"""
 Time range: ${rangeText}
-Detected ISO range: ${timeRange && timeRange.start && timeRange.end ? `${timeRange.start} to ${timeRange.end}` : "unknown"}
+Detected ISO range: ${
+    timeRange && timeRange.start && timeRange.end
+      ? `${timeRange.start} to ${timeRange.end}`
+      : "unknown"
+  }
 Entries analyzed: ${analytics.totalEntries}
 Unique sites: ${analytics.uniqueHosts}
 Aggregate visit count (approximate time investment): ${totalVisitsText}
