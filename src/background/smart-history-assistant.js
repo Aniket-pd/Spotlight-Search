@@ -2,6 +2,7 @@ import { isSmartHistoryAssistantEnabled } from "../shared/feature-flags.js";
 
 const ALLOWED_ACTIONS = new Set(["show", "open", "delete", "summarize", "frequent", "info"]);
 const MAX_DATASET_ENTRIES = 120;
+const MAX_DATASET_PROMPT_CHARS = 14000;
 const MAX_RESPONSE_RESULTS = 60;
 
 const TIME_RANGE_SYSTEM_PROMPT =
@@ -280,6 +281,77 @@ async function loadHistoryDataset(ensureIndex, range) {
   };
 }
 
+function normalizePromptDataset(entries) {
+  return entries.map((entry) => {
+    const promptEntry = {
+      id: entry.id,
+      title: entry.title,
+      url: entry.url,
+    };
+    if (Number.isFinite(entry.lastVisitTime)) {
+      promptEntry.lastVisitTime = entry.lastVisitTime;
+    }
+    if (entry.domain) {
+      promptEntry.domain = entry.domain;
+    }
+    return promptEntry;
+  });
+}
+
+function constrainDatasetForPrompt(dataset, limit = MAX_DATASET_PROMPT_CHARS) {
+  const originalEntries = Array.isArray(dataset?.entries) ? dataset.entries : [];
+  if (!originalEntries.length) {
+    return {
+      entries: [],
+      map: new Map(),
+      json: "[]",
+      trimmedCount: 0,
+      totalMatches: dataset?.totalMatches ?? 0,
+      totalAvailable: dataset?.totalAvailable ?? 0,
+    };
+  }
+
+  let promptEntries = originalEntries;
+  let promptJson = JSON.stringify(normalizePromptDataset(promptEntries));
+
+  while (promptJson.length > limit && promptEntries.length > 1) {
+    const nextLength = Math.max(1, Math.floor(promptEntries.length * 0.75));
+    promptEntries = promptEntries.slice(0, nextLength);
+    promptJson = JSON.stringify(normalizePromptDataset(promptEntries));
+  }
+
+  if (promptJson.length > limit) {
+    promptEntries = [];
+    promptJson = "[]";
+  }
+
+  const trimmedCount = originalEntries.length - promptEntries.length;
+  const promptMap = new Map();
+  promptEntries.forEach((entry) => {
+    const fullEntry = dataset.map.get(entry.id);
+    if (fullEntry) {
+      promptMap.set(entry.id, fullEntry);
+    }
+  });
+
+  return {
+    entries: promptEntries,
+    map: promptMap,
+    json: promptJson,
+    trimmedCount,
+    totalMatches: dataset.totalMatches,
+    totalAvailable: dataset.totalAvailable,
+  };
+}
+
+function isTooLargeError(error) {
+  const message = sanitizeString(error?.message);
+  if (!message) {
+    return false;
+  }
+  return /too\s+large/i.test(message);
+}
+
 async function detectTimeRange(session, text, now) {
   const isoNow = new Date(now).toISOString();
   const prompt = [
@@ -314,8 +386,20 @@ async function detectTimeRange(session, text, now) {
 async function interpretWithDataset(session, options) {
   const text = options.text;
   const datasetEntries = Array.isArray(options.dataset?.entries) ? options.dataset.entries : [];
-  const datasetSummary = `Showing ${datasetEntries.length} entr${datasetEntries.length === 1 ? "y" : "ies"} out of ${options.dataset?.totalMatches || 0} in range.`;
-  const datasetJson = JSON.stringify(datasetEntries, null, 2);
+  const trimmedCount = Number.isFinite(options.dataset?.trimmedCount) ? options.dataset.trimmedCount : 0;
+  const datasetSummaryParts = [
+    `Sampling ${datasetEntries.length} entr${datasetEntries.length === 1 ? "y" : "ies"}`,
+  ];
+  if (Number.isFinite(options.dataset?.totalMatches)) {
+    datasetSummaryParts.push(`from ${options.dataset.totalMatches} matches in range`);
+  }
+  if (trimmedCount > 0) {
+    datasetSummaryParts.push(`(trimmed ${trimmedCount} for size)`);
+  }
+  const datasetSummary = datasetSummaryParts.join(" ") + ".";
+  const datasetJson = typeof options.dataset?.json === "string"
+    ? options.dataset.json
+    : JSON.stringify(normalizePromptDataset(datasetEntries));
   const isoNow = new Date(options.now).toISOString();
   const timeLabel = sanitizeString(options.timeLabel) || "all time";
   const prompt = [
@@ -329,7 +413,15 @@ async function interpretWithDataset(session, options) {
         `User request:\n"""${text}"""`,
     },
   ];
-  const raw = await session.prompt(prompt, { responseConstraint: ASSISTANT_RESPONSE_SCHEMA });
+  let raw;
+  try {
+    raw = await session.prompt(prompt, { responseConstraint: ASSISTANT_RESPONSE_SCHEMA });
+  } catch (error) {
+    if (isTooLargeError(error)) {
+      throw new Error("History request is too large. Try narrowing the time range or filtering further.");
+    }
+    throw error;
+  }
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -443,11 +535,12 @@ export function createSmartHistoryAssistant({ ensureIndex } = {}) {
       console.warn("Spotlight: failed to load history dataset", error);
       return { entries: [], map: new Map(), totalMatches: 0, totalAvailable: 0 };
     });
+    const promptDataset = constrainDatasetForPrompt(dataset, MAX_DATASET_PROMPT_CHARS);
     const timeLabel = detectedRange.label || formatTimeRangeLabel(range.start, range.end);
     const interpretSession = await ensureInterpretSession();
     const assistantResponse = await interpretWithDataset(interpretSession, {
       text,
-      dataset,
+      dataset: promptDataset,
       now,
       timeLabel,
     });
@@ -460,7 +553,7 @@ export function createSmartHistoryAssistant({ ensureIndex } = {}) {
     const limit = normalizeLimit(assistantResponse?.limit);
     const responseLabel = sanitizeString(assistantResponse?.timeRangeLabel);
     const effectiveLabel = responseLabel || timeLabel || "all time";
-    const results = mapAssistantResults(assistantResponse?.filteredResults, dataset.map);
+    const results = mapAssistantResults(assistantResponse?.filteredResults, promptDataset.map);
 
     const timeRangePayload = buildTimeRangePayload(range, effectiveLabel, now);
 
@@ -477,7 +570,7 @@ export function createSmartHistoryAssistant({ ensureIndex } = {}) {
       timeRange: timeRangePayload,
       results,
       totalCount: dataset.totalMatches,
-      evaluatedCount: dataset.entries.length,
+      evaluatedCount: promptDataset.entries.length,
       filteredCount: results.length,
       rangeConfidence: detectedRange.confidence,
     };
