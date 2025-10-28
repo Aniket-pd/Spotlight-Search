@@ -1617,6 +1617,13 @@ export async function runSearch(query, data, options = {}) {
       const assistantCandidates = historyItems.filter((item) =>
         matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)
       );
+      const assistantCandidateMap = new Map();
+      assistantCandidates.forEach((item) => {
+        if (!item || typeof item.id === "undefined") {
+          return;
+        }
+        assistantCandidateMap.set(String(item.id), item);
+      });
       if (assistantCandidates.length) {
         try {
           const assistantResult = await historyAssistantService.runSmartHistorySearch(assistantQuery, {
@@ -1634,26 +1641,45 @@ export async function runSearch(query, data, options = {}) {
             const mappedItems = [];
             if (Array.isArray(assistantResult.itemIds)) {
               for (const entryId of assistantResult.itemIds) {
-                const normalizedId = typeof entryId === "number" ? entryId : Number.parseInt(entryId, 10);
-                if (!Number.isInteger(normalizedId) || seenIds.has(normalizedId)) {
+                const rawId =
+                  typeof entryId === "number"
+                    ? String(entryId)
+                    : typeof entryId === "string"
+                    ? entryId.trim()
+                    : "";
+                if (!rawId) {
                   continue;
                 }
-                const item = items[normalizedId];
-                if (!item || item.type !== "history") {
+                const lookupKey = assistantCandidateMap.has(rawId)
+                  ? rawId
+                  : (() => {
+                      const parsed = Number.parseInt(rawId, 10);
+                      return Number.isInteger(parsed) ? String(parsed) : null;
+                    })();
+                if (!lookupKey) {
                   continue;
                 }
-                if (!matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)) {
+                const item = assistantCandidateMap.get(lookupKey);
+                if (
+                  !item ||
+                  seenIds.has(item.id) ||
+                  !matchesSubfilter(item, filterType, activeSubfilterId, subfilterContext)
+                ) {
                   continue;
                 }
                 const mapped = buildResultFromItem(item);
                 if (mapped) {
                   mappedItems.push(mapped);
-                  seenIds.add(normalizedId);
+                  seenIds.add(item.id);
                 }
               }
             }
             const limit = getResultLimit(filterType);
             const limitedResults = sliceResultsForLimit(mappedItems, limit);
+            const totalResults = mappedItems.length;
+            const hasMappedResults = limitedResults.length > 0;
+            const empty = hasExplicitEmpty || totalResults === 0;
+            const hasResultsFlag = !empty && hasMappedResults;
             return {
               results: limitedResults,
               ghost: null,
@@ -1674,9 +1700,9 @@ export async function runSearch(query, data, options = {}) {
                   assistantResult.timeRange && typeof assistantResult.timeRange === "object"
                     ? assistantResult.timeRange
                     : null,
-                hasResults: assistantResult.hasResults !== false && limitedResults.length > 0,
-                empty: assistantResult.hasResults === false,
-                totalResults: mappedItems.length,
+                hasResults: hasResultsFlag,
+                empty,
+                totalResults,
                 prompt:
                   typeof assistantResult.prompt === "string" && assistantResult.prompt
                     ? assistantResult.prompt
