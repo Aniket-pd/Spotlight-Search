@@ -386,7 +386,8 @@
 }
 
 .spotlight-subfilters.has-actions {
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: var(--spotlight-gap-lg);
 }
 
 .spotlight-subfilters.has-subfilters .spotlight-subfilters-scroll {
@@ -417,6 +418,9 @@
   align-items: center;
   gap: var(--spotlight-gap-xs);
   flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--spotlight-gap-lg);
+  border-left: 1px solid var(--spotlight-surface-border-subtle);
 }
 
 .spotlight-subfilters-actions[hidden] {
