@@ -2729,6 +2729,102 @@ function resetSummaryStreamElement(element, controller) {
   controller.displayed = "";
   controller.pending = "";
   controller.currentLine = null;
+  controller.lines = [];
+}
+
+function createSummaryStreamLine(element, controller) {
+  if (!element || !controller) {
+    return null;
+  }
+  const lineEl = document.createElement("div");
+  lineEl.className = "spotlight-ai-panel-stream-line";
+  lineEl.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
+  const contentEl = document.createElement("span");
+  contentEl.className = "spotlight-ai-panel-stream-line-content";
+  lineEl.appendChild(contentEl);
+  element.appendChild(lineEl);
+  const record = { element: lineEl, content: contentEl, text: "" };
+  if (Array.isArray(controller.lines)) {
+    controller.lines.push(record);
+  } else {
+    controller.lines = [record];
+  }
+  controller.currentLine = record;
+  return record;
+}
+
+function ensureSummaryStreamLine(element, controller) {
+  if (!element || !controller) {
+    return null;
+  }
+  let record = controller.currentLine;
+  if (record && record.element && record.element.isConnected) {
+    if (record.element.dataset.kind !== (controller.mode === "bullets" ? "bullet" : "text")) {
+      record.element.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
+    }
+    return record;
+  }
+  return createSummaryStreamLine(element, controller);
+}
+
+function reconcileSummaryStreamElement(element, controller, fullText) {
+  if (!element || !controller) {
+    return;
+  }
+
+  const lines = fullText ? fullText.split("\n") : [];
+  const hasTrailingNewline = Boolean(fullText && fullText.endsWith("\n"));
+  if (hasTrailingNewline && lines.length) {
+    lines.pop();
+  }
+
+  const desiredCount = lines.length;
+  const existing = Array.isArray(controller.lines)
+    ? controller.lines.filter((record) => record && record.element && record.element.isConnected)
+    : [];
+  const kind = controller.mode === "bullets" ? "bullet" : "text";
+
+  controller.lines = existing;
+
+  while (existing.length < desiredCount) {
+    createSummaryStreamLine(element, controller);
+  }
+
+  for (let index = 0; index < desiredCount; index += 1) {
+    const lineText = lines[index];
+    let record = existing[index];
+    if (!record) {
+      record = createSummaryStreamLine(element, controller);
+      existing[index] = record;
+    }
+    record.element.dataset.kind = kind;
+    if (record.text !== lineText) {
+      record.content.textContent = "";
+      if (lineText) {
+        const span = document.createElement("span");
+        span.className = "spotlight-ai-panel-stream-chunk instant";
+        span.textContent = lineText;
+        record.content.appendChild(span);
+      }
+      record.text = lineText;
+    }
+  }
+
+  for (let index = existing.length - 1; index >= desiredCount; index -= 1) {
+    const record = existing[index];
+    if (record && record.element && record.element.parentNode === element) {
+      element.removeChild(record.element);
+    }
+    existing.pop();
+  }
+
+  controller.lines = existing;
+  controller.displayed = fullText || "";
+  controller.pending = "";
+  controller.currentLine = null;
+  if (!hasTrailingNewline && controller.lines.length > 0) {
+    controller.currentLine = controller.lines[controller.lines.length - 1];
+  }
 }
 
 function appendSummaryStreamText(element, controller, text, { animate } = {}) {
@@ -2740,25 +2836,15 @@ function appendSummaryStreamText(element, controller, text, { animate } = {}) {
     const newlineIndex = text.indexOf("\n", index);
     const slice = newlineIndex === -1 ? text.slice(index) : text.slice(index, newlineIndex);
     if (slice) {
-      let lineContent = controller.currentLine;
-      if (!lineContent) {
-        const lineEl = document.createElement("div");
-        lineEl.className = "spotlight-ai-panel-stream-line";
-        lineEl.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
-        const contentEl = document.createElement("span");
-        contentEl.className = "spotlight-ai-panel-stream-line-content";
-        lineEl.appendChild(contentEl);
-        element.appendChild(lineEl);
-        lineContent = contentEl;
-        controller.currentLine = lineContent;
-      }
+      const lineRecord = ensureSummaryStreamLine(element, controller);
       const span = document.createElement("span");
       span.className = "spotlight-ai-panel-stream-chunk";
       if (!animate) {
         span.classList.add("instant");
       }
       span.textContent = slice;
-      lineContent.appendChild(span);
+      lineRecord.content.appendChild(span);
+      lineRecord.text = `${lineRecord.text || ""}${slice}`;
     }
     if (newlineIndex === -1) {
       break;
@@ -2775,7 +2861,7 @@ function updateSummaryStreamText(element, nextText, options = {}) {
   const { immediate = false, format } = options || {};
   let controller = summaryStreamControllers.get(element);
   if (!controller) {
-    controller = { displayed: "", pending: "", rafId: 0, mode: "text", currentLine: null };
+    controller = { displayed: "", pending: "", rafId: 0, mode: "text", currentLine: null, lines: [] };
     summaryStreamControllers.set(element, controller);
   }
 
@@ -2807,7 +2893,8 @@ function updateSummaryStreamText(element, nextText, options = {}) {
   const baseline = controller.displayed || "";
   if (baseline.length > safeText.length || !safeText.startsWith(baseline)) {
     stopSummaryStreamAnimation(controller);
-    resetSummaryStreamElement(element, controller);
+    reconcileSummaryStreamElement(element, controller, safeText);
+    return;
   }
 
   const applied = controller.displayed || "";
