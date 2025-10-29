@@ -731,10 +731,10 @@
 }
 
 .spotlight-subfilter.active {
-  background: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
+  background: var(--spotlight-color-accent-strong);
   color: var(--spotlight-color-text-inverse);
   border-color: transparent;
-  box-shadow: 0 10px 24px rgba(49, 200, 155, 0.32);
+  box-shadow: none;
 }
 
 .spotlight-subfilter-label {
