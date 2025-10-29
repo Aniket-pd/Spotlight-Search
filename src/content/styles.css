@@ -19,143 +19,184 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
-  --spotlight-color-overlay: rgba(6, 12, 32, 0.45);
-  --spotlight-surface-gradient: linear-gradient(155deg, rgba(36, 48, 112, 0.9), rgba(16, 22, 58, 0.88));
-  --spotlight-surface-border: rgba(255, 255, 255, 0.2);
-  --spotlight-surface-border-subtle: rgba(140, 160, 255, 0.18);
-  --spotlight-surface-muted: rgba(30, 40, 92, 0.52);
-  --spotlight-surface-panel: linear-gradient(150deg, rgba(48, 62, 138, 0.78), rgba(20, 28, 76, 0.86));
-  --spotlight-surface-panel-border: rgba(132, 156, 255, 0.3);
-  --spotlight-color-text-primary: rgba(240, 244, 255, 0.98);
-  --spotlight-color-text-secondary: rgba(214, 222, 255, 0.78);
-  --spotlight-color-text-tertiary: rgba(188, 198, 235, 0.62);
-  --spotlight-color-text-quiet: rgba(160, 176, 220, 0.48);
-  --spotlight-color-text-inverse: rgba(6, 8, 16, 0.92);
-  --spotlight-color-accent: #8aa7ff;
-  --spotlight-color-accent-strong: #5f7cff;
-  --spotlight-color-accent-soft: rgba(138, 167, 255, 0.24);
-  --spotlight-color-accent-soft-strong: rgba(138, 167, 255, 0.34);
+  --spotlight-color-overlay: rgba(10, 14, 24, 0.6);
+  --spotlight-surface-gradient: linear-gradient(140deg, rgba(22, 24, 32, 0.82), rgba(8, 10, 16, 0.78));
+  --spotlight-shell-border: rgba(255, 255, 255, 0.08);
+  --spotlight-shell-inner-border: rgba(255, 255, 255, 0.14);
+  --spotlight-shell-highlight: radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.18), transparent 60%);
+  --spotlight-surface-border: rgba(255, 255, 255, 0.14);
+  --spotlight-surface-border-subtle: rgba(128, 138, 180, 0.16);
+  --spotlight-surface-muted: rgba(20, 24, 34, 0.58);
+  --spotlight-surface-panel: linear-gradient(140deg, rgba(26, 28, 40, 0.86), rgba(12, 14, 24, 0.82));
+  --spotlight-surface-panel-border: rgba(255, 255, 255, 0.1);
+  --spotlight-color-text-primary: rgba(240, 242, 250, 0.98);
+  --spotlight-color-text-secondary: rgba(206, 210, 224, 0.78);
+  --spotlight-color-text-tertiary: rgba(172, 178, 198, 0.6);
+  --spotlight-color-text-quiet: rgba(148, 154, 178, 0.46);
+  --spotlight-color-text-inverse: rgba(255, 255, 255, 0.98);
+  --spotlight-color-accent: #9bb3ff;
+  --spotlight-color-accent-strong: #6f86ff;
+  --spotlight-color-accent-soft: rgba(155, 179, 255, 0.26);
+  --spotlight-color-accent-soft-strong: rgba(155, 179, 255, 0.34);
   --spotlight-color-positive: #45e0ba;
   --spotlight-color-critical: #ff9090;
 
-  --spotlight-input-bg: rgba(14, 22, 58, 0.72);
-  --spotlight-input-border: rgba(255, 255, 255, 0.16);
-  --spotlight-input-placeholder: rgba(204, 214, 255, 0.55);
+  --spotlight-input-bg: rgba(22, 26, 36, 0.82);
+  --spotlight-input-border: rgba(255, 255, 255, 0.12);
+  --spotlight-input-placeholder: rgba(200, 206, 224, 0.55);
   --spotlight-input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  --spotlight-input-focus-ring: 0 0 0 2px rgba(125, 160, 255, 0.5);
+  --spotlight-input-focus-ring: 0 0 0 2px rgba(148, 174, 255, 0.45);
 
-  --spotlight-result-hover: rgba(120, 150, 255, 0.22);
-  --spotlight-result-active: rgba(108, 140, 255, 0.32);
-  --spotlight-chip-bg: rgba(255, 255, 255, 0.1);
-  --spotlight-chip-border: rgba(140, 160, 255, 0.24);
-  --spotlight-chip-hover: rgba(138, 167, 255, 0.32);
+  --spotlight-input-container-bg: linear-gradient(140deg, rgba(26, 28, 40, 0.9), rgba(12, 14, 24, 0.82));
+  --spotlight-input-container-border: rgba(255, 255, 255, 0.12);
+  --spotlight-input-container-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 28px 52px rgba(0, 0, 0, 0.45);
+  --spotlight-input-container-focus-bg: linear-gradient(140deg, rgba(34, 36, 48, 0.94), rgba(16, 18, 28, 0.86));
+  --spotlight-input-container-focus-border: rgba(168, 190, 255, 0.55);
+  --spotlight-input-container-focus-shadow: 0 32px 68px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(140, 168, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
 
-  --spotlight-menu-surface: linear-gradient(155deg, rgba(26, 34, 86, 0.92), rgba(16, 24, 62, 0.95));
-  --spotlight-menu-border: rgba(138, 160, 255, 0.26);
+  --spotlight-result-hover: rgba(148, 174, 255, 0.2);
+  --spotlight-result-active: rgba(140, 168, 255, 0.3);
+  --spotlight-chip-bg: rgba(255, 255, 255, 0.08);
+  --spotlight-chip-border: rgba(168, 184, 234, 0.28);
+  --spotlight-chip-hover: rgba(155, 179, 255, 0.32);
 
-  --spotlight-shadow-elevated: 0 55px 120px rgba(5, 10, 32, 0.6);
-  --spotlight-shadow-floating: 0 32px 72px rgba(5, 10, 32, 0.58);
+  --spotlight-menu-surface: linear-gradient(150deg, rgba(24, 28, 40, 0.94), rgba(12, 14, 24, 0.92));
+  --spotlight-menu-border: rgba(178, 194, 244, 0.28);
+
+  --spotlight-shadow-elevated: 0 55px 120px rgba(4, 6, 18, 0.65);
+  --spotlight-shadow-floating: 0 32px 72px rgba(4, 6, 18, 0.6);
   --spotlight-backdrop-filter: saturate(185%) blur(36px);
 }
 
 :host([data-theme="dark"]) {
-  --spotlight-color-overlay: rgba(3, 6, 20, 0.58);
-  --spotlight-surface-gradient: linear-gradient(150deg, rgba(24, 32, 88, 0.94), rgba(10, 16, 42, 0.9));
-  --spotlight-surface-border: rgba(144, 164, 255, 0.24);
-  --spotlight-surface-border-subtle: rgba(120, 142, 255, 0.22);
-  --spotlight-surface-muted: rgba(20, 26, 64, 0.64);
-  --spotlight-surface-panel: linear-gradient(155deg, rgba(32, 44, 108, 0.82), rgba(12, 18, 54, 0.9));
-  --spotlight-surface-panel-border: rgba(118, 146, 255, 0.38);
-  --spotlight-color-text-primary: rgba(236, 240, 255, 0.98);
-  --spotlight-color-text-secondary: rgba(206, 216, 255, 0.82);
-  --spotlight-color-text-tertiary: rgba(172, 186, 236, 0.64);
-  --spotlight-color-text-quiet: rgba(146, 162, 216, 0.5);
-  --spotlight-color-text-inverse: rgba(8, 10, 20, 0.92);
-  --spotlight-color-accent: #9bb3ff;
-  --spotlight-color-accent-strong: #6f86ff;
-  --spotlight-color-accent-soft: rgba(155, 179, 255, 0.28);
-  --spotlight-color-accent-soft-strong: rgba(155, 179, 255, 0.36);
-  --spotlight-input-bg: rgba(12, 20, 48, 0.78);
-  --spotlight-input-border: rgba(160, 178, 255, 0.3);
-  --spotlight-input-placeholder: rgba(188, 202, 255, 0.58);
-  --spotlight-input-shadow: inset 0 0 0 1px rgba(160, 178, 255, 0.12);
-  --spotlight-input-focus-ring: 0 0 0 2px rgba(140, 165, 255, 0.55);
-  --spotlight-result-hover: rgba(140, 172, 255, 0.26);
-  --spotlight-result-active: rgba(128, 164, 255, 0.34);
+  --spotlight-color-overlay: rgba(4, 6, 12, 0.68);
+  --spotlight-surface-gradient: linear-gradient(140deg, rgba(14, 16, 24, 0.92), rgba(4, 6, 12, 0.84));
+  --spotlight-shell-border: rgba(255, 255, 255, 0.14);
+  --spotlight-shell-inner-border: rgba(255, 255, 255, 0.2);
+  --spotlight-shell-highlight: radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.24), transparent 62%);
+  --spotlight-surface-border: rgba(255, 255, 255, 0.16);
+  --spotlight-surface-border-subtle: rgba(142, 150, 190, 0.18);
+  --spotlight-surface-muted: rgba(16, 18, 28, 0.66);
+  --spotlight-surface-panel: linear-gradient(140deg, rgba(18, 20, 30, 0.9), rgba(6, 8, 16, 0.84));
+  --spotlight-surface-panel-border: rgba(255, 255, 255, 0.12);
+  --spotlight-color-text-primary: rgba(242, 244, 252, 0.98);
+  --spotlight-color-text-secondary: rgba(212, 216, 232, 0.8);
+  --spotlight-color-text-tertiary: rgba(164, 170, 190, 0.64);
+  --spotlight-color-text-quiet: rgba(138, 144, 166, 0.48);
+  --spotlight-color-text-inverse: rgba(255, 255, 255, 0.98);
+  --spotlight-color-accent: #a3b8ff;
+  --spotlight-color-accent-strong: #7c92ff;
+  --spotlight-color-accent-soft: rgba(163, 184, 255, 0.28);
+  --spotlight-color-accent-soft-strong: rgba(163, 184, 255, 0.36);
+  --spotlight-input-bg: rgba(14, 16, 24, 0.86);
+  --spotlight-input-border: rgba(255, 255, 255, 0.16);
+  --spotlight-input-placeholder: rgba(200, 206, 224, 0.6);
+  --spotlight-input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  --spotlight-input-focus-ring: 0 0 0 2px rgba(156, 180, 255, 0.52);
+  --spotlight-input-container-bg: linear-gradient(140deg, rgba(18, 20, 30, 0.9), rgba(6, 8, 16, 0.84));
+  --spotlight-input-container-border: rgba(255, 255, 255, 0.16);
+  --spotlight-input-container-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 32px 56px rgba(0, 0, 0, 0.55);
+  --spotlight-input-container-focus-bg: linear-gradient(140deg, rgba(26, 28, 40, 0.95), rgba(10, 12, 22, 0.88));
+  --spotlight-input-container-focus-border: rgba(176, 198, 255, 0.6);
+  --spotlight-input-container-focus-shadow: 0 36px 72px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(156, 180, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --spotlight-result-hover: rgba(170, 190, 255, 0.22);
+  --spotlight-result-active: rgba(160, 182, 255, 0.32);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.12);
-  --spotlight-chip-border: rgba(160, 178, 255, 0.32);
-  --spotlight-chip-hover: rgba(155, 179, 255, 0.38);
-  --spotlight-menu-surface: linear-gradient(155deg, rgba(24, 32, 82, 0.94), rgba(12, 18, 50, 0.95));
-  --spotlight-menu-border: rgba(140, 165, 255, 0.32);
-  --spotlight-shadow-elevated: 0 60px 120px rgba(2, 6, 22, 0.7);
-  --spotlight-shadow-floating: 0 36px 74px rgba(2, 6, 22, 0.68);
+  --spotlight-chip-border: rgba(176, 192, 236, 0.36);
+  --spotlight-chip-hover: rgba(176, 196, 255, 0.4);
+  --spotlight-menu-surface: linear-gradient(150deg, rgba(18, 20, 30, 0.96), rgba(6, 8, 16, 0.9));
+  --spotlight-menu-border: rgba(186, 200, 246, 0.34);
+  --spotlight-shadow-elevated: 0 60px 120px rgba(0, 0, 0, 0.72);
+  --spotlight-shadow-floating: 0 36px 74px rgba(0, 0, 0, 0.68);
 }
 
 :host([data-theme="light"]) {
-  --spotlight-color-overlay: rgba(14, 24, 52, 0.38);
-  --spotlight-surface-gradient: linear-gradient(155deg, rgba(255, 255, 255, 0.9), rgba(226, 234, 255, 0.86));
-  --spotlight-surface-border: rgba(202, 210, 255, 0.6);
-  --spotlight-surface-border-subtle: rgba(170, 188, 255, 0.32);
-  --spotlight-surface-muted: rgba(244, 246, 255, 0.78);
-  --spotlight-surface-panel: linear-gradient(150deg, rgba(250, 252, 255, 0.85), rgba(226, 235, 255, 0.82));
-  --spotlight-surface-panel-border: rgba(176, 192, 255, 0.38);
-  --spotlight-color-text-primary: rgba(25, 32, 52, 0.94);
-  --spotlight-color-text-secondary: rgba(40, 52, 86, 0.72);
-  --spotlight-color-text-tertiary: rgba(72, 88, 128, 0.58);
-  --spotlight-color-text-quiet: rgba(94, 110, 156, 0.45);
+  --spotlight-color-overlay: rgba(226, 234, 255, 0.42);
+  --spotlight-surface-gradient: linear-gradient(140deg, rgba(255, 255, 255, 0.9), rgba(236, 240, 255, 0.86));
+  --spotlight-shell-border: rgba(188, 200, 228, 0.46);
+  --spotlight-shell-inner-border: rgba(255, 255, 255, 0.6);
+  --spotlight-shell-highlight: radial-gradient(circle at 15% -15%, rgba(255, 255, 255, 0.55), transparent 62%);
+  --spotlight-surface-border: rgba(188, 200, 230, 0.5);
+  --spotlight-surface-border-subtle: rgba(170, 184, 220, 0.28);
+  --spotlight-surface-muted: rgba(246, 248, 255, 0.84);
+  --spotlight-surface-panel: linear-gradient(140deg, rgba(255, 255, 255, 0.92), rgba(232, 236, 255, 0.88));
+  --spotlight-surface-panel-border: rgba(188, 204, 240, 0.4);
+  --spotlight-color-text-primary: rgba(24, 32, 52, 0.95);
+  --spotlight-color-text-secondary: rgba(42, 54, 88, 0.72);
+  --spotlight-color-text-tertiary: rgba(76, 92, 128, 0.58);
+  --spotlight-color-text-quiet: rgba(104, 116, 150, 0.48);
   --spotlight-color-text-inverse: rgba(255, 255, 255, 0.98);
   --spotlight-color-accent: #5d7cff;
   --spotlight-color-accent-strong: #3a5dff;
-  --spotlight-color-accent-soft: rgba(93, 124, 255, 0.2);
-  --spotlight-color-accent-soft-strong: rgba(93, 124, 255, 0.28);
-  --spotlight-input-bg: rgba(255, 255, 255, 0.76);
-  --spotlight-input-border: rgba(176, 192, 255, 0.42);
-  --spotlight-input-placeholder: rgba(86, 102, 148, 0.58);
-  --spotlight-input-shadow: inset 0 0 0 1px rgba(180, 198, 255, 0.22);
-  --spotlight-input-focus-ring: 0 0 0 2px rgba(122, 152, 255, 0.35);
-  --spotlight-result-hover: rgba(112, 140, 255, 0.18);
-  --spotlight-result-active: rgba(104, 134, 255, 0.26);
-  --spotlight-chip-bg: rgba(255, 255, 255, 0.82);
-  --spotlight-chip-border: rgba(176, 198, 255, 0.4);
-  --spotlight-chip-hover: rgba(93, 124, 255, 0.22);
-  --spotlight-menu-surface: linear-gradient(150deg, rgba(248, 250, 255, 0.95), rgba(226, 236, 255, 0.92));
-  --spotlight-menu-border: rgba(176, 198, 255, 0.42);
-  --spotlight-shadow-elevated: 0 48px 100px rgba(18, 30, 90, 0.26);
-  --spotlight-shadow-floating: 0 30px 60px rgba(18, 30, 90, 0.2);
+  --spotlight-color-accent-soft: rgba(93, 124, 255, 0.18);
+  --spotlight-color-accent-soft-strong: rgba(93, 124, 255, 0.26);
+  --spotlight-input-bg: rgba(255, 255, 255, 0.88);
+  --spotlight-input-border: rgba(180, 198, 240, 0.48);
+  --spotlight-input-placeholder: rgba(98, 110, 150, 0.56);
+  --spotlight-input-shadow: inset 0 0 0 1px rgba(200, 214, 248, 0.28);
+  --spotlight-input-focus-ring: 0 0 0 2px rgba(124, 152, 255, 0.38);
+  --spotlight-input-container-bg: linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(236, 240, 255, 0.9));
+  --spotlight-input-container-border: rgba(184, 202, 240, 0.52);
+  --spotlight-input-container-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 22px 46px rgba(72, 92, 140, 0.22);
+  --spotlight-input-container-focus-bg: linear-gradient(140deg, rgba(255, 255, 255, 0.98), rgba(230, 236, 255, 0.92));
+  --spotlight-input-container-focus-border: rgba(132, 156, 255, 0.45);
+  --spotlight-input-container-focus-shadow: 0 28px 60px rgba(72, 92, 140, 0.26), 0 0 0 1px rgba(132, 156, 255, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --spotlight-result-hover: rgba(108, 132, 220, 0.18);
+  --spotlight-result-active: rgba(96, 122, 210, 0.26);
+  --spotlight-chip-bg: rgba(255, 255, 255, 0.85);
+  --spotlight-chip-border: rgba(184, 204, 240, 0.42);
+  --spotlight-chip-hover: rgba(104, 132, 232, 0.22);
+  --spotlight-menu-surface: linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(234, 240, 255, 0.92));
+  --spotlight-menu-border: rgba(184, 204, 240, 0.44);
+  --spotlight-shadow-elevated: 0 48px 100px rgba(38, 52, 100, 0.22);
+  --spotlight-shadow-floating: 0 30px 60px rgba(38, 52, 100, 0.18);
 }
 
 @media (prefers-color-scheme: dark) {
   :host(:not([data-theme="light"])) {
-    --spotlight-color-overlay: rgba(3, 6, 22, 0.56);
-    --spotlight-surface-gradient: linear-gradient(150deg, rgba(28, 38, 98, 0.92), rgba(10, 16, 40, 0.9));
-    --spotlight-surface-border: rgba(144, 164, 255, 0.24);
-    --spotlight-surface-border-subtle: rgba(120, 142, 255, 0.22);
-    --spotlight-surface-muted: rgba(22, 30, 74, 0.64);
-    --spotlight-surface-panel: linear-gradient(155deg, rgba(36, 48, 112, 0.84), rgba(12, 18, 52, 0.92));
-    --spotlight-surface-panel-border: rgba(122, 150, 255, 0.36);
-    --spotlight-color-text-primary: rgba(236, 240, 255, 0.98);
-    --spotlight-color-text-secondary: rgba(206, 216, 255, 0.82);
-    --spotlight-color-text-tertiary: rgba(172, 186, 236, 0.64);
-    --spotlight-color-text-quiet: rgba(146, 162, 216, 0.5);
-    --spotlight-color-text-inverse: rgba(8, 10, 20, 0.92);
-    --spotlight-color-accent: #9bb3ff;
-    --spotlight-color-accent-strong: #6f86ff;
-    --spotlight-color-accent-soft: rgba(155, 179, 255, 0.28);
-    --spotlight-color-accent-soft-strong: rgba(155, 179, 255, 0.36);
-    --spotlight-input-bg: rgba(12, 20, 48, 0.78);
-    --spotlight-input-border: rgba(160, 178, 255, 0.3);
-    --spotlight-input-placeholder: rgba(188, 202, 255, 0.58);
-    --spotlight-input-shadow: inset 0 0 0 1px rgba(160, 178, 255, 0.12);
-    --spotlight-input-focus-ring: 0 0 0 2px rgba(140, 165, 255, 0.55);
-    --spotlight-result-hover: rgba(140, 172, 255, 0.26);
-    --spotlight-result-active: rgba(128, 164, 255, 0.34);
+    --spotlight-color-overlay: rgba(4, 6, 14, 0.64);
+    --spotlight-surface-gradient: linear-gradient(140deg, rgba(18, 20, 30, 0.9), rgba(6, 8, 14, 0.82));
+    --spotlight-shell-border: rgba(255, 255, 255, 0.12);
+    --spotlight-shell-inner-border: rgba(255, 255, 255, 0.18);
+    --spotlight-shell-highlight: radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.24), transparent 62%);
+    --spotlight-surface-border: rgba(255, 255, 255, 0.16);
+    --spotlight-surface-border-subtle: rgba(142, 150, 190, 0.18);
+    --spotlight-surface-muted: rgba(18, 20, 30, 0.64);
+    --spotlight-surface-panel: linear-gradient(140deg, rgba(20, 22, 34, 0.9), rgba(8, 10, 18, 0.84));
+    --spotlight-surface-panel-border: rgba(255, 255, 255, 0.12);
+    --spotlight-color-text-primary: rgba(240, 242, 250, 0.98);
+    --spotlight-color-text-secondary: rgba(210, 214, 230, 0.8);
+    --spotlight-color-text-tertiary: rgba(166, 172, 192, 0.62);
+    --spotlight-color-text-quiet: rgba(140, 146, 168, 0.48);
+    --spotlight-color-text-inverse: rgba(255, 255, 255, 0.98);
+    --spotlight-color-accent: #a3b8ff;
+    --spotlight-color-accent-strong: #7c92ff;
+    --spotlight-color-accent-soft: rgba(163, 184, 255, 0.28);
+    --spotlight-color-accent-soft-strong: rgba(163, 184, 255, 0.36);
+    --spotlight-input-bg: rgba(16, 18, 28, 0.86);
+    --spotlight-input-border: rgba(255, 255, 255, 0.16);
+    --spotlight-input-placeholder: rgba(200, 206, 224, 0.6);
+    --spotlight-input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    --spotlight-input-focus-ring: 0 0 0 2px rgba(156, 180, 255, 0.5);
+    --spotlight-input-container-bg: linear-gradient(140deg, rgba(20, 22, 34, 0.9), rgba(8, 10, 18, 0.84));
+    --spotlight-input-container-border: rgba(255, 255, 255, 0.16);
+    --spotlight-input-container-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 32px 56px rgba(0, 0, 0, 0.55);
+    --spotlight-input-container-focus-bg: linear-gradient(140deg, rgba(28, 30, 44, 0.95), rgba(10, 12, 22, 0.88));
+    --spotlight-input-container-focus-border: rgba(176, 198, 255, 0.58);
+    --spotlight-input-container-focus-shadow: 0 36px 72px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(156, 180, 255, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    --spotlight-result-hover: rgba(170, 190, 255, 0.22);
+    --spotlight-result-active: rgba(160, 182, 255, 0.32);
     --spotlight-chip-bg: rgba(255, 255, 255, 0.12);
-    --spotlight-chip-border: rgba(160, 178, 255, 0.32);
-    --spotlight-chip-hover: rgba(155, 179, 255, 0.38);
-    --spotlight-menu-surface: linear-gradient(155deg, rgba(24, 32, 82, 0.94), rgba(12, 18, 50, 0.95));
-    --spotlight-menu-border: rgba(140, 165, 255, 0.32);
-    --spotlight-shadow-elevated: 0 60px 120px rgba(2, 6, 22, 0.7);
-    --spotlight-shadow-floating: 0 36px 74px rgba(2, 6, 22, 0.68);
+    --spotlight-chip-border: rgba(176, 192, 236, 0.36);
+    --spotlight-chip-hover: rgba(176, 196, 255, 0.4);
+    --spotlight-menu-surface: linear-gradient(150deg, rgba(18, 20, 30, 0.96), rgba(6, 8, 16, 0.9));
+    --spotlight-menu-border: rgba(186, 200, 246, 0.34);
+    --spotlight-shadow-elevated: 0 60px 120px rgba(0, 0, 0, 0.72);
+    --spotlight-shadow-floating: 0 36px 74px rgba(0, 0, 0, 0.68);
   }
 }
 
@@ -209,7 +250,7 @@
   background: var(--spotlight-surface-gradient);
   box-shadow: var(--spotlight-shadow-elevated);
   overflow: hidden;
-  border: 1px solid var(--spotlight-surface-border);
+  border: 1px solid var(--spotlight-shell-border);
   backdrop-filter: var(--spotlight-backdrop-filter);
   position: relative;
   isolation: isolate;
@@ -221,8 +262,8 @@
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.18), transparent 55%);
+  border: 1px solid var(--spotlight-shell-inner-border);
+  background: var(--spotlight-shell-highlight);
   mix-blend-mode: screen;
   opacity: 0.8;
 }
@@ -240,19 +281,18 @@
   display: flex;
   align-items: center;
   border-radius: calc(var(--spotlight-radius-medium) + 6px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: linear-gradient(140deg, rgba(26, 36, 88, 0.88), rgba(16, 24, 62, 0.78));
+  border: 1px solid var(--spotlight-input-container-border);
+  background: var(--spotlight-input-container-bg);
   transition: border 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 22px 48px rgba(5, 10, 32, 0.35);
+  box-shadow: var(--spotlight-input-container-shadow);
   padding: 14px 22px;
   gap: 18px;
 }
 
 .spotlight-input-container.focused {
-  border-color: rgba(150, 178, 255, 0.8);
-  background: linear-gradient(140deg, rgba(34, 48, 112, 0.92), rgba(20, 30, 82, 0.86));
-  box-shadow: 0 28px 64px rgba(16, 28, 82, 0.55), 0 0 0 1px rgba(140, 168, 255, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  border-color: var(--spotlight-input-container-focus-border);
+  background: var(--spotlight-input-container-focus-bg);
+  box-shadow: var(--spotlight-input-container-focus-shadow);
 }
 
 .spotlight-slash-menu,
