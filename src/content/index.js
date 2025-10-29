@@ -148,6 +148,619 @@ const PLACEHOLDER_COLORS = [
   "#FBBF24",
 ];
 
+const MATERIAL_THEME_DEFAULT_SOURCE = "#5b6dff";
+let materialThemeState = {
+  sourceColor: null,
+  mode: null,
+  palette: null,
+};
+let materialThemePromise = null;
+let materialThemeMediaQuery = null;
+
+function clamp01(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return 0;
+  }
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function normalizeHexColor(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const hexMatch = trimmed.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!hexMatch) {
+    return null;
+  }
+  const hex = hexMatch[1];
+  if (hex.length === 3) {
+    return (
+      "#" +
+      hex
+        .split("")
+        .map((char) => char + char)
+        .join("")
+    ).toLowerCase();
+  }
+  return `#${hex.toLowerCase()}`;
+}
+
+function hexToRgb(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) {
+    return null;
+  }
+  const value = normalized.slice(1);
+  const int = parseInt(value, 16);
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+  };
+}
+
+function rgbToHsl(r, g, b) {
+  const rNorm = r / 255;
+  const gNorm = g / 255;
+  const bNorm = b / 255;
+  const max = Math.max(rNorm, gNorm, bNorm);
+  const min = Math.min(rNorm, gNorm, bNorm);
+  const delta = max - min;
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+  if (delta !== 0) {
+    if (max === rNorm) {
+      h = ((gNorm - bNorm) / delta) % 6;
+    } else if (max === gNorm) {
+      h = (bNorm - rNorm) / delta + 2;
+    } else {
+      h = (rNorm - gNorm) / delta + 4;
+    }
+    h *= 60;
+    if (h < 0) {
+      h += 360;
+    }
+    s = delta / (1 - Math.abs(2 * l - 1));
+  }
+  return { h, s: clamp01(s), l: clamp01(l) };
+}
+
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let rPrime = 0;
+  let gPrime = 0;
+  let bPrime = 0;
+
+  if (h >= 0 && h < 60) {
+    rPrime = c;
+    gPrime = x;
+  } else if (h >= 60 && h < 120) {
+    rPrime = x;
+    gPrime = c;
+  } else if (h >= 120 && h < 180) {
+    gPrime = c;
+    bPrime = x;
+  } else if (h >= 180 && h < 240) {
+    gPrime = x;
+    bPrime = c;
+  } else if (h >= 240 && h < 300) {
+    rPrime = x;
+    bPrime = c;
+  } else {
+    rPrime = c;
+    bPrime = x;
+  }
+
+  return {
+    r: Math.round((rPrime + m) * 255),
+    g: Math.round((gPrime + m) * 255),
+    b: Math.round((bPrime + m) * 255),
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const toHex = (value) => value.toString(16).padStart(2, "0");
+  return `#${toHex(Math.max(0, Math.min(255, r)))}${toHex(
+    Math.max(0, Math.min(255, g))
+  )}${toHex(Math.max(0, Math.min(255, b)))}`;
+}
+
+function hslToHex(h, s, l) {
+  return rgbToHex(hslToRgb(h, s, l));
+}
+
+function rotateHue(color, degrees) {
+  return {
+    h: (color.h + degrees + 360) % 360,
+    s: color.s,
+    l: color.l,
+  };
+}
+
+function adjustSaturation(color, amount) {
+  return { ...color, s: clamp01(color.s + amount) };
+}
+
+function adjustLightness(color, amount) {
+  return { ...color, l: clamp01(color.l + amount) };
+}
+
+function mixHexColors(colorA, colorB, ratio) {
+  const rgbA = hexToRgb(colorA);
+  const rgbB = hexToRgb(colorB);
+  if (!rgbA || !rgbB) {
+    return colorA;
+  }
+  const mix = (a, b) => Math.round(a * (1 - ratio) + b * ratio);
+  return rgbToHex({ r: mix(rgbA.r, rgbB.r), g: mix(rgbA.g, rgbB.g), b: mix(rgbA.b, rgbB.b) });
+}
+
+function relativeLuminance(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return 0;
+  }
+  const transform = (channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : Math.pow((normalized + 0.055) / 1.055, 2.4);
+  };
+  const r = transform(rgb.r);
+  const g = transform(rgb.g);
+  const b = transform(rgb.b);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function getReadableTextColor(hex, preferDark) {
+  const luminance = relativeLuminance(hex);
+  if (preferDark) {
+    return luminance > 0.6 ? "#1b1b1f" : luminance < 0.3 ? "#ffffff" : "#1b1b1f";
+  }
+  return luminance > 0.52 ? "#1b1b1f" : "#ffffff";
+}
+
+function hexToHslTuple(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return null;
+  }
+  return rgbToHsl(rgb.r, rgb.g, rgb.b);
+}
+
+function normalizeCssColor(value) {
+  const direct = normalizeHexColor(value);
+  if (direct) {
+    return direct;
+  }
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const canvas = normalizeCssColor.__canvas || document.createElement("canvas");
+  if (!normalizeCssColor.__canvas) {
+    normalizeCssColor.__canvas = canvas;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+  try {
+    ctx.fillStyle = "#000";
+    ctx.fillStyle = value;
+    const parsed = ctx.fillStyle;
+    if (typeof parsed === "string" && /^#[0-9a-fA-F]{6}$/.test(parsed)) {
+      return parsed.toLowerCase();
+    }
+  } catch (err) {
+    // Ignore parsing errors for invalid colors.
+  }
+  return null;
+}
+
+function detectDocumentAccentColor() {
+  if (typeof document === "undefined" || !document.documentElement) {
+    return null;
+  }
+  try {
+    const computed = getComputedStyle(document.documentElement);
+    const candidates = [
+      computed.getPropertyValue("--spotlight-dynamic-color"),
+      computed.getPropertyValue("--spotlight-accent"),
+      computed.getPropertyValue("--accent-color"),
+    ];
+    for (const candidate of candidates) {
+      const normalized = normalizeCssColor(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  } catch (err) {
+    // Ignore failures retrieving computed style.
+  }
+
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) {
+    const normalized = normalizeCssColor(metaTheme.getAttribute("content"));
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function createMaterialPaletteFromSource(sourceHex) {
+  const rgb = hexToRgb(sourceHex);
+  if (!rgb) {
+    return null;
+  }
+  const baseHsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  const accent = {
+    h: baseHsl.h,
+    s: clamp01(baseHsl.s < 0.25 ? baseHsl.s + 0.25 : baseHsl.s),
+    l: clamp01(baseHsl.l < 0.35 ? 0.42 : baseHsl.l > 0.75 ? 0.62 : baseHsl.l),
+  };
+
+  const primaryLight = adjustLightness(accent, 0.06);
+  const primaryDark = adjustLightness(adjustSaturation(accent, 0.12), -0.32);
+  const primaryLightContainer = { h: accent.h, s: clamp01(accent.s * 0.55), l: 0.92 };
+  const primaryDarkContainer = {
+    h: accent.h,
+    s: clamp01(accent.s * 0.65),
+    l: clamp01(accent.l - 0.38),
+  };
+
+  const secondaryBase = adjustLightness(adjustSaturation(rotateHue(accent, 38), -0.12), 0);
+  const secondaryLight = adjustLightness(secondaryBase, 0.12);
+  const secondaryDark = adjustLightness(adjustSaturation(secondaryBase, 0.05), -0.28);
+  const secondaryLightContainer = { h: secondaryBase.h, s: clamp01(secondaryBase.s * 0.55), l: 0.92 };
+  const secondaryDarkContainer = {
+    h: secondaryBase.h,
+    s: clamp01(secondaryBase.s * 0.6),
+    l: clamp01(secondaryBase.l - 0.4),
+  };
+
+  const tertiaryBase = adjustSaturation(rotateHue(accent, -52), 0.08);
+  const tertiaryLight = adjustLightness(tertiaryBase, 0.1);
+  const tertiaryDark = adjustLightness(adjustSaturation(tertiaryBase, 0.1), -0.3);
+  const tertiaryLightContainer = { h: tertiaryBase.h, s: clamp01(tertiaryBase.s * 0.5), l: 0.93 };
+  const tertiaryDarkContainer = {
+    h: tertiaryBase.h,
+    s: clamp01(tertiaryBase.s * 0.7),
+    l: clamp01(tertiaryBase.l - 0.38),
+  };
+
+  const neutral = {
+    h: baseHsl.h,
+    s: clamp01(baseHsl.s * 0.15 + 0.04),
+  };
+
+  const surfaceLight = hslToHex(neutral.h, neutral.s, 0.98);
+  const surfaceDimLight = hslToHex(neutral.h, neutral.s, 0.9);
+  const surfaceBrightLight = hslToHex(neutral.h, neutral.s, 1);
+  const surfaceContainerLowestLight = hslToHex(neutral.h, neutral.s, 1);
+  const surfaceContainerLowLight = hslToHex(neutral.h, neutral.s, 0.965);
+  const surfaceContainerLight = hslToHex(neutral.h, neutral.s, 0.94);
+  const surfaceContainerHighLight = hslToHex(neutral.h, neutral.s, 0.92);
+  const surfaceContainerHighestLight = hslToHex(neutral.h, neutral.s, 0.88);
+
+  const neutralDarkS = clamp01(neutral.s * 0.85);
+  const surfaceDark = hslToHex(neutral.h, neutralDarkS, 0.11);
+  const surfaceDimDark = hslToHex(neutral.h, neutralDarkS, 0.08);
+  const surfaceBrightDark = hslToHex(neutral.h, neutralDarkS, 0.16);
+  const surfaceContainerLowestDark = hslToHex(neutral.h, neutralDarkS, 0.06);
+  const surfaceContainerLowDark = hslToHex(neutral.h, neutralDarkS, 0.12);
+  const surfaceContainerDark = hslToHex(neutral.h, neutralDarkS, 0.16);
+  const surfaceContainerHighDark = hslToHex(neutral.h, neutralDarkS, 0.2);
+  const surfaceContainerHighestDark = hslToHex(neutral.h, neutralDarkS, 0.26);
+
+  const primaryLightHex = hslToHex(primaryLight.h, primaryLight.s, primaryLight.l);
+  const primaryDarkHex = hslToHex(primaryDark.h, primaryDark.s, primaryDark.l);
+  const primaryLightContainerHex = hslToHex(
+    primaryLightContainer.h,
+    primaryLightContainer.s,
+    primaryLightContainer.l
+  );
+  const primaryDarkContainerHex = hslToHex(
+    primaryDarkContainer.h,
+    primaryDarkContainer.s,
+    primaryDarkContainer.l
+  );
+
+  const secondaryLightHex = hslToHex(secondaryLight.h, secondaryLight.s, secondaryLight.l);
+  const secondaryDarkHex = hslToHex(secondaryDark.h, secondaryDark.s, secondaryDark.l);
+  const secondaryLightContainerHex = hslToHex(
+    secondaryLightContainer.h,
+    secondaryLightContainer.s,
+    secondaryLightContainer.l
+  );
+  const secondaryDarkContainerHex = hslToHex(
+    secondaryDarkContainer.h,
+    secondaryDarkContainer.s,
+    secondaryDarkContainer.l
+  );
+
+  const tertiaryLightHex = hslToHex(tertiaryLight.h, tertiaryLight.s, tertiaryLight.l);
+  const tertiaryDarkHex = hslToHex(tertiaryDark.h, tertiaryDark.s, tertiaryDark.l);
+  const tertiaryLightContainerHex = hslToHex(
+    tertiaryLightContainer.h,
+    tertiaryLightContainer.s,
+    tertiaryLightContainer.l
+  );
+  const tertiaryDarkContainerHex = hslToHex(
+    tertiaryDarkContainer.h,
+    tertiaryDarkContainer.s,
+    tertiaryDarkContainer.l
+  );
+
+  const onPrimaryLight = getReadableTextColor(primaryLightHex);
+  const onPrimaryDark = getReadableTextColor(primaryDarkHex, true);
+  const onPrimaryContainerLight = getReadableTextColor(primaryLightContainerHex, true);
+  const onPrimaryContainerDark = getReadableTextColor(primaryDarkContainerHex);
+
+  const onSecondaryLight = getReadableTextColor(secondaryLightHex);
+  const onSecondaryDark = getReadableTextColor(secondaryDarkHex, true);
+  const onSecondaryContainerLight = getReadableTextColor(secondaryLightContainerHex, true);
+  const onSecondaryContainerDark = getReadableTextColor(secondaryDarkContainerHex);
+
+  const onTertiaryLight = getReadableTextColor(tertiaryLightHex);
+  const onTertiaryDark = getReadableTextColor(tertiaryDarkHex, true);
+  const onTertiaryContainerLight = getReadableTextColor(tertiaryLightContainerHex, true);
+  const onTertiaryContainerDark = getReadableTextColor(tertiaryDarkContainerHex);
+
+  const onSurfaceLight = getReadableTextColor(surfaceLight, true);
+  const onSurfaceDark = getReadableTextColor(surfaceDark);
+  const onSurfaceVariantLight = mixHexColors(onSurfaceLight, surfaceLight, 0.6);
+  const onSurfaceVariantDark = mixHexColors(onSurfaceDark, surfaceDark, 0.35);
+
+  const outlineLight = mixHexColors(onSurfaceLight, surfaceLight, 0.8);
+  const outlineVariantLight = mixHexColors(onSurfaceLight, surfaceLight, 0.88);
+  const outlineDark = mixHexColors(onSurfaceDark, surfaceDark, 0.45);
+  const outlineVariantDark = mixHexColors(onSurfaceDark, surfaceDark, 0.32);
+
+  const error = "#ba1a1a";
+  const onError = "#ffffff";
+  const errorContainer = "#ffdad6";
+  const onErrorContainer = "#410002";
+  const errorDark = "#ffb4ab";
+  const onErrorDark = "#690005";
+  const errorContainerDark = "#93000a";
+  const onErrorContainerDark = "#ffdad6";
+
+  const inverseSurfaceLight = surfaceDark;
+  const inverseOnSurfaceLight = onSurfaceDark;
+  const inverseSurfaceDark = surfaceLight;
+  const inverseOnSurfaceDark = onSurfaceLight;
+
+  const inversePrimaryLight = primaryDarkHex;
+  const inversePrimaryDark = primaryLightHex;
+
+  const surfaceTint = primaryLightHex;
+
+  return {
+    light: {
+      "--md-sys-color-primary": primaryLightHex,
+      "--md-sys-color-on-primary": onPrimaryLight,
+      "--md-sys-color-primary-container": primaryLightContainerHex,
+      "--md-sys-color-on-primary-container": onPrimaryContainerLight,
+      "--md-sys-color-secondary": secondaryLightHex,
+      "--md-sys-color-on-secondary": onSecondaryLight,
+      "--md-sys-color-secondary-container": secondaryLightContainerHex,
+      "--md-sys-color-on-secondary-container": onSecondaryContainerLight,
+      "--md-sys-color-tertiary": tertiaryLightHex,
+      "--md-sys-color-on-tertiary": onTertiaryLight,
+      "--md-sys-color-tertiary-container": tertiaryLightContainerHex,
+      "--md-sys-color-on-tertiary-container": onTertiaryContainerLight,
+      "--md-sys-color-surface": surfaceLight,
+      "--md-sys-color-surface-dim": surfaceDimLight,
+      "--md-sys-color-surface-bright": surfaceBrightLight,
+      "--md-sys-color-surface-container-lowest": surfaceContainerLowestLight,
+      "--md-sys-color-surface-container-low": surfaceContainerLowLight,
+      "--md-sys-color-surface-container": surfaceContainerLight,
+      "--md-sys-color-surface-container-high": surfaceContainerHighLight,
+      "--md-sys-color-surface-container-highest": surfaceContainerHighestLight,
+      "--md-sys-color-on-surface": onSurfaceLight,
+      "--md-sys-color-on-surface-variant": onSurfaceVariantLight,
+      "--md-sys-color-outline": outlineLight,
+      "--md-sys-color-outline-variant": outlineVariantLight,
+      "--md-sys-color-shadow": "rgba(15, 23, 42, 0.45)",
+      "--md-sys-color-scrim": "rgba(14, 17, 23, 0.65)",
+      "--md-sys-color-inverse-surface": inverseSurfaceLight,
+      "--md-sys-color-inverse-on-surface": inverseOnSurfaceLight,
+      "--md-sys-color-inverse-primary": inversePrimaryLight,
+      "--md-sys-color-error": error,
+      "--md-sys-color-on-error": onError,
+      "--md-sys-color-error-container": errorContainer,
+      "--md-sys-color-on-error-container": onErrorContainer,
+      "--spotlight-surface-tint": surfaceTint,
+    },
+    dark: {
+      "--md-sys-color-primary": primaryDarkHex,
+      "--md-sys-color-on-primary": onPrimaryDark,
+      "--md-sys-color-primary-container": primaryDarkContainerHex,
+      "--md-sys-color-on-primary-container": onPrimaryContainerDark,
+      "--md-sys-color-secondary": secondaryDarkHex,
+      "--md-sys-color-on-secondary": onSecondaryDark,
+      "--md-sys-color-secondary-container": secondaryDarkContainerHex,
+      "--md-sys-color-on-secondary-container": onSecondaryContainerDark,
+      "--md-sys-color-tertiary": tertiaryDarkHex,
+      "--md-sys-color-on-tertiary": onTertiaryDark,
+      "--md-sys-color-tertiary-container": tertiaryDarkContainerHex,
+      "--md-sys-color-on-tertiary-container": onTertiaryContainerDark,
+      "--md-sys-color-surface": surfaceDark,
+      "--md-sys-color-surface-dim": surfaceDimDark,
+      "--md-sys-color-surface-bright": surfaceBrightDark,
+      "--md-sys-color-surface-container-lowest": surfaceContainerLowestDark,
+      "--md-sys-color-surface-container-low": surfaceContainerLowDark,
+      "--md-sys-color-surface-container": surfaceContainerDark,
+      "--md-sys-color-surface-container-high": surfaceContainerHighDark,
+      "--md-sys-color-surface-container-highest": surfaceContainerHighestDark,
+      "--md-sys-color-on-surface": onSurfaceDark,
+      "--md-sys-color-on-surface-variant": onSurfaceVariantDark,
+      "--md-sys-color-outline": outlineDark,
+      "--md-sys-color-outline-variant": outlineVariantDark,
+      "--md-sys-color-shadow": "rgba(0, 0, 0, 0.65)",
+      "--md-sys-color-scrim": "rgba(4, 6, 12, 0.68)",
+      "--md-sys-color-inverse-surface": inverseSurfaceDark,
+      "--md-sys-color-inverse-on-surface": inverseOnSurfaceDark,
+      "--md-sys-color-inverse-primary": inversePrimaryDark,
+      "--md-sys-color-error": errorDark,
+      "--md-sys-color-on-error": onErrorDark,
+      "--md-sys-color-error-container": errorContainerDark,
+      "--md-sys-color-on-error-container": onErrorContainerDark,
+      "--spotlight-surface-tint": primaryDarkHex,
+    },
+    source: sourceHex,
+  };
+}
+
+function requestMaterialThemeFromBackground() {
+  if (!chrome?.runtime?.sendMessage) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "SPOTLIGHT_THEME_REQUEST" }, (response) => {
+        const error = chrome.runtime?.lastError;
+        if (error) {
+          resolve(null);
+          return;
+        }
+        if (response && typeof response === "object") {
+          resolve(response.theme || null);
+        } else {
+          resolve(null);
+        }
+      });
+    } catch (err) {
+      resolve(null);
+    }
+  });
+}
+
+function installMaterialThemeListeners() {
+  if (materialThemeMediaQuery || typeof window === "undefined" || !window.matchMedia) {
+    return;
+  }
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  const handler = () => {
+    materialThemeState.mode = null;
+    ensureMaterialTheme(true);
+  };
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", handler);
+  } else if (typeof query.addListener === "function") {
+    query.addListener(handler);
+  }
+  materialThemeMediaQuery = query;
+}
+
+async function resolveMaterialThemePreferences() {
+  const backgroundTheme = await requestMaterialThemeFromBackground();
+  const documentAccent = detectDocumentAccentColor();
+  const sourceCandidates = [
+    backgroundTheme?.sourceColor,
+    documentAccent,
+    MATERIAL_THEME_DEFAULT_SOURCE,
+  ];
+  let sourceColor = null;
+  for (const candidate of sourceCandidates) {
+    const normalized = normalizeCssColor(candidate);
+    if (normalized) {
+      sourceColor = normalized;
+      break;
+    }
+  }
+  if (!sourceColor) {
+    sourceColor = MATERIAL_THEME_DEFAULT_SOURCE;
+  }
+
+  let mode = backgroundTheme?.mode === "dark" || backgroundTheme?.mode === "light"
+    ? backgroundTheme.mode
+    : null;
+  if (!mode && typeof window !== "undefined" && window.matchMedia) {
+    mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  if (!mode) {
+    mode = "dark";
+  }
+
+  return { sourceColor, mode };
+}
+
+function applyMaterialThemeToHost(theme) {
+  if (!shadowRootEl || !shadowRootEl.host) {
+    return;
+  }
+  const host = shadowRootEl.host;
+  const palette = createMaterialPaletteFromSource(theme.sourceColor);
+  if (!palette) {
+    return;
+  }
+  const mode = theme.mode === "dark" ? "dark" : "light";
+  const tokens = palette[mode] || palette.light;
+  if (
+    materialThemeState.sourceColor === palette.source &&
+    materialThemeState.mode === mode
+  ) {
+    return;
+  }
+
+  const hsl = hexToHslTuple(palette.source);
+  if (hsl) {
+    host.style.setProperty(
+      "--md-source",
+      `${Math.round(hsl.h)} ${Math.round(hsl.s * 100)}% ${Math.round(hsl.l * 100)}%`
+    );
+  }
+  Object.entries(tokens).forEach(([name, value]) => {
+    host.style.setProperty(name, value);
+  });
+  host.dataset.theme = mode;
+  host.style.colorScheme = mode;
+  if (mode === "dark") {
+    host.style.setProperty("--spotlight-backdrop-filter", "blur(30px) saturate(160%)");
+  } else {
+    host.style.setProperty("--spotlight-backdrop-filter", "blur(26px) saturate(140%)");
+  }
+
+  materialThemeState = {
+    sourceColor: palette.source,
+    mode,
+    palette,
+  };
+}
+
+async function ensureMaterialTheme(force) {
+  if (force) {
+    materialThemeState.mode = null;
+  }
+  installMaterialThemeListeners();
+  if (materialThemePromise && !force) {
+    return materialThemePromise;
+  }
+  materialThemePromise = (async () => {
+    const theme = await resolveMaterialThemePreferences();
+    applyMaterialThemeToHost(theme);
+  })();
+  try {
+    await materialThemePromise;
+  } catch (err) {
+    console.warn("Spotlight: unable to apply Material theme", err);
+  } finally {
+    materialThemePromise = null;
+  }
+  return null;
+}
+
 const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
   {
@@ -313,6 +926,7 @@ async function prepareOverlay() {
     }
 
     ensureShadowRoot();
+    await ensureMaterialTheme();
 
     if (!overlayEl) {
       createOverlay();
@@ -1664,6 +2278,7 @@ async function openOverlay() {
   }
 
   await prepareOverlay();
+  await ensureMaterialTheme(true);
 
   if (!overlayEl || !shadowHostEl) {
     return;

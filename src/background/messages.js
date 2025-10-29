@@ -1,5 +1,100 @@
 import "../shared/web-search.js";
 
+function numberToHex(value) {
+  return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+}
+
+function normalizeChromeThemeColor(color) {
+  if (!color) {
+    return null;
+  }
+  if (typeof color === "string") {
+    const trimmed = color.trim();
+    const match = trimmed.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+    if (match) {
+      const value = match[1];
+      if (value.length === 3) {
+        return `#${value[0]}${value[0]}${value[1]}${value[1]}${value[2]}${value[2]}`.toLowerCase();
+      }
+      return `#${value.toLowerCase()}`;
+    }
+    return null;
+  }
+  if (Array.isArray(color)) {
+    const [r, g, b, a] = color;
+    if ([r, g, b].every((value) => typeof value === "number")) {
+      const alpha = typeof a === "number" ? a : 255;
+      if (alpha <= 0) {
+        return null;
+      }
+      const convert = (value) => (value > 1 ? value : value * 255);
+      return `#${numberToHex(convert(r))}${numberToHex(convert(g))}${numberToHex(convert(b))}`;
+    }
+    return null;
+  }
+  if (typeof color === "object") {
+    const r = color?.r;
+    const g = color?.g;
+    const b = color?.b;
+    if ([r, g, b].every((value) => typeof value === "number")) {
+      return `#${numberToHex(r)}${numberToHex(g)}${numberToHex(b)}`;
+    }
+  }
+  return null;
+}
+
+function getStoredSpotlightTheme() {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local) {
+      resolve(null);
+      return;
+    }
+    chrome.storage.local.get({ spotlightTheme: null }, (items) => {
+      if (chrome.runtime?.lastError) {
+        resolve(null);
+        return;
+      }
+      resolve(items?.spotlightTheme || null);
+    });
+  });
+}
+
+function setStoredSpotlightTheme(theme) {
+  return new Promise((resolve, reject) => {
+    if (!chrome?.storage?.local) {
+      resolve();
+      return;
+    }
+    chrome.storage.local.set({ spotlightTheme: theme }, () => {
+      if (chrome.runtime?.lastError) {
+        reject(chrome.runtime.lastError);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function getChromeThemePalette() {
+  return new Promise((resolve) => {
+    if (!chrome?.theme?.getCurrent) {
+      resolve(null);
+      return;
+    }
+    try {
+      chrome.theme.getCurrent(null, (theme) => {
+        if (chrome.runtime?.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(theme || null);
+      });
+    } catch (err) {
+      resolve(null);
+    }
+  });
+}
+
 export function registerMessageHandlers({
   context,
   runSearch,
@@ -14,6 +109,62 @@ export function registerMessageHandlers({
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
       return undefined;
+    }
+
+    if (message.type === "SPOTLIGHT_THEME_REQUEST") {
+      Promise.all([getStoredSpotlightTheme(), getChromeThemePalette()])
+        .then(([storedTheme, chromeTheme]) => {
+          let sourceColor = null;
+          let mode = null;
+          if (storedTheme && typeof storedTheme === "object") {
+            mode = typeof storedTheme.mode === "string" ? storedTheme.mode : null;
+            const storedColor = normalizeChromeThemeColor(storedTheme.sourceColor);
+            if (storedColor) {
+              sourceColor = storedColor;
+            }
+          }
+          if (!sourceColor && chromeTheme && chromeTheme.colors) {
+            const themeColors = chromeTheme.colors;
+            const candidates = [
+              themeColors.accentcolor,
+              themeColors.frame,
+              themeColors.toolbar,
+              themeColors.button_background,
+            ];
+            for (const candidate of candidates) {
+              const normalized = normalizeChromeThemeColor(candidate);
+              if (normalized) {
+                sourceColor = normalized;
+                break;
+              }
+            }
+          }
+          sendResponse({ success: true, theme: { sourceColor, mode } });
+        })
+        .catch((err) => {
+          console.warn("Spotlight: theme request failed", err);
+          sendResponse({ success: false, theme: null });
+        });
+      return true;
+    }
+
+    if (message.type === "SPOTLIGHT_THEME_UPDATE") {
+      const theme =
+        message && typeof message.theme === "object" && message.theme
+          ? {
+              mode: message.theme.mode === "dark" || message.theme.mode === "light"
+                ? message.theme.mode
+                : undefined,
+              sourceColor: normalizeChromeThemeColor(message.theme.sourceColor),
+            }
+          : {};
+      setStoredSpotlightTheme(theme)
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => {
+          console.warn("Spotlight: theme update failed", error);
+          sendResponse({ success: false, error: error?.message || "Unable to store theme" });
+        });
+      return true;
     }
 
     if (message.type === "SPOTLIGHT_QUERY") {
