@@ -34,11 +34,11 @@
   --spotlight-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --spotlight-font-mono: "SFMono-Regular", SFMono-Regular, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  --spotlight-radius-xs: 8px;
-  --spotlight-radius-sm: 12px;
-  --spotlight-radius-md: 16px;
-  --spotlight-radius-lg: 20px;
-  --spotlight-radius-xl: 26px;
+  --spotlight-radius-xs: 6px;
+  --spotlight-radius-sm: 10px;
+  --spotlight-radius-md: 14px;
+  --spotlight-radius-lg: 18px;
+  --spotlight-radius-xl: 22px;
   --spotlight-spacing-2xs: 4px;
   --spotlight-spacing-xs: 8px;
   --spotlight-spacing-sm: 12px;
@@ -47,81 +47,81 @@
   --spotlight-spacing-xl: 24px;
   --spotlight-spacing-2xl: 32px;
   --spotlight-border-width: 1px;
-  --spotlight-motion-duration-short: 160ms;
-  --spotlight-motion-duration-medium: 280ms;
-  --spotlight-motion-duration-long: 460ms;
-  --spotlight-motion-spring: cubic-bezier(0.16, 1, 0.3, 1);
-  --spotlight-backdrop-blur: 28px;
-  --spotlight-shadow-elevated: 0 28px 70px rgba(8, 12, 24, 0.45);
-  --spotlight-scrim: rgba(6, 10, 20, 0.55);
-  --spotlight-surface-primary: rgba(12, 16, 28, 0.78);
-  --spotlight-surface-secondary: rgba(18, 24, 42, 0.68);
-  --spotlight-surface-tertiary: rgba(26, 32, 54, 0.6);
-  --spotlight-surface-glow: rgba(118, 141, 255, 0.18);
-  --spotlight-border-strong: rgba(148, 163, 184, 0.32);
-  --spotlight-border-soft: rgba(148, 163, 184, 0.18);
-  --spotlight-divider: rgba(148, 163, 184, 0.18);
-  --spotlight-text-primary: rgba(248, 250, 255, 0.98);
-  --spotlight-text-secondary: rgba(226, 230, 255, 0.76);
-  --spotlight-text-tertiary: rgba(199, 205, 232, 0.65);
-  --spotlight-text-muted: rgba(161, 172, 207, 0.52);
-  --spotlight-text-on-strong: rgba(12, 16, 28, 0.92);
-  --spotlight-accent: #8da2ff;
-  --spotlight-accent-strong: #5f7bff;
-  --spotlight-accent-soft: rgba(125, 145, 255, 0.18);
-  --spotlight-accent-subtle: rgba(118, 141, 255, 0.12);
-  --spotlight-focus-ring: rgba(118, 141, 255, 0.48);
-  --spotlight-result-hover: rgba(118, 141, 255, 0.18);
-  --spotlight-result-active: rgba(118, 141, 255, 0.26);
-  --spotlight-tag-bg: rgba(148, 163, 255, 0.24);
-  --spotlight-tag-text: rgba(233, 239, 255, 0.92);
-  --spotlight-tag-topsite-bg: rgba(250, 204, 21, 0.22);
-  --spotlight-tag-topsite-text: #fef08a;
-  --spotlight-positive-bg: rgba(34, 197, 94, 0.22);
-  --spotlight-positive-text: #bbf7d0;
-  --spotlight-warning-bg: rgba(249, 115, 22, 0.22);
-  --spotlight-warning-text: #fed7aa;
-  --spotlight-negative-bg: rgba(248, 113, 113, 0.26);
-  --spotlight-negative-text: #fecaca;
-  --spotlight-attention-bg: rgba(118, 141, 255, 0.32);
-  --spotlight-attention-text: #f8fafc;
-  --spotlight-placeholder-palette: #a5b4fc, #7dd3fc, #fbcfe8, #fde68a, #fecaca, #c4b5fd, #bbf7d0, #f9a8d4, #fca5a5,
-    #f97316, #fbbf24;
+  --spotlight-motion-duration-short: 170ms;
+  --spotlight-motion-duration-medium: 260ms;
+  --spotlight-motion-duration-long: 420ms;
+  --spotlight-motion-spring: cubic-bezier(0.18, 0.9, 0.2, 1);
+  --spotlight-backdrop-blur: 24px;
+  --spotlight-shadow-elevated: 0 24px 60px rgba(15, 15, 20, 0.28);
+  --spotlight-scrim: rgba(9, 12, 17, 0.4);
+  --spotlight-surface-primary: rgba(22, 24, 28, 0.88);
+  --spotlight-surface-secondary: rgba(28, 31, 36, 0.78);
+  --spotlight-surface-tertiary: rgba(40, 44, 52, 0.68);
+  --spotlight-surface-glow: rgba(10, 132, 255, 0.18);
+  --spotlight-border-strong: rgba(255, 255, 255, 0.18);
+  --spotlight-border-soft: rgba(255, 255, 255, 0.12);
+  --spotlight-divider: rgba(255, 255, 255, 0.1);
+  --spotlight-text-primary: rgba(255, 255, 255, 0.94);
+  --spotlight-text-secondary: rgba(255, 255, 255, 0.72);
+  --spotlight-text-tertiary: rgba(255, 255, 255, 0.6);
+  --spotlight-text-muted: rgba(255, 255, 255, 0.45);
+  --spotlight-text-on-strong: rgba(7, 7, 9, 0.92);
+  --spotlight-accent: #0a84ff;
+  --spotlight-accent-strong: #0066cc;
+  --spotlight-accent-soft: rgba(10, 132, 255, 0.18);
+  --spotlight-accent-subtle: rgba(10, 132, 255, 0.1);
+  --spotlight-focus-ring: rgba(10, 132, 255, 0.5);
+  --spotlight-result-hover: rgba(255, 255, 255, 0.08);
+  --spotlight-result-active: rgba(10, 132, 255, 0.22);
+  --spotlight-tag-bg: rgba(120, 120, 128, 0.24);
+  --spotlight-tag-text: rgba(244, 244, 244, 0.92);
+  --spotlight-tag-topsite-bg: rgba(255, 204, 0, 0.22);
+  --spotlight-tag-topsite-text: #ffd60a;
+  --spotlight-positive-bg: rgba(48, 209, 88, 0.22);
+  --spotlight-positive-text: #c7f7d4;
+  --spotlight-warning-bg: rgba(255, 149, 0, 0.26);
+  --spotlight-warning-text: #ffe1b3;
+  --spotlight-negative-bg: rgba(255, 69, 58, 0.24);
+  --spotlight-negative-text: #ffd2d0;
+  --spotlight-attention-bg: rgba(10, 132, 255, 0.3);
+  --spotlight-attention-text: rgba(255, 255, 255, 0.96);
+  --spotlight-placeholder-palette: #98a2ff, #64d2ff, #ff9f0a, #ffd60a, #ffd8e5, #a5b4fc, #b4f0c2, #ff8a7a, #ff375f,
+    #ffa76b, #ffd166;
 }
 
 .spotlight-root[data-theme="light"] {
-  --spotlight-scrim: rgba(15, 23, 42, 0.18);
-  --spotlight-surface-primary: rgba(255, 255, 255, 0.82);
-  --spotlight-surface-secondary: rgba(252, 253, 255, 0.72);
-  --spotlight-surface-tertiary: rgba(243, 246, 255, 0.68);
-  --spotlight-surface-glow: rgba(79, 70, 229, 0.16);
-  --spotlight-border-strong: rgba(148, 163, 184, 0.28);
-  --spotlight-border-soft: rgba(148, 163, 184, 0.18);
-  --spotlight-divider: rgba(148, 163, 184, 0.2);
-  --spotlight-text-primary: #0f172a;
-  --spotlight-text-secondary: rgba(30, 41, 59, 0.76);
-  --spotlight-text-tertiary: rgba(71, 85, 105, 0.68);
-  --spotlight-text-muted: rgba(100, 116, 139, 0.56);
-  --spotlight-text-on-strong: #0b1120;
-  --spotlight-accent: #2563eb;
-  --spotlight-accent-strong: #1d4ed8;
-  --spotlight-accent-soft: rgba(37, 99, 235, 0.15);
-  --spotlight-accent-subtle: rgba(59, 130, 246, 0.1);
-  --spotlight-focus-ring: rgba(59, 130, 246, 0.45);
-  --spotlight-result-hover: rgba(37, 99, 235, 0.1);
-  --spotlight-result-active: rgba(37, 99, 235, 0.16);
-  --spotlight-tag-bg: rgba(37, 99, 235, 0.14);
-  --spotlight-tag-text: #1d4ed8;
-  --spotlight-tag-topsite-bg: rgba(250, 204, 21, 0.24);
-  --spotlight-tag-topsite-text: #b45309;
-  --spotlight-positive-bg: rgba(34, 197, 94, 0.16);
-  --spotlight-positive-text: #047857;
-  --spotlight-warning-bg: rgba(249, 115, 22, 0.18);
-  --spotlight-warning-text: #b45309;
-  --spotlight-negative-bg: rgba(248, 113, 113, 0.2);
-  --spotlight-negative-text: #b91c1c;
-  --spotlight-attention-bg: rgba(37, 99, 235, 0.16);
-  --spotlight-attention-text: #1e3a8a;
+  --spotlight-scrim: rgba(15, 23, 42, 0.12);
+  --spotlight-surface-primary: rgba(255, 255, 255, 0.92);
+  --spotlight-surface-secondary: rgba(255, 255, 255, 0.86);
+  --spotlight-surface-tertiary: rgba(249, 249, 255, 0.82);
+  --spotlight-surface-glow: rgba(10, 132, 255, 0.12);
+  --spotlight-border-strong: rgba(0, 0, 0, 0.12);
+  --spotlight-border-soft: rgba(0, 0, 0, 0.08);
+  --spotlight-divider: rgba(0, 0, 0, 0.08);
+  --spotlight-text-primary: #1c1c1e;
+  --spotlight-text-secondary: rgba(60, 60, 67, 0.78);
+  --spotlight-text-tertiary: rgba(60, 60, 67, 0.6);
+  --spotlight-text-muted: rgba(60, 60, 67, 0.4);
+  --spotlight-text-on-strong: #ffffff;
+  --spotlight-accent: #0a84ff;
+  --spotlight-accent-strong: #0066cc;
+  --spotlight-accent-soft: rgba(10, 132, 255, 0.14);
+  --spotlight-accent-subtle: rgba(10, 132, 255, 0.08);
+  --spotlight-focus-ring: rgba(10, 132, 255, 0.42);
+  --spotlight-result-hover: rgba(60, 60, 67, 0.08);
+  --spotlight-result-active: rgba(10, 132, 255, 0.16);
+  --spotlight-tag-bg: rgba(120, 120, 128, 0.16);
+  --spotlight-tag-text: rgba(60, 60, 67, 0.78);
+  --spotlight-tag-topsite-bg: rgba(255, 204, 0, 0.26);
+  --spotlight-tag-topsite-text: #8e5c00;
+  --spotlight-positive-bg: rgba(48, 209, 88, 0.18);
+  --spotlight-positive-text: #2a7f3b;
+  --spotlight-warning-bg: rgba(255, 149, 0, 0.18);
+  --spotlight-warning-text: #8e5c00;
+  --spotlight-negative-bg: rgba(255, 69, 58, 0.2);
+  --spotlight-negative-text: #a61b21;
+  --spotlight-attention-bg: rgba(10, 132, 255, 0.18);
+  --spotlight-attention-text: #004e9a;
 }
 
 #spotlight-overlay,
@@ -131,17 +131,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12vh var(--spotlight-spacing-lg) 14vh;
-  background: var(--spotlight-scrim);
+  padding: 10vh var(--spotlight-spacing-lg);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--spotlight-scrim) 82%, transparent),
+    color-mix(in srgb, var(--spotlight-scrim) 95%, transparent)
+  );
   backdrop-filter: blur(var(--spotlight-backdrop-blur));
   -webkit-backdrop-filter: blur(var(--spotlight-backdrop-blur));
   transition: opacity var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring),
     transform var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring),
     background var(--spotlight-motion-duration-long) ease;
   opacity: 0;
-  transform: translateY(18px) scale(0.98);
+  transform: translateY(16px) scale(0.98);
   pointer-events: none;
   z-index: 2147483647;
+  will-change: opacity, transform;
 }
 
 :host([data-open="true"]) .spotlight-overlay,
@@ -152,19 +157,21 @@
 }
 
 .spotlight-shell {
-  width: min(760px, 92vw);
+  width: min(720px, 90vw);
   border-radius: var(--spotlight-radius-xl);
-  background: linear-gradient(145deg, var(--spotlight-surface-primary), var(--spotlight-surface-secondary));
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
-  box-shadow: var(--spotlight-shadow-elevated);
-  backdrop-filter: blur(var(--spotlight-backdrop-blur)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--spotlight-backdrop-blur)) saturate(140%);
+  background: color-mix(in srgb, var(--spotlight-surface-primary) 88%, var(--spotlight-surface-secondary));
+  border: var(--spotlight-border-width) solid color-mix(in srgb, var(--spotlight-border-soft) 75%, transparent);
+  box-shadow: 0 24px 40px color-mix(in srgb, #000 25%, transparent), var(--spotlight-shadow-elevated);
+  backdrop-filter: blur(var(--spotlight-backdrop-blur)) saturate(165%) brightness(1.02);
+  -webkit-backdrop-filter: blur(var(--spotlight-backdrop-blur)) saturate(165%) brightness(1.02);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 0;
   transition: transform var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring),
-    box-shadow var(--spotlight-motion-duration-medium) ease, border-color var(--spotlight-motion-duration-short) ease;
+    box-shadow var(--spotlight-motion-duration-medium) ease,
+    border-color var(--spotlight-motion-duration-short) ease,
+    background var(--spotlight-motion-duration-long) ease;
   transform-origin: top center;
 }
 
@@ -173,26 +180,33 @@
 }
 
 :host(:not([data-open="true"])) .spotlight-shell {
-  transform: translateY(12px) scale(0.98);
+  transform: translateY(10px) scale(0.985);
 }
 
 .spotlight-input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--spotlight-spacing-sm);
-  padding: var(--spotlight-spacing-lg) var(--spotlight-spacing-xl) var(--spotlight-spacing-md);
-  background: linear-gradient(160deg, var(--spotlight-surface-secondary), transparent 60%);
-  transition: padding var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring);
+  gap: var(--spotlight-spacing-xs);
+  padding: var(--spotlight-spacing-xl) var(--spotlight-spacing-xl) var(--spotlight-spacing-sm);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--spotlight-surface-secondary) 75%, transparent), transparent 70%);
+  border-bottom: 1px solid var(--spotlight-divider);
+  transition: padding var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring),
+    background var(--spotlight-motion-duration-long) ease;
 }
 
 .spotlight-input-container {
   position: relative;
   display: flex;
   align-items: center;
-  border-radius: var(--spotlight-radius-lg);
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
-  background: linear-gradient(120deg, var(--spotlight-surface-tertiary), transparent);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  gap: var(--spotlight-spacing-sm);
+  min-height: 56px;
+  padding: 0 var(--spotlight-spacing-lg);
+  border-radius: calc(var(--spotlight-radius-lg) + 2px);
+  border: 1px solid color-mix(in srgb, var(--spotlight-border-soft) 65%, transparent);
+  background: color-mix(in srgb, var(--spotlight-surface-tertiary) 85%, transparent);
+  box-shadow: inset 0 0 0 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(calc(var(--spotlight-backdrop-blur) * 0.55)) saturate(180%);
+  -webkit-backdrop-filter: blur(calc(var(--spotlight-backdrop-blur) * 0.55)) saturate(180%);
   transition: border-color var(--spotlight-motion-duration-short) var(--spotlight-motion-spring),
     box-shadow var(--spotlight-motion-duration-short) var(--spotlight-motion-spring),
     background var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring);
@@ -201,23 +215,24 @@
 .spotlight-input-container.focused {
   border-color: var(--spotlight-focus-ring);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--spotlight-focus-ring) 45%, transparent);
+  background: color-mix(in srgb, var(--spotlight-surface-tertiary) 95%, transparent);
 }
 
 .spotlight-input {
   width: 100%;
   border: none;
   background: transparent;
-  padding: var(--spotlight-spacing-sm) var(--spotlight-spacing-lg);
+  padding: 0;
   font-size: 1.05rem;
   font-weight: 590;
   color: var(--spotlight-text-primary);
   caret-color: var(--spotlight-accent);
-  transition: padding var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring);
+  transition: color var(--spotlight-motion-duration-short) ease;
 }
 
 .spotlight-input::placeholder {
   color: var(--spotlight-text-muted);
-  opacity: 0.65;
+  opacity: 0.6;
 }
 
 .spotlight-input:focus {
@@ -229,7 +244,7 @@
   inset: 0;
   display: flex;
   align-items: center;
-  padding: var(--spotlight-spacing-sm) var(--spotlight-spacing-lg);
+  padding: 0 var(--spotlight-spacing-lg);
   color: var(--spotlight-text-tertiary);
   opacity: 0;
   transition: opacity var(--spotlight-motion-duration-short) ease;
@@ -348,14 +363,13 @@
   padding: var(--spotlight-spacing-xs) var(--spotlight-spacing-md);
   border-radius: 999px;
   border: none;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--spotlight-accent) 35%, transparent),
-      color-mix(in srgb, var(--spotlight-accent-strong) 48%, transparent));
-  color: var(--spotlight-text-primary);
+  background: color-mix(in srgb, var(--spotlight-accent) 88%, #ffffff 12%);
+  color: var(--spotlight-text-on-strong);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--spotlight-accent) 24%, transparent);
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--spotlight-accent) 26%, transparent);
   transition: transform var(--spotlight-motion-duration-short) var(--spotlight-motion-spring),
     box-shadow var(--spotlight-motion-duration-short) ease,
     opacity var(--spotlight-motion-duration-short) ease;
@@ -382,12 +396,12 @@
 }
 
 .spotlight-subfilters-action-button.success {
-  background: linear-gradient(135deg, var(--spotlight-positive-bg), var(--spotlight-accent-subtle));
-  color: var(--spotlight-text-primary);
+  background: color-mix(in srgb, #30d158 78%, #ffffff 22%);
+  color: var(--spotlight-text-on-strong);
 }
 
 .spotlight-subfilters-action-button.error {
-  background: linear-gradient(135deg, var(--spotlight-negative-bg), var(--spotlight-accent-subtle));
+  background: color-mix(in srgb, #ff453a 78%, #ffffff 22%);
 }
 
 .spotlight-subfilters-action-label {
@@ -621,10 +635,11 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--spotlight-spacing-2xs);
+  gap: calc(var(--spotlight-spacing-2xs) + 2px);
   padding: var(--spotlight-spacing-md) var(--spotlight-spacing-xl) var(--spotlight-spacing-lg);
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--spotlight-surface-secondary) 78%, transparent));
-  transition: padding var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring);
+  background: color-mix(in srgb, transparent 70%, var(--spotlight-surface-secondary));
+  transition: padding var(--spotlight-motion-duration-medium) var(--spotlight-motion-spring),
+    background var(--spotlight-motion-duration-long) ease;
 }
 
 .spotlight-result {
@@ -632,25 +647,26 @@
   display: flex;
   gap: var(--spotlight-spacing-sm);
   align-items: flex-start;
-  padding: var(--spotlight-spacing-sm) var(--spotlight-spacing-md);
-  border-radius: var(--spotlight-radius-lg);
+  padding: var(--spotlight-spacing-sm) var(--spotlight-spacing-lg);
+  border-radius: var(--spotlight-radius-md);
   background: transparent;
   color: inherit;
   cursor: pointer;
   transition: transform var(--spotlight-motion-duration-short) var(--spotlight-motion-spring),
     background var(--spotlight-motion-duration-short) ease,
-    box-shadow var(--spotlight-motion-duration-short) ease;
+    box-shadow var(--spotlight-motion-duration-short) ease,
+    border-color var(--spotlight-motion-duration-short) ease;
 }
 
 .spotlight-result:hover,
 .spotlight-result.active {
   background: var(--spotlight-result-hover);
-  box-shadow: 0 12px 24px color-mix(in srgb, var(--spotlight-accent) 18%, transparent);
+  box-shadow: 0 12px 28px color-mix(in srgb, #000 16%, transparent);
 }
 
 .spotlight-result.active {
   background: var(--spotlight-result-active);
-  transform: translateY(-1px) scale(1.005);
+  transform: translateY(-1px) scale(1.01);
 }
 
 .spotlight-result.empty {
@@ -767,8 +783,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--spotlight-surface-tertiary);
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
+  background: color-mix(in srgb, var(--spotlight-surface-tertiary) 90%, transparent);
+  border: var(--spotlight-border-width) solid color-mix(in srgb, var(--spotlight-border-soft) 65%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--spotlight-surface-glow) 35%, transparent);
 }
 
 .spotlight-result-icon-download {
@@ -800,8 +817,8 @@
 
 .spotlight-result-summary-button {
   margin-left: auto;
-  background: var(--spotlight-accent-subtle);
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
+  background: transparent;
+  border: var(--spotlight-border-width) solid color-mix(in srgb, var(--spotlight-border-soft) 70%, transparent);
   color: var(--spotlight-text-secondary);
   border-radius: 999px;
   padding: var(--spotlight-spacing-2xs) var(--spotlight-spacing-sm);
@@ -815,8 +832,8 @@
 }
 
 .spotlight-result-summary-button:hover:not(:disabled) {
-  background: var(--spotlight-attention-bg);
-  border-color: color-mix(in srgb, var(--spotlight-accent) 45%, transparent);
+  background: var(--spotlight-accent-subtle);
+  border-color: color-mix(in srgb, var(--spotlight-accent) 38%, transparent);
   color: var(--spotlight-text-primary);
 }
 
@@ -937,16 +954,16 @@
   min-width: 220px;
   max-width: calc(100% - var(--spotlight-spacing-md));
   border-radius: var(--spotlight-radius-lg);
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
-  background: linear-gradient(145deg, var(--spotlight-surface-secondary), var(--spotlight-surface-tertiary));
-  box-shadow: 0 26px 50px rgba(15, 23, 42, 0.32);
+  border: var(--spotlight-border-width) solid color-mix(in srgb, var(--spotlight-border-soft) 70%, transparent);
+  background: color-mix(in srgb, var(--spotlight-surface-secondary) 90%, transparent);
+  box-shadow: 0 20px 44px color-mix(in srgb, #000 24%, transparent);
   padding: var(--spotlight-spacing-2xs) 0;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   z-index: 10;
-  backdrop-filter: blur(var(--spotlight-backdrop-blur));
-  -webkit-backdrop-filter: blur(var(--spotlight-backdrop-blur));
+  backdrop-filter: blur(calc(var(--spotlight-backdrop-blur) * 0.65)) saturate(160%);
+  -webkit-backdrop-filter: blur(calc(var(--spotlight-backdrop-blur) * 0.65)) saturate(160%);
   transition: opacity var(--spotlight-motion-duration-short) var(--spotlight-motion-spring),
     transform var(--spotlight-motion-duration-short) var(--spotlight-motion-spring);
   transform-origin: top left;
@@ -1018,8 +1035,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--spotlight-surface-tertiary);
-  border: var(--spotlight-border-width) solid var(--spotlight-border-soft);
+  background: color-mix(in srgb, var(--spotlight-surface-tertiary) 90%, transparent);
+  border: var(--spotlight-border-width) solid color-mix(in srgb, var(--spotlight-border-soft) 65%, transparent);
 }
 
 .spotlight-engine-option-icon-image {
