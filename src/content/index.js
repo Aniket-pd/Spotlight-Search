@@ -62,8 +62,6 @@ let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
-const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
-const VISUALLY_HIDDEN_CLASS = "spotlight-sr-only";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
@@ -2329,7 +2327,7 @@ function updateSummaryButtonElement(button, entry) {
     return;
   }
   if (entry.status === "loading") {
-    button.textContent = "Summarizing…";
+    button.textContent = "Summarize";
     button.disabled = true;
     button.classList.add("loading");
     button.setAttribute("aria-busy", "true");
@@ -2444,40 +2442,6 @@ function renderSummaryPanelForElement(item, url, entry) {
     controls.appendChild(badge);
   }
 
-  const canCopy =
-    entry.status === "ready" &&
-    (Array.isArray(entry.bullets) ? entry.bullets.length > 0 : Boolean(entry.raw));
-  if (canCopy) {
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = TAB_SUMMARY_COPY_CLASS;
-    copyButton.setAttribute("aria-label", "Copy summary");
-    copyButton.title = "Copy summary";
-    const copyIcon = document.createElement("span");
-    copyIcon.className = `${TAB_SUMMARY_COPY_CLASS}-icon`;
-    copyIcon.setAttribute("aria-hidden", "true");
-    copyIcon.textContent = "⧉";
-    copyButton.appendChild(copyIcon);
-    const copyLabel = document.createElement("span");
-    copyLabel.className = VISUALLY_HIDDEN_CLASS;
-    copyLabel.textContent = "Copy summary";
-    copyButton.appendChild(copyLabel);
-    copyButton.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    copyButton.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    copyButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      handleSummaryCopy(url);
-    });
-    controls.appendChild(copyButton);
-  }
-
   if (controls.childElementCount > 0) {
     controls.hidden = false;
     controls.style.display = "flex";
@@ -2540,7 +2504,7 @@ function renderSummaryPanelForElement(item, url, entry) {
       streamEl.hidden = true;
       renderBullets(entry.bullets, { loading: true });
     }
-    setStatus("Summarizing…", `${TAB_SUMMARY_STATUS_CLASS} loading`);
+    setStatus("", TAB_SUMMARY_STATUS_CLASS);
   } else if (entry.status === "error") {
     streamEl.classList.remove("loading");
     updateSummaryStreamText(streamEl, "", { immediate: true });
@@ -2592,59 +2556,6 @@ function updateSummaryUIForUrl(url) {
     }
     renderSummaryPanelForElement(item, url, entry);
   });
-}
-
-function buildSummaryCopyText(entry) {
-  if (!entry) {
-    return "";
-  }
-  if (Array.isArray(entry.bullets) && entry.bullets.length) {
-    return entry.bullets.map((bullet) => `• ${bullet}`).join("\n");
-  }
-  if (typeof entry.raw === "string" && entry.raw) {
-    return entry.raw;
-  }
-  return "";
-}
-
-function handleSummaryCopy(url) {
-  if (!url) {
-    return;
-  }
-  const entry = tabSummaryState.get(url);
-  if (!entry || entry.status !== "ready") {
-    return;
-  }
-  entry.lastUsed = Date.now();
-  const text = buildSummaryCopyText(entry);
-  if (!text) {
-    setStatus("No summary available", { force: true });
-    return;
-  }
-  const onSuccess = () => {
-    setStatus("Summary copied to clipboard", { force: true });
-  };
-  const onError = (error) => {
-    console.warn("Spotlight: failed to copy summary", error);
-    setStatus("Unable to copy summary", { force: true });
-  };
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-    navigator.clipboard.writeText(text).then(onSuccess).catch(onError);
-    return;
-  }
-  try {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-    onSuccess();
-  } catch (err) {
-    onError(err);
-  }
 }
 
 function handleSummaryProgress(message) {

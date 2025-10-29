@@ -988,52 +988,6 @@
   border-radius: var(--spotlight-radius-pill);
 }
 
-.spotlight-ai-panel-copy {
-  margin-left: 0;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid var(--spotlight-color-accent);
-  color: var(--spotlight-color-accent-strong);
-  border-radius: var(--spotlight-radius-small);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  font-size: 0;
-  box-shadow: none;
-  transition: background 0.18s ease, color 0.18s ease, border 0.18s ease, box-shadow 0.18s ease,
-    transform 0.18s ease;
-}
-
-.spotlight-ai-panel-copy:hover {
-  background: var(--spotlight-color-accent-soft);
-  border-color: var(--spotlight-color-accent-strong);
-  box-shadow: 0 8px 18px rgba(49, 200, 155, 0.16);
-}
-
-.spotlight-ai-panel-copy:focus-visible {
-  outline: none;
-  background: var(--spotlight-color-accent-soft);
-  box-shadow: 0 0 0 3px rgba(43, 221, 154, 0.26);
-}
-
-.spotlight-ai-panel-copy-icon {
-  font-size: 15px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.18s ease;
-}
-
-.spotlight-ai-panel-copy:hover .spotlight-ai-panel-copy-icon,
-.spotlight-ai-panel-copy:focus-visible .spotlight-ai-panel-copy-icon {
-  transform: translateY(-1px);
-}
-
 .spotlight-ai-panel-list {
   list-style: none;
   margin: 0;
