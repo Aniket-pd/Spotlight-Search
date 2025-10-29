@@ -67,6 +67,13 @@ const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
+const THEME_MEDIA_QUERY =
+  typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-color-scheme: dark)")
+    : null;
+const handleThemePreferenceChange = () => {
+  applyPreferredTheme();
+};
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
 let focusBannerEl = null;
@@ -74,6 +81,7 @@ let focusStyleEl = null;
 let focusOriginalTitle = null;
 let focusTitlePrefix = "";
 let focusActive = false;
+let themeListenerInitialized = false;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -208,6 +216,32 @@ const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
     .filter(Boolean),
 }));
 
+function getPreferredTheme() {
+  if (THEME_MEDIA_QUERY && THEME_MEDIA_QUERY.matches) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyPreferredTheme() {
+  if (!shadowContentEl) {
+    return;
+  }
+  shadowContentEl.setAttribute("data-theme", getPreferredTheme());
+}
+
+function ensureThemeListener() {
+  if (themeListenerInitialized || !THEME_MEDIA_QUERY) {
+    return;
+  }
+  themeListenerInitialized = true;
+  if (typeof THEME_MEDIA_QUERY.addEventListener === "function") {
+    THEME_MEDIA_QUERY.addEventListener("change", handleThemePreferenceChange);
+  } else if (typeof THEME_MEDIA_QUERY.addListener === "function") {
+    THEME_MEDIA_QUERY.addListener(handleThemePreferenceChange);
+  }
+}
+
 function ensureShadowRoot() {
   if (!document.body) {
     return null;
@@ -217,6 +251,7 @@ function ensureShadowRoot() {
     if (shadowHostEl && !shadowHostEl.parentElement) {
       document.body.appendChild(shadowHostEl);
     }
+    applyPreferredTheme();
     return shadowRootEl;
   }
 
@@ -251,6 +286,8 @@ function ensureShadowRoot() {
   shadowContentEl = document.createElement("div");
   shadowContentEl.className = "spotlight-root";
   shadowRootEl.appendChild(shadowContentEl);
+  applyPreferredTheme();
+  ensureThemeListener();
 
   document.body.appendChild(shadowHostEl);
 
