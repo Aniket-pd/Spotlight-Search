@@ -28,11 +28,9 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 | `--spotlight-color-accent` | Accent base | `#2bdd9a` | `#2bdd9a` |
 | `--spotlight-color-accent-strong` | Accent highlight | `#16b67c` | `#16b67c` |
 | `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(43, 221, 154, 0.18)` | `rgba(43, 221, 154, 0.22)` |
-| `--spotlight-layer-highlight` | Primary active surface fill | Frosted-white highlight gradient | Obsidian-glass highlight gradient |
-| `--spotlight-layer-highlight-strong` | Emphasized active surface (chips, history rows) | Brighter frosted gradient | Deeper obsidian gradient |
 | `--spotlight-result-hover` | Result hover fill | `rgba(43, 221, 154, 0.16)` | `rgba(43, 221, 154, 0.22)` |
 
-Additional tokens (chip borders, menu surfaces, shadows, highlight borders such as `--spotlight-result-active-border`, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
+Additional tokens (chip borders, menu surfaces, shadows, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
 
 ### Typography
 - Base font stack: `"SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
@@ -67,16 +65,16 @@ Reusable spacing tokens keep layouts balanced:
 
 ### Menus (slash commands & search engines)
 - Menu surfaces reuse `--spotlight-menu-surface`, `--spotlight-menu-border`, and `--spotlight-shadow-floating`.
-- Options hover with `--spotlight-color-accent-soft` and their active/selected state uses `--spotlight-layer-highlight` with the inset border token for a glassy lock-in. Do not add standalone gradients.
+- Options use `var(--spotlight-color-accent-soft)` / `var(--spotlight-color-accent-soft-strong)` for hover/active states. Do not add standalone gradients.
 - Icons live on chip surfaces (`--spotlight-chip-bg` + `--spotlight-chip-border`).
 
 ### Subfilters & utility chips
-- `.spotlight-subfilter` and `.spotlight-subfilters-action-button` use the pill radius token with accent-soft hover states and `--spotlight-layer-highlight-strong` for the active latch.
+- `.spotlight-subfilter` and `.spotlight-subfilters-action-button` use the pill radius token and accent soft states.
 - Primary CTAs (AI organizer, history assistant submit) always use the accent gradient (accent → accent-strong) with the shared drop shadow.
 - Counts or metadata chips should use `--spotlight-color-accent-soft` background with primary text.
 
 ### Results list
-- Rows highlight with `--spotlight-result-hover` / `--spotlight-result-active`. Active rows apply the inset highlight border (`--spotlight-result-active-border`) and shadow token instead of a saturated fill.
+- Rows highlight with `--spotlight-result-hover` / `--spotlight-result-active` and never change typography weight.
 - Titles rely on `--spotlight-color-text-primary`, URLs on `--spotlight-color-text-tertiary`, and timestamps on `--spotlight-color-text-quiet`.
 - Command results tint chips using accent soft tokens. Web-search URLs switch to the accent color to signal outbound actions.
 
