@@ -66,6 +66,10 @@ const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
+const TAB_SUMMARY_STREAM_CLASS = "spotlight-ai-panel-stream";
+const TAB_SUMMARY_PANEL_VERSION = "2";
+const SUMMARY_STREAM_FRAME_CHARS = 6;
+const SUMMARY_STREAM_FAST_THRESHOLD = 28;
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
@@ -2355,35 +2359,88 @@ function renderSummaryPanelForElement(item, url, entry) {
   if (!body) {
     return;
   }
-  const existingPanel = body.querySelector(`.${TAB_SUMMARY_PANEL_CLASS}`);
-  if (existingPanel) {
-    existingPanel.remove();
+  let panel = body.querySelector(`.${TAB_SUMMARY_PANEL_CLASS}`);
+  if (panel && panel.dataset.version !== TAB_SUMMARY_PANEL_VERSION) {
+    panel.remove();
+    panel = null;
   }
   if (!entry || !entry.status) {
+    if (panel) {
+      panel.remove();
+    }
     return;
   }
 
-  const panel = document.createElement("div");
-  panel.className = TAB_SUMMARY_PANEL_CLASS;
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = TAB_SUMMARY_PANEL_CLASS;
+    panel.dataset.version = TAB_SUMMARY_PANEL_VERSION;
+    panel.dataset.url = url;
+
+    const header = document.createElement("div");
+    header.className = "spotlight-ai-panel-header";
+
+    const title = document.createElement("span");
+    title.className = "spotlight-ai-panel-title";
+    title.textContent = "Tab Digest";
+    header.appendChild(title);
+
+    const controls = document.createElement("div");
+    controls.className = "spotlight-ai-panel-controls";
+    controls.dataset.role = "controls";
+    header.appendChild(controls);
+
+    panel.appendChild(header);
+
+    const stream = document.createElement("div");
+    stream.className = TAB_SUMMARY_STREAM_CLASS;
+    stream.dataset.role = "stream";
+    stream.setAttribute("aria-live", "polite");
+    stream.setAttribute("aria-atomic", "false");
+    stream.hidden = true;
+    panel.appendChild(stream);
+
+    const list = document.createElement("ul");
+    list.className = TAB_SUMMARY_LIST_CLASS;
+    list.dataset.role = "list";
+    list.hidden = true;
+    panel.appendChild(list);
+
+    const status = document.createElement("div");
+    status.className = TAB_SUMMARY_STATUS_CLASS;
+    status.dataset.role = "status";
+    status.hidden = true;
+    panel.appendChild(status);
+
+    body.appendChild(panel);
+  }
+
+  if (!panel.isConnected) {
+    body.appendChild(panel);
+  }
+
   panel.dataset.url = url;
 
-  const header = document.createElement("div");
-  header.className = "spotlight-ai-panel-header";
-  const title = document.createElement("span");
-  title.className = "spotlight-ai-panel-title";
-  title.textContent = "Tab Digest";
-  header.appendChild(title);
+  const controls = panel.querySelector('[data-role="controls"]');
+  const streamEl = panel.querySelector(`[data-role="stream"]`);
+  const listEl = panel.querySelector(`[data-role="list"]`);
+  const statusEl = panel.querySelector(`[data-role="status"]`);
 
-  const controls = document.createElement("div");
-  controls.className = "spotlight-ai-panel-controls";
-  let hasControls = false;
+  if (!controls || !streamEl || !listEl || !statusEl) {
+    panel.remove();
+    renderSummaryPanelForElement(item, url, entry);
+    return;
+  }
+
+  controls.innerHTML = "";
+  controls.hidden = true;
+  controls.style.display = "none";
 
   if (entry.cached) {
     const badge = document.createElement("span");
     badge.className = TAB_SUMMARY_BADGE_CLASS;
     badge.textContent = "Cached";
     controls.appendChild(badge);
-    hasControls = true;
   }
 
   const canCopy =
@@ -2408,70 +2465,90 @@ function renderSummaryPanelForElement(item, url, entry) {
       handleSummaryCopy(url);
     });
     controls.appendChild(copyButton);
-    hasControls = true;
   }
 
-  if (hasControls) {
-    header.appendChild(controls);
+  if (controls.childElementCount > 0) {
+    controls.hidden = false;
+    controls.style.display = "flex";
   }
 
-  panel.appendChild(header);
+  const renderBullets = (bullets, { loading } = {}) => {
+    listEl.innerHTML = "";
+    if (!Array.isArray(bullets) || !bullets.length) {
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+      return;
+    }
+    bullets.slice(0, 3).forEach((bullet) => {
+      const itemEl = document.createElement("li");
+      itemEl.textContent = bullet;
+      listEl.appendChild(itemEl);
+    });
+    listEl.hidden = false;
+    listEl.classList.toggle("loading", Boolean(loading));
+  };
+
+  const setStatus = (text, className) => {
+    statusEl.textContent = text || "";
+    statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
+    statusEl.hidden = !text;
+  };
+
+  const streamingText =
+    (typeof entry.raw === "string" && entry.raw) ||
+    (Array.isArray(entry.bullets) && entry.bullets.length
+      ? entry.bullets
+          .slice(0, 3)
+          .map((bullet) => `• ${bullet}`)
+          .join("\n")
+      : "");
 
   if (entry.status === "loading") {
-    if (Array.isArray(entry.bullets) && entry.bullets.length) {
-      const list = document.createElement("ul");
-      list.className = `${TAB_SUMMARY_LIST_CLASS} loading`;
-      entry.bullets.slice(0, 3).forEach((bullet) => {
-        const itemEl = document.createElement("li");
-        itemEl.textContent = bullet;
-        list.appendChild(itemEl);
-      });
-      panel.appendChild(list);
-    } else if (entry.raw) {
-      const preview = document.createElement("div");
-      preview.className = `${TAB_SUMMARY_STATUS_CLASS} loading-preview`;
-      preview.textContent = entry.raw;
-      panel.appendChild(preview);
-    }
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
-    status.textContent = "Summarizing…";
-    panel.appendChild(status);
-  } else if (entry.status === "error") {
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} error`;
-    status.textContent = entry.error || "Summary unavailable";
-    panel.appendChild(status);
-  } else if (entry.status === "ready") {
-    if (Array.isArray(entry.bullets) && entry.bullets.length) {
-      const list = document.createElement("ul");
-      list.className = TAB_SUMMARY_LIST_CLASS;
-      entry.bullets.slice(0, 3).forEach((bullet) => {
-        const itemEl = document.createElement("li");
-        itemEl.textContent = bullet;
-        list.appendChild(itemEl);
-      });
-      panel.appendChild(list);
-    } else if (entry.raw) {
-      const fallback = document.createElement("div");
-      fallback.className = TAB_SUMMARY_STATUS_CLASS;
-      fallback.textContent = entry.raw;
-      panel.appendChild(fallback);
+    if (streamingText) {
+      streamEl.hidden = false;
+      streamEl.classList.add("loading");
+      updateSummaryStreamText(streamEl, streamingText);
     } else {
-      const empty = document.createElement("div");
-      empty.className = `${TAB_SUMMARY_STATUS_CLASS} empty`;
-      empty.textContent = "No summary available.";
-      panel.appendChild(empty);
+      streamEl.classList.remove("loading");
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+    }
+    renderBullets(entry.bullets, { loading: true });
+    setStatus("Summarizing…", `${TAB_SUMMARY_STATUS_CLASS} loading`);
+  } else if (entry.status === "error") {
+    streamEl.classList.remove("loading");
+    updateSummaryStreamText(streamEl, "", { immediate: true });
+    streamEl.hidden = true;
+    renderBullets([]);
+    setStatus(entry.error || "Summary unavailable", `${TAB_SUMMARY_STATUS_CLASS} error`);
+  } else if (entry.status === "ready") {
+    const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
+    renderBullets(entry.bullets, { loading: false });
+    streamEl.classList.remove("loading");
+    if (hasBullets) {
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+    } else if (entry.raw) {
+      streamEl.hidden = false;
+      updateSummaryStreamText(streamEl, entry.raw, { immediate: true });
+    } else {
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+    }
+    if (!hasBullets && !entry.raw) {
+      setStatus("No summary available.", `${TAB_SUMMARY_STATUS_CLASS} empty`);
+    } else {
+      setStatus("", TAB_SUMMARY_STATUS_CLASS);
     }
   } else {
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
-    status.textContent = "Preparing summary…";
-    panel.appendChild(status);
+    streamEl.classList.remove("loading");
+    updateSummaryStreamText(streamEl, "", { immediate: true });
+    streamEl.hidden = true;
+    renderBullets([]);
+    setStatus("Preparing summary…", `${TAB_SUMMARY_STATUS_CLASS} loading`);
   }
 
   entry.lastUsed = Date.now();
-  body.appendChild(panel);
 }
 
 function updateSummaryUIForUrl(url) {
@@ -2586,6 +2663,91 @@ function handleSummaryProgress(message) {
   tabSummaryState.set(url, entry);
   pruneSummaryState();
   updateSummaryUIForUrl(url);
+}
+
+const summaryStreamControllers = new WeakMap();
+
+function stopSummaryStreamAnimation(controller) {
+  if (controller && controller.rafId) {
+    cancelAnimationFrame(controller.rafId);
+    controller.rafId = 0;
+  }
+}
+
+function updateSummaryStreamText(element, nextText, options = {}) {
+  if (!element) {
+    return;
+  }
+  const { immediate = false } = options || {};
+  let controller = summaryStreamControllers.get(element);
+  if (!controller) {
+    controller = { displayed: "", pending: "", rafId: 0 };
+    summaryStreamControllers.set(element, controller);
+  }
+  const safeText = typeof nextText === "string" ? nextText : "";
+
+  if (immediate) {
+    stopSummaryStreamAnimation(controller);
+    element.textContent = safeText;
+    controller.displayed = safeText;
+    controller.pending = "";
+    return;
+  }
+
+  const currentText = element.textContent || "";
+  if (!safeText) {
+    stopSummaryStreamAnimation(controller);
+    element.textContent = "";
+    controller.displayed = "";
+    controller.pending = "";
+    return;
+  }
+
+  if (currentText.length > safeText.length || !safeText.startsWith(currentText)) {
+    stopSummaryStreamAnimation(controller);
+    element.textContent = "";
+    controller.displayed = "";
+    controller.pending = "";
+  }
+
+  const baseline = element.textContent || "";
+  const difference = safeText.slice(baseline.length);
+  if (!difference) {
+    controller.displayed = baseline;
+    return;
+  }
+
+  controller.pending += difference;
+  controller.displayed = baseline;
+  if (controller.rafId) {
+    return;
+  }
+
+  const step = () => {
+    if (!element.isConnected) {
+      stopSummaryStreamAnimation(controller);
+      element.textContent = "";
+      controller.displayed = "";
+      controller.pending = "";
+      return;
+    }
+    const chunkSize =
+      controller.pending.length > SUMMARY_STREAM_FAST_THRESHOLD
+        ? SUMMARY_STREAM_FRAME_CHARS * 2
+        : SUMMARY_STREAM_FRAME_CHARS;
+    const sliceLength = Math.max(1, Math.min(chunkSize, controller.pending.length));
+    const chunk = controller.pending.slice(0, sliceLength);
+    controller.pending = controller.pending.slice(sliceLength);
+    element.textContent = `${element.textContent || ""}${chunk}`;
+    controller.displayed = element.textContent;
+    if (controller.pending) {
+      controller.rafId = requestAnimationFrame(step);
+    } else {
+      controller.rafId = 0;
+    }
+  };
+
+  controller.rafId = requestAnimationFrame(step);
 }
 
 function requestSummaryForResult(result, options = {}) {

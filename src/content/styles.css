@@ -1037,6 +1037,18 @@
   word-break: break-word;
 }
 
+.spotlight-ai-panel-stream {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--spotlight-color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.spotlight-ai-panel-stream.loading {
+  color: var(--spotlight-color-text-tertiary);
+}
+
 .spotlight-ai-panel-status.error {
   color: rgba(255, 138, 138, 0.92);
 }
