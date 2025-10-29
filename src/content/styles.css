@@ -1031,10 +1031,98 @@
   color: var(--spotlight-color-accent);
 }
 
-.spotlight-ai-panel-status.loading-preview {
-  color: var(--spotlight-color-text-tertiary);
-  margin-bottom: 4px;
-  word-break: break-word;
+
+.spotlight-ai-panel-stream {
+  font-size: 13px;
+  color: var(--spotlight-color-text-secondary);
+  line-height: 1.5;
+  background: rgba(43, 221, 154, 0.08);
+  border-radius: var(--spotlight-radius-medium);
+  padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.spotlight-ai-panel-stream.streaming {
+  background: linear-gradient(
+    120deg,
+    rgba(43, 221, 154, 0.08) 0%,
+    rgba(43, 221, 154, 0.22) 50%,
+    rgba(43, 221, 154, 0.08) 100%
+  );
+  background-size: 200% 100%;
+  animation: spotlight-stream-sweep 2.2s ease-in-out infinite;
+}
+
+.spotlight-ai-stream-chunk {
+  display: inline;
+  white-space: pre-wrap;
+  animation: spotlight-stream-fade 0.4s ease;
+}
+
+.spotlight-ai-panel-stream.streaming .spotlight-ai-stream-chunk {
+  animation-duration: 0.55s;
+}
+
+.spotlight-ai-stream-cursor {
+  display: inline-block;
+  width: 4px;
+  height: 1.1em;
+  background: var(--spotlight-color-accent);
+  border-radius: 999px;
+  margin-left: 4px;
+  animation: spotlight-stream-blink 1s step-start infinite;
+}
+
+@keyframes spotlight-stream-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spotlight-stream-sweep {
+  0% {
+    background-position: 140% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+
+@keyframes spotlight-stream-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-ai-panel-stream.streaming {
+    animation: none;
+    background: rgba(43, 221, 154, 0.14);
+  }
+
+  .spotlight-ai-panel-stream .spotlight-ai-stream-chunk {
+    animation: none;
+  }
+
+  .spotlight-ai-stream-cursor {
+    animation-duration: 1.4s;
+  }
 }
 
 .spotlight-ai-panel-status.error {

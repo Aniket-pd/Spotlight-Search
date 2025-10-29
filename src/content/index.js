@@ -67,6 +67,11 @@ const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
+const TAB_SUMMARY_STREAM_CLASS = "spotlight-ai-panel-stream";
+const TAB_SUMMARY_STREAM_CHUNK_CLASS = "spotlight-ai-stream-chunk";
+const TAB_SUMMARY_STREAM_CURSOR_CLASS = "spotlight-ai-stream-cursor";
+const TAB_SUMMARY_STREAM_CHUNK_LIMIT = 6;
+const TAB_SUMMARY_STREAM_SENTENCE_SPLIT = /(?<=[.!?])\s+(?=[A-Z0-9])/;
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
 let focusBannerEl = null;
@@ -2418,6 +2423,10 @@ function renderSummaryPanelForElement(item, url, entry) {
   panel.appendChild(header);
 
   if (entry.status === "loading") {
+    const streamPreview = createSummaryTextElement(entry, { streaming: true });
+    if (streamPreview) {
+      panel.appendChild(streamPreview);
+    }
     if (Array.isArray(entry.bullets) && entry.bullets.length) {
       const list = document.createElement("ul");
       list.className = `${TAB_SUMMARY_LIST_CLASS} loading`;
@@ -2427,11 +2436,6 @@ function renderSummaryPanelForElement(item, url, entry) {
         list.appendChild(itemEl);
       });
       panel.appendChild(list);
-    } else if (entry.raw) {
-      const preview = document.createElement("div");
-      preview.className = `${TAB_SUMMARY_STATUS_CLASS} loading-preview`;
-      preview.textContent = entry.raw;
-      panel.appendChild(preview);
     }
     const status = document.createElement("div");
     status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
@@ -2453,10 +2457,15 @@ function renderSummaryPanelForElement(item, url, entry) {
       });
       panel.appendChild(list);
     } else if (entry.raw) {
-      const fallback = document.createElement("div");
-      fallback.className = TAB_SUMMARY_STATUS_CLASS;
-      fallback.textContent = entry.raw;
-      panel.appendChild(fallback);
+      const summaryText = createSummaryTextElement(entry);
+      if (summaryText) {
+        panel.appendChild(summaryText);
+      } else {
+        const fallback = document.createElement("div");
+        fallback.className = TAB_SUMMARY_STATUS_CLASS;
+        fallback.textContent = entry.raw;
+        panel.appendChild(fallback);
+      }
     } else {
       const empty = document.createElement("div");
       empty.className = `${TAB_SUMMARY_STATUS_CLASS} empty`;
@@ -2490,6 +2499,98 @@ function updateSummaryUIForUrl(url) {
     }
     renderSummaryPanelForElement(item, url, entry);
   });
+}
+
+function normalizeSummaryStreamText(text = "") {
+  if (typeof text !== "string") {
+    return "";
+  }
+  return text
+    .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\t\f\v]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+function buildSummaryStreamChunks(entry, options = {}) {
+  const { streaming = false } = options || {};
+  if (!entry) {
+    return [];
+  }
+  const rawText = typeof entry.raw === "string" ? entry.raw : "";
+  const fallbackBullets = Array.isArray(entry.bullets) ? entry.bullets : [];
+  const sourceText = rawText || (fallbackBullets.length ? fallbackBullets.join(" ") : "");
+  const normalized = normalizeSummaryStreamText(sourceText);
+  if (!normalized) {
+    return [];
+  }
+  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const segments = [];
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+    if (/^[-*•]\s+/.test(line)) {
+      segments.push(line.replace(/^[-*•]\s+/, ""));
+      continue;
+    }
+    const sentences = line.split(TAB_SUMMARY_STREAM_SENTENCE_SPLIT).filter(Boolean);
+    if (sentences.length) {
+      segments.push(...sentences);
+    } else {
+      segments.push(line);
+    }
+  }
+  if (!segments.length) {
+    return [];
+  }
+  if (segments.length === 1 && segments[0].length > 160) {
+    const words = segments[0].split(/\s+/).filter(Boolean);
+    if (words.length > 12) {
+      const chunkSize = Math.max(12, Math.ceil(words.length / 3));
+      const chunked = [];
+      for (let index = 0; index < words.length; index += chunkSize) {
+        chunked.push(words.slice(index, index + chunkSize).join(" "));
+      }
+      return chunked;
+    }
+  }
+  if (streaming && segments.length > TAB_SUMMARY_STREAM_CHUNK_LIMIT) {
+    return segments.slice(-TAB_SUMMARY_STREAM_CHUNK_LIMIT);
+  }
+  return segments;
+}
+
+function createSummaryTextElement(entry, options = {}) {
+  const { streaming = false } = options || {};
+  const chunks = buildSummaryStreamChunks(entry, { streaming });
+  if (!chunks.length) {
+    return null;
+  }
+  const container = document.createElement("div");
+  container.className = TAB_SUMMARY_STREAM_CLASS;
+  if (streaming) {
+    container.classList.add("streaming");
+  }
+  chunks.forEach((chunk) => {
+    if (!chunk) {
+      return;
+    }
+    const span = document.createElement("span");
+    span.className = TAB_SUMMARY_STREAM_CHUNK_CLASS;
+    span.textContent = chunk;
+    container.appendChild(span);
+  });
+  if (streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = TAB_SUMMARY_STREAM_CURSOR_CLASS;
+    container.appendChild(cursor);
+  }
+  return container;
 }
 
 function buildSummaryCopyText(entry) {
