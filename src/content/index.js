@@ -2494,26 +2494,28 @@ function renderSummaryPanelForElement(item, url, entry) {
     statusEl.hidden = !text;
   };
 
-  const streamingText =
-    (typeof entry.raw === "string" && entry.raw) ||
-    (Array.isArray(entry.bullets) && entry.bullets.length
-      ? entry.bullets
-          .slice(0, 3)
-          .map((bullet) => `• ${bullet}`)
-          .join("\n")
-      : "");
+  const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
+  const hasRawText = typeof entry.raw === "string" && entry.raw;
 
   if (entry.status === "loading") {
-    if (streamingText) {
+    if (hasBullets) {
       streamEl.hidden = false;
       streamEl.classList.add("loading");
-      updateSummaryStreamText(streamEl, streamingText);
+      updateSummaryStreamText(streamEl, entry.bullets.slice(0, 3), { format: "bullets" });
+      listEl.innerHTML = "";
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+    } else if (hasRawText) {
+      streamEl.hidden = false;
+      streamEl.classList.add("loading");
+      updateSummaryStreamText(streamEl, entry.raw, { format: "text" });
+      renderBullets([]);
     } else {
       streamEl.classList.remove("loading");
       updateSummaryStreamText(streamEl, "", { immediate: true });
       streamEl.hidden = true;
+      renderBullets(entry.bullets, { loading: true });
     }
-    renderBullets(entry.bullets, { loading: true });
     setStatus("Summarizing…", `${TAB_SUMMARY_STATUS_CLASS} loading`);
   } else if (entry.status === "error") {
     streamEl.classList.remove("loading");
@@ -2522,7 +2524,6 @@ function renderSummaryPanelForElement(item, url, entry) {
     renderBullets([]);
     setStatus(entry.error || "Summary unavailable", `${TAB_SUMMARY_STATUS_CLASS} error`);
   } else if (entry.status === "ready") {
-    const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
     renderBullets(entry.bullets, { loading: false });
     streamEl.classList.remove("loading");
     if (hasBullets) {
@@ -2530,7 +2531,7 @@ function renderSummaryPanelForElement(item, url, entry) {
       streamEl.hidden = true;
     } else if (entry.raw) {
       streamEl.hidden = false;
-      updateSummaryStreamText(streamEl, entry.raw, { immediate: true });
+      updateSummaryStreamText(streamEl, entry.raw, { immediate: true, format: "text" });
     } else {
       updateSummaryStreamText(streamEl, "", { immediate: true });
       streamEl.hidden = true;
@@ -2674,40 +2675,139 @@ function stopSummaryStreamAnimation(controller) {
   }
 }
 
+function resolveSummaryStreamMode(nextText, formatHint, fallbackMode = "text") {
+  const hint = typeof formatHint === "string" ? formatHint.toLowerCase() : "";
+  if (hint === "bullet" || hint === "bullets") {
+    return "bullets";
+  }
+  if (hint === "text" || hint === "raw" || hint === "paragraph") {
+    return "text";
+  }
+  if (Array.isArray(nextText)) {
+    return "bullets";
+  }
+  if (typeof nextText === "string") {
+    const trimmed = nextText.trimStart();
+    if (trimmed.startsWith("•") || trimmed.startsWith("- ")) {
+      return "bullets";
+    }
+  }
+  return fallbackMode || "text";
+}
+
+function normalizeSummaryStreamText(nextText, mode) {
+  if (mode === "bullets") {
+    if (Array.isArray(nextText)) {
+      return nextText
+        .map((line) => (typeof line === "string" ? line.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join("\n");
+    }
+    if (typeof nextText === "string") {
+      const normalized = nextText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const lines = normalized
+        .split("\n")
+        .map((line) => line.replace(/^\s*[•*-]\s?/, "").trim())
+        .filter(Boolean)
+        .slice(0, 3);
+      return lines.join("\n");
+    }
+    return "";
+  }
+  if (typeof nextText === "string") {
+    return nextText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+  return "";
+}
+
+function resetSummaryStreamElement(element, controller) {
+  if (!element || !controller) {
+    return;
+  }
+  element.textContent = "";
+  controller.displayed = "";
+  controller.pending = "";
+  controller.currentLine = null;
+}
+
+function appendSummaryStreamText(element, controller, text, { animate } = {}) {
+  if (!element || !controller || !text) {
+    return;
+  }
+  let index = 0;
+  while (index < text.length) {
+    const newlineIndex = text.indexOf("\n", index);
+    const slice = newlineIndex === -1 ? text.slice(index) : text.slice(index, newlineIndex);
+    if (slice) {
+      let lineContent = controller.currentLine;
+      if (!lineContent) {
+        const lineEl = document.createElement("div");
+        lineEl.className = "spotlight-ai-panel-stream-line";
+        lineEl.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
+        const contentEl = document.createElement("span");
+        contentEl.className = "spotlight-ai-panel-stream-line-content";
+        lineEl.appendChild(contentEl);
+        element.appendChild(lineEl);
+        lineContent = contentEl;
+        controller.currentLine = lineContent;
+      }
+      const span = document.createElement("span");
+      span.className = "spotlight-ai-panel-stream-chunk";
+      if (!animate) {
+        span.classList.add("instant");
+      }
+      span.textContent = slice;
+      lineContent.appendChild(span);
+    }
+    if (newlineIndex === -1) {
+      break;
+    }
+    controller.currentLine = null;
+    index = newlineIndex + 1;
+  }
+}
+
 function updateSummaryStreamText(element, nextText, options = {}) {
   if (!element) {
     return;
   }
-  const { immediate = false } = options || {};
+  const { immediate = false, format } = options || {};
   let controller = summaryStreamControllers.get(element);
   if (!controller) {
-    controller = { displayed: "", pending: "", rafId: 0 };
+    controller = { displayed: "", pending: "", rafId: 0, mode: "text", currentLine: null };
     summaryStreamControllers.set(element, controller);
   }
-  const safeText = typeof nextText === "string" ? nextText : "";
+
+  const mode = resolveSummaryStreamMode(nextText, format, controller.mode);
+  if (controller.mode !== mode) {
+    resetSummaryStreamElement(element, controller);
+    controller.mode = mode;
+  }
+  element.dataset.mode = controller.mode;
+
+  const safeText = normalizeSummaryStreamText(nextText, controller.mode);
 
   if (immediate) {
     stopSummaryStreamAnimation(controller);
-    element.textContent = safeText;
-    controller.displayed = safeText;
-    controller.pending = "";
+    resetSummaryStreamElement(element, controller);
+    if (safeText) {
+      appendSummaryStreamText(element, controller, safeText, { animate: false });
+      controller.displayed = safeText;
+    }
     return;
   }
 
   if (!safeText) {
     stopSummaryStreamAnimation(controller);
-    element.textContent = "";
-    controller.displayed = "";
-    controller.pending = "";
+    resetSummaryStreamElement(element, controller);
     return;
   }
 
   const baseline = controller.displayed || "";
   if (baseline.length > safeText.length || !safeText.startsWith(baseline)) {
     stopSummaryStreamAnimation(controller);
-    element.textContent = "";
-    controller.displayed = "";
-    controller.pending = "";
+    resetSummaryStreamElement(element, controller);
   }
 
   const applied = controller.displayed || "";
@@ -2724,9 +2824,7 @@ function updateSummaryStreamText(element, nextText, options = {}) {
   const step = () => {
     if (!element.isConnected) {
       stopSummaryStreamAnimation(controller);
-      element.textContent = "";
-      controller.displayed = "";
-      controller.pending = "";
+      resetSummaryStreamElement(element, controller);
       return;
     }
 
@@ -2736,57 +2834,29 @@ function updateSummaryStreamText(element, nextText, options = {}) {
         : SUMMARY_STREAM_FRAME_CHARS;
     const baseLength = Math.max(1, Math.min(chunkSize, controller.pending.length));
     const pendingSlice = controller.pending.slice(0, baseLength);
-    const newlineMatch = pendingSlice.match(/(\r\n|\n|\r)/);
+    const newlineMatch = pendingSlice.indexOf("\n");
 
     let chunkLength = baseLength;
-    if (newlineMatch && typeof newlineMatch.index === "number") {
-      chunkLength = newlineMatch.index + newlineMatch[0].length;
+    if (newlineMatch !== -1) {
+      chunkLength = newlineMatch + 1;
     } else if (controller.pending.length > baseLength) {
       const maxExtension = SUMMARY_STREAM_FRAME_CHARS * 2;
       let extension = 0;
       let cursor = baseLength;
-      while (
-        cursor < controller.pending.length &&
-        !/\s/.test(controller.pending[cursor]) &&
-        extension < maxExtension
-      ) {
+      while (cursor < controller.pending.length && !/\s/.test(controller.pending[cursor]) && extension < maxExtension) {
         cursor += 1;
         extension += 1;
       }
       if (cursor < controller.pending.length && /\s/.test(controller.pending[cursor])) {
         cursor += 1;
-        if (
-          controller.pending[cursor - 1] === "\r" &&
-          controller.pending[cursor] === "\n"
-        ) {
-          cursor += 1;
-        }
       }
       chunkLength = cursor;
     }
 
-    let chunk = controller.pending.slice(0, chunkLength);
-
-    controller.pending = controller.pending.slice(chunk.length);
+    const chunk = controller.pending.slice(0, chunkLength);
+    controller.pending = controller.pending.slice(chunkLength);
+    appendSummaryStreamText(element, controller, chunk, { animate: true });
     controller.displayed = `${controller.displayed || ""}${chunk}`;
-
-    const fragment = document.createDocumentFragment();
-    const parts = chunk.split(/(\r\n|\n|\r)/);
-    parts.forEach((part) => {
-      if (!part) {
-        return;
-      }
-      if (part === "\r" || part === "\n" || part === "\r\n") {
-        fragment.appendChild(document.createElement("br"));
-        return;
-      }
-      const span = document.createElement("span");
-      span.className = "spotlight-ai-panel-stream-chunk";
-      span.textContent = part;
-      fragment.appendChild(span);
-    });
-
-    element.appendChild(fragment);
 
     if (controller.pending) {
       controller.rafId = requestAnimationFrame(step);
