@@ -2392,8 +2392,8 @@ function renderSummaryPanelForElement(item, url, entry) {
 
     panel.appendChild(header);
 
-    const stream = document.createElement("div");
-    stream.className = TAB_SUMMARY_STREAM_CLASS;
+    const stream = document.createElement("ul");
+    stream.className = `${TAB_SUMMARY_STREAM_CLASS} ${TAB_SUMMARY_LIST_CLASS}`;
     stream.dataset.role = "stream";
     stream.setAttribute("aria-live", "polite");
     stream.setAttribute("aria-atomic", "false");
@@ -2474,17 +2474,30 @@ function renderSummaryPanelForElement(item, url, entry) {
 
   const renderBullets = (bullets, { loading } = {}) => {
     listEl.innerHTML = "";
-    if (!Array.isArray(bullets) || !bullets.length) {
+    const normalized = normalizeSummaryStreamText(bullets, "bullets");
+    if (!normalized) {
       listEl.hidden = true;
       listEl.classList.remove("loading");
+      delete listEl.dataset.mode;
       return;
     }
-    bullets.slice(0, 3).forEach((bullet) => {
+    normalized.split("\n").forEach((line) => {
+      const text = line.trim();
+      if (!text) {
+        return;
+      }
       const itemEl = document.createElement("li");
-      itemEl.textContent = bullet;
+      itemEl.textContent = text;
       listEl.appendChild(itemEl);
     });
+    if (!listEl.childElementCount) {
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+      delete listEl.dataset.mode;
+      return;
+    }
     listEl.hidden = false;
+    listEl.dataset.mode = "bullets";
     listEl.classList.toggle("loading", Boolean(loading));
   };
 
@@ -2736,7 +2749,7 @@ function createSummaryStreamLine(element, controller) {
   if (!element || !controller) {
     return null;
   }
-  const lineEl = document.createElement("div");
+  const lineEl = document.createElement("li");
   lineEl.className = "spotlight-ai-panel-stream-line";
   lineEl.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
   const contentEl = document.createElement("span");
