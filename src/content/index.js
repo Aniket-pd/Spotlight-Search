@@ -74,6 +74,98 @@ let focusStyleEl = null;
 let focusOriginalTitle = null;
 let focusTitlePrefix = "";
 let focusActive = false;
+const THEME_DARK = "dark";
+const THEME_LIGHT = "light";
+const OVERLAY_ANIMATION_MS = 340;
+let themeMediaQuery = null;
+let themeInitialized = false;
+let overlayVisibilityTimer = null;
+
+function applyDesignTheme(theme) {
+  const resolved = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
+  if (shadowHostEl) {
+    shadowHostEl.setAttribute("data-theme", resolved);
+  }
+  if (shadowContentEl) {
+    shadowContentEl.setAttribute("data-theme", resolved);
+  }
+}
+
+function getPreferredTheme() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return THEME_DARK;
+  }
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? THEME_DARK
+      : THEME_LIGHT;
+  } catch (error) {
+    return THEME_DARK;
+  }
+}
+
+function ensureDesignThemeListener() {
+  if (themeInitialized) {
+    applyDesignTheme(shadowHostEl ? shadowHostEl.getAttribute("data-theme") : getPreferredTheme());
+    return;
+  }
+
+  themeInitialized = true;
+
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    try {
+      themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = (event) => {
+        applyDesignTheme(event.matches ? THEME_DARK : THEME_LIGHT);
+      };
+      if (typeof themeMediaQuery.addEventListener === "function") {
+        themeMediaQuery.addEventListener("change", handleChange);
+      } else if (typeof themeMediaQuery.addListener === "function") {
+        themeMediaQuery.addListener(handleChange);
+      }
+      applyDesignTheme(themeMediaQuery.matches ? THEME_DARK : THEME_LIGHT);
+      return;
+    } catch (error) {
+      // Ignore matchMedia errors and fall back to the default theme.
+    }
+  }
+
+  applyDesignTheme(getPreferredTheme());
+}
+
+function setOverlayVisibility(visible) {
+  if (!shadowHostEl) {
+    return;
+  }
+
+  if (overlayVisibilityTimer) {
+    clearTimeout(overlayVisibilityTimer);
+    overlayVisibilityTimer = null;
+  }
+
+  if (visible) {
+    shadowHostEl.style.display = "block";
+    requestAnimationFrame(() => {
+      if (!shadowHostEl) {
+        return;
+      }
+      shadowHostEl.dataset.open = "true";
+      shadowHostEl.style.pointerEvents = "auto";
+    });
+    return;
+  }
+
+  shadowHostEl.dataset.open = "false";
+  shadowHostEl.style.pointerEvents = "none";
+  overlayVisibilityTimer = setTimeout(() => {
+    if (!shadowHostEl) {
+      return;
+    }
+    if (shadowHostEl.dataset.open !== "true") {
+      shadowHostEl.style.display = "none";
+    }
+  }, OVERLAY_ANIMATION_MS);
+}
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -214,6 +306,7 @@ function ensureShadowRoot() {
   }
 
   if (shadowRootEl && shadowContentEl) {
+    ensureDesignThemeListener();
     if (shadowHostEl && !shadowHostEl.parentElement) {
       document.body.appendChild(shadowHostEl);
     }
@@ -228,6 +321,7 @@ function ensureShadowRoot() {
   shadowHostEl.style.display = "none";
   shadowHostEl.style.contain = "layout style paint";
   shadowHostEl.style.pointerEvents = "none";
+  shadowHostEl.dataset.open = "false";
 
   shadowRootEl = shadowHostEl.attachShadow({ mode: "open", delegatesFocus: true });
 
@@ -251,6 +345,8 @@ function ensureShadowRoot() {
   shadowContentEl = document.createElement("div");
   shadowContentEl.className = "spotlight-root";
   shadowRootEl.appendChild(shadowContentEl);
+
+  ensureDesignThemeListener();
 
   document.body.appendChild(shadowHostEl);
 
@@ -1688,8 +1784,7 @@ async function openOverlay() {
   if (!shadowHostEl.parentElement) {
     document.body.appendChild(shadowHostEl);
   }
-  shadowHostEl.style.display = "block";
-  shadowHostEl.style.pointerEvents = "auto";
+  setOverlayVisibility(true);
 
   bodyOverflowBackup = document.body.style.overflow;
   document.body.style.overflow = "hidden";
@@ -1706,8 +1801,7 @@ function closeOverlay() {
 
   isOpen = false;
   if (shadowHostEl) {
-    shadowHostEl.style.display = "none";
-    shadowHostEl.style.pointerEvents = "none";
+    setOverlayVisibility(false);
   }
   document.body.style.overflow = bodyOverflowBackup;
   if (pendingQueryTimeout) {
