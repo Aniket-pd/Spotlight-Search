@@ -403,7 +403,6 @@
   align-items: center;
   gap: var(--spotlight-gap-xs);
   overflow-x: auto;
-  padding-bottom: 4px;
   scrollbar-width: none;
   mask-image: linear-gradient(to right, rgba(0, 0, 0, 0), #000 12px, #000 calc(100% - 12px), rgba(0, 0, 0, 0));
   flex: 1 1 auto;
