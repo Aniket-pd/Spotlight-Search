@@ -18,7 +18,7 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 
 | Token | Purpose | Light theme | Dark theme |
 | --- | --- | --- | --- |
-| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(12, 14, 18, 0.18)` | `rgba(4, 4, 6, 0.62)` |
+| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(0, 0, 0, 0.1)` | `rgba(0, 0, 0, 0.1)` |
 | `--spotlight-surface-gradient` | Shell background gradient | White glass gradient | Obsidian glass gradient |
 | `--spotlight-surface-panel` | Panel/assistant surfaces | `linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(236, 236, 236, 0.78))` | `linear-gradient(135deg, rgba(34, 34, 42, 0.88), rgba(12, 12, 16, 0.94))` |
 | `--spotlight-color-text-primary` | Primary text | Charcoal 92% | Soft white |
@@ -54,7 +54,7 @@ Reusable spacing tokens keep layouts balanced:
 ## Component guidelines
 
 ### Overlay shell
-- `.spotlight-overlay` fills the viewport with the overlay token and blur.
+- `.spotlight-overlay` fills the viewport with the overlay token only—use the 10% black scrim without blur to keep the page context legible.
 - `.spotlight-shell` applies the glass gradient, `--spotlight-shadow-elevated`, and `--spotlight-radius-large`.
 - Keep shell width capped to `min(720px, 92vw)` to maintain comfortable reading widths.
 

@@ -19,7 +19,7 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
-  --spotlight-color-overlay: rgba(12, 14, 18, 0.18);
+  --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 244, 244, 0.72));
   --spotlight-surface-border: rgba(255, 255, 255, 0.58);
   --spotlight-surface-border-subtle: rgba(214, 214, 214, 0.45);
@@ -59,7 +59,7 @@
 }
 
 :host([data-theme="dark"]) {
-  --spotlight-color-overlay: rgba(4, 4, 6, 0.62);
+  --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(30, 30, 36, 0.9), rgba(10, 10, 14, 0.94));
   --spotlight-surface-border: rgba(120, 120, 132, 0.38);
   --spotlight-surface-border-subtle: rgba(80, 80, 96, 0.4);
@@ -92,7 +92,7 @@
 }
 
 :host([data-theme="light"]) {
-  --spotlight-color-overlay: rgba(12, 14, 18, 0.18);
+  --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 244, 244, 0.72));
   --spotlight-surface-border: rgba(255, 255, 255, 0.58);
   --spotlight-surface-border-subtle: rgba(214, 214, 214, 0.45);
@@ -126,7 +126,7 @@
 
 @media (prefers-color-scheme: dark) {
   :host(:not([data-theme="light"])) {
-    --spotlight-color-overlay: rgba(4, 4, 6, 0.62);
+    --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
     --spotlight-surface-gradient: linear-gradient(135deg, rgba(30, 30, 36, 0.9), rgba(10, 10, 14, 0.94));
     --spotlight-surface-border: rgba(120, 120, 132, 0.38);
     --spotlight-surface-border-subtle: rgba(80, 80, 96, 0.4);
@@ -187,7 +187,6 @@
   position: fixed;
   inset: 0;
   background: var(--spotlight-color-overlay);
-  backdrop-filter: var(--spotlight-backdrop-filter);
   display: flex;
   align-items: flex-start;
   justify-content: center;
