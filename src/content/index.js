@@ -60,6 +60,8 @@ let historyAssistantClearEl = null;
 let historyAssistantRangeEl = null;
 let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
+let themeMediaQuery = null;
+let activeThemeId = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
@@ -90,6 +92,44 @@ function resetWebSearchSelection() {
     ? api.getDefaultSearchEngine()
     : null;
   webSearchPreviewResult = null;
+}
+
+function getPreferredThemeId() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  if (!shadowContentEl) {
+    return;
+  }
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  if (activeThemeId === nextTheme) {
+    return;
+  }
+  activeThemeId = nextTheme;
+  shadowContentEl.setAttribute("data-theme", nextTheme);
+}
+
+function ensureThemeListener() {
+  if (themeMediaQuery || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return;
+  }
+
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const handleChange = (event) => {
+    applyTheme(event.matches ? "dark" : "light");
+  };
+
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", handleChange);
+  } else if (typeof media.addListener === "function") {
+    media.addListener(handleChange);
+  }
+
+  themeMediaQuery = media;
 }
 
 function getActiveWebSearchEngineId() {
@@ -251,6 +291,9 @@ function ensureShadowRoot() {
   shadowContentEl = document.createElement("div");
   shadowContentEl.className = "spotlight-root";
   shadowRootEl.appendChild(shadowContentEl);
+
+  ensureThemeListener();
+  applyTheme(getPreferredThemeId());
 
   document.body.appendChild(shadowHostEl);
 
