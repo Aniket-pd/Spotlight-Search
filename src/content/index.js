@@ -2694,7 +2694,6 @@ function updateSummaryStreamText(element, nextText, options = {}) {
     return;
   }
 
-  const currentText = element.textContent || "";
   if (!safeText) {
     stopSummaryStreamAnimation(controller);
     element.textContent = "";
@@ -2703,22 +2702,21 @@ function updateSummaryStreamText(element, nextText, options = {}) {
     return;
   }
 
-  if (currentText.length > safeText.length || !safeText.startsWith(currentText)) {
+  const baseline = controller.displayed || "";
+  if (baseline.length > safeText.length || !safeText.startsWith(baseline)) {
     stopSummaryStreamAnimation(controller);
     element.textContent = "";
     controller.displayed = "";
     controller.pending = "";
   }
 
-  const baseline = element.textContent || "";
-  const difference = safeText.slice(baseline.length);
+  const applied = controller.displayed || "";
+  const difference = safeText.slice(applied.length);
   if (!difference) {
-    controller.displayed = baseline;
     return;
   }
 
   controller.pending += difference;
-  controller.displayed = baseline;
   if (controller.rafId) {
     return;
   }
@@ -2731,15 +2729,65 @@ function updateSummaryStreamText(element, nextText, options = {}) {
       controller.pending = "";
       return;
     }
+
     const chunkSize =
       controller.pending.length > SUMMARY_STREAM_FAST_THRESHOLD
         ? SUMMARY_STREAM_FRAME_CHARS * 2
         : SUMMARY_STREAM_FRAME_CHARS;
-    const sliceLength = Math.max(1, Math.min(chunkSize, controller.pending.length));
-    const chunk = controller.pending.slice(0, sliceLength);
-    controller.pending = controller.pending.slice(sliceLength);
-    element.textContent = `${element.textContent || ""}${chunk}`;
-    controller.displayed = element.textContent;
+    const baseLength = Math.max(1, Math.min(chunkSize, controller.pending.length));
+    const pendingSlice = controller.pending.slice(0, baseLength);
+    const newlineMatch = pendingSlice.match(/(\r\n|\n|\r)/);
+
+    let chunkLength = baseLength;
+    if (newlineMatch && typeof newlineMatch.index === "number") {
+      chunkLength = newlineMatch.index + newlineMatch[0].length;
+    } else if (controller.pending.length > baseLength) {
+      const maxExtension = SUMMARY_STREAM_FRAME_CHARS * 2;
+      let extension = 0;
+      let cursor = baseLength;
+      while (
+        cursor < controller.pending.length &&
+        !/\s/.test(controller.pending[cursor]) &&
+        extension < maxExtension
+      ) {
+        cursor += 1;
+        extension += 1;
+      }
+      if (cursor < controller.pending.length && /\s/.test(controller.pending[cursor])) {
+        cursor += 1;
+        if (
+          controller.pending[cursor - 1] === "\r" &&
+          controller.pending[cursor] === "\n"
+        ) {
+          cursor += 1;
+        }
+      }
+      chunkLength = cursor;
+    }
+
+    let chunk = controller.pending.slice(0, chunkLength);
+
+    controller.pending = controller.pending.slice(chunk.length);
+    controller.displayed = `${controller.displayed || ""}${chunk}`;
+
+    const fragment = document.createDocumentFragment();
+    const parts = chunk.split(/(\r\n|\n|\r)/);
+    parts.forEach((part) => {
+      if (!part) {
+        return;
+      }
+      if (part === "\r" || part === "\n" || part === "\r\n") {
+        fragment.appendChild(document.createElement("br"));
+        return;
+      }
+      const span = document.createElement("span");
+      span.className = "spotlight-ai-panel-stream-chunk";
+      span.textContent = part;
+      fragment.appendChild(span);
+    });
+
+    element.appendChild(fragment);
+
     if (controller.pending) {
       controller.rafId = requestAnimationFrame(step);
     } else {
