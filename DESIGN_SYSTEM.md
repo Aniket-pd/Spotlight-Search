@@ -17,17 +17,17 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 
 | Token | Purpose | Light theme | Dark theme |
 | --- | --- | --- | --- |
-| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(16, 44, 92, 0.26)` | `rgba(5, 12, 26, 0.56)` |
-| `--spotlight-surface-gradient` | Shell background gradient | Soft white/ice blues | Navy glass gradient |
-| `--spotlight-surface-panel` | Panel/assistant surfaces | `linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(230, 240, 255, 0.78))` | `linear-gradient(135deg, rgba(28, 42, 82, 0.86), rgba(12, 22, 48, 0.94))` |
-| `--spotlight-color-text-primary` | Primary text | Deep navy | Off-white |
-| `--spotlight-color-text-secondary` | Body text | Navy 72% | Soft grey-blue |
-| `--spotlight-color-text-tertiary` | Hints & meta | Navy 56% | Muted periwinkle |
-| `--spotlight-color-text-quiet` | Low-emphasis captions | Navy 40% | Slate 52% |
-| `--spotlight-color-accent` | Accent base | `#4d8dff` | `#6ea5ff` |
-| `--spotlight-color-accent-strong` | Accent highlight | `#3765ff` | `#4d8dff` |
-| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(77, 141, 255, 0.18)` | `rgba(93, 155, 255, 0.2)` |
-| `--spotlight-result-hover` | Result hover fill | `rgba(77, 141, 255, 0.18)` | `rgba(93, 155, 255, 0.2)` |
+| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(18, 62, 52, 0.28)` | `rgba(6, 20, 16, 0.6)` |
+| `--spotlight-surface-gradient` | Shell background gradient | Soft white into mint frost | Deep forest glass gradient |
+| `--spotlight-surface-panel` | Panel/assistant surfaces | `linear-gradient(135deg, rgba(245, 255, 251, 0.88), rgba(220, 244, 234, 0.78))` | `linear-gradient(135deg, rgba(28, 56, 46, 0.86), rgba(12, 28, 22, 0.94))` |
+| `--spotlight-color-text-primary` | Primary text | Deep evergreen | Off-white |
+| `--spotlight-color-text-secondary` | Body text | Evergreen 72% | Soft sage |
+| `--spotlight-color-text-tertiary` | Hints & meta | Evergreen 56% | Muted aqua grey |
+| `--spotlight-color-text-quiet` | Low-emphasis captions | Evergreen 42% | Sage 54% |
+| `--spotlight-color-accent` | Accent base | `#31c89b` | `#37d6a3` |
+| `--spotlight-color-accent-strong` | Accent highlight | `#1f9d78` | `#1aad82` |
+| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(49, 200, 155, 0.18)` | `rgba(55, 214, 163, 0.22)` |
+| `--spotlight-result-hover` | Result hover fill | `rgba(49, 200, 155, 0.16)` | `rgba(55, 214, 163, 0.22)` |
 
 Additional tokens (chip borders, menu surfaces, shadows, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
 
@@ -46,7 +46,7 @@ Reusable spacing tokens keep layouts balanced:
 
 ### Elevation & blur
 - Global blur strength is captured in `--spotlight-backdrop-filter` (`saturate(160%) blur(28px)`).
-- Elevated surfaces use `--spotlight-shadow-elevated` (`0 40px 80px rgba(15, 23, 42, 0.18)` light / `0 46px 90px rgba(2, 6, 20, 0.72)` dark).
+- Elevated surfaces use `--spotlight-shadow-elevated` (`0 40px 80px rgba(12, 30, 24, 0.18)` light / `0 46px 90px rgba(2, 10, 8, 0.72)` dark).
 - Floating menus use `--spotlight-shadow-floating`.
 - Inputs and buttons add accent-colored shadows on hover/focus to match HIG depth cues.
 
@@ -58,7 +58,7 @@ Reusable spacing tokens keep layouts balanced:
 - Keep shell width capped to `min(720px, 92vw)` to maintain comfortable reading widths.
 
 ### Input region
-- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` and never introduce ad-hoc glow colors.
+- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` to bring in the teal accent without harsh glows.
 - The query field inherits `--spotlight-color-text-primary`; placeholder text uses `--spotlight-input-placeholder` for consistent contrast.
 - Ghost suggestions (`.spotlight-ghost`) pull from `--spotlight-color-text-tertiary` and should only toggle opacity.
 
