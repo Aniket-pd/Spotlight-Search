@@ -74,6 +74,8 @@ let focusStyleEl = null;
 let focusOriginalTitle = null;
 let focusTitlePrefix = "";
 let focusActive = false;
+let colorSchemeMediaQuery = null;
+let colorSchemeChangeHandler = null;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -253,10 +255,38 @@ function ensureShadowRoot() {
   shadowRootEl.appendChild(shadowContentEl);
 
   document.body.appendChild(shadowHostEl);
+  ensureThemeSync();
 
   ensureShadowHostObserver();
 
   return shadowRootEl;
+}
+
+function ensureThemeSync() {
+  if (!shadowHostEl || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return;
+  }
+
+  const apply = (isDark) => {
+    if (!shadowHostEl) {
+      return;
+    }
+    shadowHostEl.setAttribute("data-theme", isDark ? "dark" : "light");
+  };
+
+  if (!colorSchemeMediaQuery) {
+    colorSchemeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    colorSchemeChangeHandler = (event) => {
+      apply(event.matches);
+    };
+    if (typeof colorSchemeMediaQuery.addEventListener === "function") {
+      colorSchemeMediaQuery.addEventListener("change", colorSchemeChangeHandler);
+    } else if (typeof colorSchemeMediaQuery.addListener === "function") {
+      colorSchemeMediaQuery.addListener(colorSchemeChangeHandler);
+    }
+  }
+
+  apply(Boolean(colorSchemeMediaQuery && colorSchemeMediaQuery.matches));
 }
 
 function ensureShadowHostObserver() {
