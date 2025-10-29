@@ -113,6 +113,14 @@ const MAX_NAVIGATION_RESULTS = 12;
 const NAVIGATION_BASE_SCORE = 120;
 const NAVIGATION_STEP_PENALTY = 6;
 
+const FILTER_CHIP_DEFINITIONS = [
+  { id: "all", label: "All", prefix: "", aliases: [] },
+  { id: "tab", label: "Tabs", prefix: "tab:", aliases: FILTER_ALIASES.tab || [] },
+  { id: "bookmark", label: "Bookmarks", prefix: "bookmark:", aliases: FILTER_ALIASES.bookmark || [] },
+  { id: "download", label: "Downloads", prefix: "download:", aliases: FILTER_ALIASES.download || [] },
+  { id: "history", label: "History", prefix: "history:", aliases: FILTER_ALIASES.history || [] },
+];
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_SUBFILTER_OPTIONS = 12;
 const COMMON_SECOND_LEVEL_TLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "go", "ne", "or"]);
@@ -204,6 +212,77 @@ function toTitleCase(text) {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function buildFilterSummary(activeFilter, metadata = {}) {
+  const counts = {
+    tab: typeof metadata.tabCount === "number" ? metadata.tabCount : 0,
+    bookmark: typeof metadata.bookmarkCount === "number" ? metadata.bookmarkCount : 0,
+    history: typeof metadata.historyCount === "number" ? metadata.historyCount : 0,
+    download: typeof metadata.downloadCount === "number" ? metadata.downloadCount : 0,
+  };
+
+  const totalKnown = counts.tab + counts.bookmark + counts.history + counts.download;
+
+  const options = FILTER_CHIP_DEFINITIONS.map((definition) => {
+    const baseCount =
+      definition.id === "all"
+        ? totalKnown
+        : definition.id in counts
+        ? counts[definition.id]
+        : null;
+
+    if (definition.id !== "all" && baseCount !== null && baseCount <= 0) {
+      return null;
+    }
+
+    const isActive = definition.id === "all" ? !activeFilter : activeFilter === definition.id;
+
+    return {
+      id: definition.id,
+      label: definition.label,
+      prefix: definition.prefix,
+      aliases: definition.aliases,
+      count: baseCount,
+      active: isActive,
+      hint:
+        definition.id === "all"
+          ? "Show every result"
+          : `Only show ${definition.label.toLowerCase()}`,
+    };
+  })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.id === "all") return -1;
+      if (b.id === "all") return 1;
+      if (a.active && !b.active) return -1;
+      if (!a.active && b.active) return 1;
+      const aCount = typeof a.count === "number" ? a.count : -1;
+      const bCount = typeof b.count === "number" ? b.count : -1;
+      if (bCount !== aCount) {
+        return bCount - aCount;
+      }
+      return a.label.localeCompare(b.label);
+    });
+
+  if (activeFilter && !options.some((option) => option.id === activeFilter)) {
+    const fallbackLabel = toTitleCase(activeFilter);
+    const fallbackAliases = Array.isArray(FILTER_ALIASES[activeFilter])
+      ? FILTER_ALIASES[activeFilter]
+      : [];
+    const fallbackPrefix = fallbackAliases.length ? fallbackAliases[0] : `${activeFilter}:`;
+    options.push({
+      id: activeFilter,
+      label: fallbackLabel,
+      prefix: fallbackPrefix,
+      aliases: fallbackAliases,
+      count: null,
+      active: true,
+      hint: `Filtering by ${fallbackLabel}`,
+    });
+  }
+
+  return options;
 }
 
 function formatTokenLabel(token) {
@@ -1711,6 +1790,18 @@ export function runSearch(query, data, options = {}) {
   const bookmarkCount = typeof metadata.bookmarkCount === "number"
     ? metadata.bookmarkCount
     : items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0);
+  const downloadCount = typeof metadata.downloadCount === "number"
+    ? metadata.downloadCount
+    : items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0);
+  const historyCount = typeof metadata.historyCount === "number"
+    ? metadata.historyCount
+    : items.reduce((count, item) => (item.type === "history" ? count + 1 : count), 0);
+  const filterSummary = buildFilterSummary(filterType, {
+    tabCount,
+    bookmarkCount,
+    downloadCount,
+    historyCount,
+  });
   const focusedTabInfo = metadata && typeof metadata.focusedTab === "object" ? metadata.focusedTab : null;
 
   const navigationState = options.navigation || null;
@@ -1723,6 +1814,7 @@ export function runSearch(query, data, options = {}) {
       answer: "",
       filter: filterType,
       subfilters: null,
+      filters: filterSummary,
     };
   }
 
@@ -1802,6 +1894,7 @@ export function runSearch(query, data, options = {}) {
         answer: "",
         filter: filterType,
         subfilters: subfilterPayload,
+        filters: filterSummary,
       };
     }
 
@@ -1826,6 +1919,7 @@ export function runSearch(query, data, options = {}) {
         answer: "",
         filter: filterType,
         subfilters: subfilterPayload,
+        filters: filterSummary,
       };
     }
 
@@ -1838,6 +1932,7 @@ export function runSearch(query, data, options = {}) {
       answer: "",
       filter: filterType,
       subfilters: subfilterPayload,
+      filters: filterSummary,
     };
   }
 
@@ -1845,7 +1940,7 @@ export function runSearch(query, data, options = {}) {
   const uniqueTokens = Array.from(new Set(tokens));
   const totalTokens = uniqueTokens.length;
   if (tokens.length === 0) {
-    return { results: [], ghost: null, answer: "", filter: filterType };
+    return { results: [], ghost: null, answer: "", filter: filterType, filters: filterSummary };
   }
 
   const scores = new Map();
@@ -2021,6 +2116,7 @@ export function runSearch(query, data, options = {}) {
     answer,
     filter: filterType,
     subfilters: subfilterPayload,
+    filters: filterSummary,
     webSearch: webSearchInfo,
   };
 }

@@ -32,6 +32,9 @@ let subfilterContainerEl = null;
 let subfilterScrollerEl = null;
 let subfilterState = { type: null, options: [], activeId: null, hasNonAllOption: false };
 let selectedSubfilter = null;
+let filterContainerEl = null;
+let filterScrollerEl = null;
+let filterOptionsState = [];
 let bookmarkOrganizerControl = null;
 let bookmarkOrganizerRequestPending = false;
 let slashMenuEl = null;
@@ -414,6 +417,16 @@ function createOverlay() {
   inputContainerEl.appendChild(engineMenuEl);
 
   inputWrapper.appendChild(inputContainerEl);
+
+  filterContainerEl = document.createElement("div");
+  filterContainerEl.className = "spotlight-filter-bar";
+  filterContainerEl.setAttribute("role", "group");
+  filterContainerEl.setAttribute("aria-label", "Filters");
+  filterContainerEl.setAttribute("aria-hidden", "true");
+  filterScrollerEl = document.createElement("div");
+  filterScrollerEl.className = "spotlight-filter-scroll";
+  filterContainerEl.appendChild(filterScrollerEl);
+  inputWrapper.appendChild(filterContainerEl);
 
   subfilterContainerEl = document.createElement("div");
   subfilterContainerEl.className = "spotlight-subfilters";
@@ -1158,6 +1171,164 @@ function renderSubfilters() {
   });
 }
 
+function resetFilterOptions() {
+  filterOptionsState = [];
+  renderFilterOptions();
+}
+
+function updateFilterOptions(filters, activeId) {
+  if (!Array.isArray(filters)) {
+    resetFilterOptions();
+    return;
+  }
+
+  const sanitized = filters
+    .map((option) => {
+      if (!option || typeof option.label !== "string") {
+        return null;
+      }
+      const id = typeof option.id === "string" && option.id ? option.id : option.id === null ? "all" : "";
+      const prefix = typeof option.prefix === "string" ? option.prefix.trim() : "";
+      const aliases = Array.isArray(option.aliases)
+        ? option.aliases.filter((alias) => typeof alias === "string" && alias.trim())
+        : [];
+      const count = typeof option.count === "number" && Number.isFinite(option.count) && option.count >= 0
+        ? option.count
+        : null;
+      const hint = typeof option.hint === "string" ? option.hint : "";
+      const fallbackActive = activeId ? id === activeId : id === "all" || !id;
+      const active = typeof option.active === "boolean" ? option.active : fallbackActive;
+      return { id: id || "all", label: option.label, prefix, aliases, count, hint, active };
+    })
+    .filter(Boolean);
+
+  filterOptionsState = sanitized;
+  renderFilterOptions();
+}
+
+function renderFilterOptions() {
+  if (!filterContainerEl || !filterScrollerEl) {
+    return;
+  }
+
+  filterScrollerEl.innerHTML = "";
+
+  if (!filterOptionsState.length) {
+    filterContainerEl.classList.remove("visible");
+    filterContainerEl.setAttribute("aria-hidden", "true");
+    return;
+  }
+
+  filterContainerEl.classList.add("visible");
+  filterContainerEl.setAttribute("aria-hidden", "false");
+
+  filterOptionsState.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-filter-chip";
+    button.dataset.id = option.id || "all";
+    button.setAttribute("aria-pressed", option.active ? "true" : "false");
+    if (option.active) {
+      button.classList.add("active");
+    }
+    if (option.hint) {
+      button.title = option.hint;
+    }
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "spotlight-filter-chip-label";
+    labelSpan.textContent = option.label;
+    button.appendChild(labelSpan);
+
+    if (typeof option.count === "number" && option.count > 0) {
+      const countSpan = document.createElement("span");
+      countSpan.className = "spotlight-filter-chip-count";
+      countSpan.textContent = option.count.toLocaleString();
+      button.appendChild(countSpan);
+    }
+
+    button.addEventListener("click", () => handleFilterChipClick(option));
+
+    filterScrollerEl.appendChild(button);
+  });
+}
+
+function stripKnownFilterPrefixes(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  let working = value.trimStart();
+  if (!working) {
+    return "";
+  }
+
+  const lowerWorking = working.toLowerCase();
+  const knownPrefixes = [];
+  filterOptionsState.forEach((option) => {
+    const basePrefix = typeof option.prefix === "string" ? option.prefix.trim() : "";
+    if (basePrefix) {
+      knownPrefixes.push(basePrefix.toLowerCase());
+    }
+    const aliasList = Array.isArray(option.aliases) ? option.aliases : [];
+    aliasList.forEach((alias) => {
+      if (typeof alias === "string" && alias.trim()) {
+        knownPrefixes.push(alias.trim().toLowerCase());
+      }
+    });
+  });
+
+  for (const prefix of knownPrefixes) {
+    if (prefix && lowerWorking.startsWith(prefix)) {
+      working = working.slice(prefix.length);
+      return working.trimStart();
+    }
+  }
+
+  const genericMatch = working.match(/^([a-z]+[a-z0-9_-]*:)\s*/i);
+  if (genericMatch) {
+    return working.slice(genericMatch[0].length).trimStart();
+  }
+
+  return working;
+}
+
+function handleFilterChipClick(option) {
+  if (!option || !inputEl) {
+    return;
+  }
+
+  const currentValue = typeof inputEl.value === "string" ? inputEl.value : "";
+  const cleaned = stripKnownFilterPrefixes(currentValue);
+  const prefix = typeof option.prefix === "string" ? option.prefix.trim() : "";
+  const nextFilterId = option.id === "all" ? null : option.id;
+  const currentFilterId = activeFilter || null;
+  const filterChanged = nextFilterId !== currentFilterId;
+  const nextValue = prefix ? `${prefix}${cleaned ? ` ${cleaned}` : " "}` : cleaned;
+  const trimmedCurrent = currentValue.trim();
+  const trimmedNext = nextValue.trim();
+
+  if (!filterChanged && trimmedCurrent === trimmedNext) {
+    return;
+  }
+
+  if (pendingQueryTimeout) {
+    clearTimeout(pendingQueryTimeout);
+    pendingQueryTimeout = null;
+  }
+
+  if (filterChanged) {
+    resetSubfilterState();
+  }
+
+  inputEl.value = nextValue;
+  setGhostText("");
+  pointerNavigationSuspended = true;
+  requestResults(inputEl.value);
+  inputEl.focus({ preventScroll: true });
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
 function ensureBookmarkOrganizerControl() {
   if (!subfilterContainerEl) {
     return null;
@@ -1706,6 +1877,7 @@ async function openOverlay() {
   statusEl.textContent = "";
   statusSticky = false;
   activeFilter = null;
+  resetFilterOptions();
   resetSubfilterState();
   resultsEl.innerHTML = "";
   inputEl.value = "";
@@ -1746,6 +1918,7 @@ function closeOverlay() {
   }
   statusSticky = false;
   activeFilter = null;
+  resetFilterOptions();
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
@@ -1970,6 +2143,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateFilterOptions(response.filters, activeFilter);
       deactivateHistoryAssistantResults();
       updateHistoryAssistantVisibility();
       updateHistoryAssistantUI();

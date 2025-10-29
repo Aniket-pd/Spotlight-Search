@@ -365,6 +365,7 @@ export async function buildIndex() {
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
     bookmarkCount: items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0),
+    historyCount: items.reduce((count, item) => (item.type === "history" ? count + 1 : count), 0),
     downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
     topSiteCount: items.reduce((count, item) => (item.type === "topSite" ? count + 1 : count), 0),
   };
