@@ -2419,7 +2419,11 @@ function updateSummaryButtonElement(button, entry) {
     return;
   }
   if (entry.status === "ready") {
-    button.textContent = "Refresh summary";
+    if (entry.hidden) {
+      button.textContent = "Show summary";
+    } else {
+      button.textContent = "Hide summary";
+    }
     if (entry.cached) {
       button.title = "Summary cached from an earlier request";
     }
@@ -2517,6 +2521,16 @@ function renderSummaryPanelForElement(item, url, entry) {
     panel.remove();
     renderSummaryPanelForElement(item, url, entry);
     return;
+  }
+
+  const isHidden = Boolean(entry.hidden);
+  panel.hidden = isHidden;
+  if (isHidden) {
+    panel.setAttribute("aria-hidden", "true");
+    panel.style.display = "none";
+  } else {
+    panel.removeAttribute("aria-hidden");
+    panel.style.display = "";
   }
 
   controls.innerHTML = "";
@@ -3014,6 +3028,7 @@ function requestSummaryForResult(result, options = {}) {
   }
   if (existing) {
     existing.lastUsed = now;
+    existing.hidden = false;
   }
   const requestId = ++tabSummaryRequestCounter;
   const entry = {
@@ -3025,6 +3040,7 @@ function requestSummaryForResult(result, options = {}) {
     cached: Boolean(existing?.cached),
     source: typeof existing?.source === "string" ? existing.source : "",
     lastUsed: now,
+    hidden: false,
   };
   tabSummaryState.set(url, entry);
   pruneSummaryState();
@@ -3052,6 +3068,7 @@ function requestSummaryForResult(result, options = {}) {
             cached: Boolean(response.cached),
             source: typeof response.source === "string" ? response.source : "",
             lastUsed: Date.now(),
+            hidden: false,
           });
           pruneSummaryState();
           updateSummaryUIForUrl(url);
@@ -3067,6 +3084,7 @@ function requestSummaryForResult(result, options = {}) {
         current.error = errorMessage;
         current.cached = false;
         current.lastUsed = Date.now();
+        current.hidden = false;
         stopSummaryProgress(url);
         tabSummaryState.set(url, current);
         pruneSummaryState();
@@ -3080,6 +3098,7 @@ function requestSummaryForResult(result, options = {}) {
       current.cached = Boolean(response.cached);
       current.source = typeof response.source === "string" ? response.source : "";
       current.lastUsed = Date.now();
+      current.hidden = false;
       stopSummaryProgress(url);
       tabSummaryState.set(url, current);
       pruneSummaryState();
@@ -3094,6 +3113,7 @@ function requestSummaryForResult(result, options = {}) {
     current.error = err?.message || "Summary unavailable";
     current.cached = false;
     current.lastUsed = Date.now();
+    current.hidden = false;
     stopSummaryProgress(url);
     tabSummaryState.set(url, current);
     pruneSummaryState();
@@ -3315,8 +3335,13 @@ function renderResults() {
           event.preventDefault();
           event.stopPropagation();
           const entry = tabSummaryState.get(resultUrl);
-          const forceRefresh = Boolean(entry && entry.status === "ready");
-          requestSummaryForResult(result, { forceRefresh });
+          if (entry && entry.status === "ready") {
+            entry.hidden = !entry.hidden;
+            tabSummaryState.set(resultUrl, entry);
+            updateSummaryUIForUrl(resultUrl);
+            return;
+          }
+          requestSummaryForResult(result);
         });
         const entry = tabSummaryState.get(resultUrl);
         updateSummaryButtonElement(summaryButton, entry);
