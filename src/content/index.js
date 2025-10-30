@@ -60,6 +60,7 @@ let historyAssistantClearEl = null;
 let historyAssistantRangeEl = null;
 let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
+let filterShortcutsEl = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
@@ -213,6 +214,16 @@ const SLASH_COMMAND_DEFINITIONS = [
     keywords: ["summary", "summaries", "digest", "ai", "tab digest"],
   },
 ];
+
+const FILTER_SHORTCUT_DEFINITIONS = [
+  { id: "tab", label: "Tabs", prefix: "tab:" },
+  { id: "bookmark", label: "Bookmarks", prefix: "bookmark:" },
+  { id: "history", label: "History", prefix: "history:" },
+  { id: "download", label: "Downloads", prefix: "download:" },
+  { id: "topSite", label: "Top Sites", prefix: "topsite:" },
+];
+
+const filterShortcutButtons = new Map();
 
 const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
   ...definition,
@@ -426,6 +437,12 @@ function createOverlay() {
 
   inputWrapper.appendChild(inputContainerEl);
 
+  filterShortcutsEl = document.createElement("div");
+  filterShortcutsEl.className = "spotlight-filter-shortcuts";
+  filterShortcutsEl.setAttribute("role", "group");
+  filterShortcutsEl.setAttribute("aria-label", "Quick filters");
+  inputWrapper.appendChild(filterShortcutsEl);
+
   subfilterContainerEl = document.createElement("div");
   subfilterContainerEl.className = "spotlight-subfilters";
   subfilterContainerEl.setAttribute("role", "group");
@@ -460,6 +477,7 @@ function createOverlay() {
     shadowContentEl.appendChild(overlayEl);
   }
 
+  renderFilterShortcuts();
   renderSubfilters();
 
   overlayEl.addEventListener("click", (event) => {
@@ -1037,6 +1055,88 @@ function applySlashSelection(option) {
   setGhostText("");
   handleInputChange();
   return true;
+}
+
+function renderFilterShortcuts() {
+  if (!filterShortcutsEl) {
+    return;
+  }
+
+  filterShortcutsEl.innerHTML = "";
+  filterShortcutButtons.clear();
+
+  FILTER_SHORTCUT_DEFINITIONS.forEach((shortcut) => {
+    if (!shortcut || !shortcut.id || !shortcut.prefix || !shortcut.label) {
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-filter-chip";
+    button.textContent = shortcut.label;
+    button.dataset.filterId = shortcut.id;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      applyFilterShortcut(shortcut);
+    });
+    filterShortcutsEl.appendChild(button);
+    filterShortcutButtons.set(shortcut.id, button);
+  });
+
+  updateFilterShortcutsActiveState(inputEl ? inputEl.value : "");
+}
+
+function applyFilterShortcut(shortcut) {
+  if (!shortcut || !shortcut.prefix || !inputEl) {
+    return false;
+  }
+
+  const base = shortcut.prefix.endsWith(" ") ? shortcut.prefix : `${shortcut.prefix} `;
+  inputEl.focus({ preventScroll: true });
+  inputEl.value = base;
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  resetSlashMenuState();
+  setGhostText("");
+  handleInputChange();
+  return true;
+}
+
+function resolveFilterShortcutFromQuery(query) {
+  const normalized = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (!normalized) {
+    return null;
+  }
+
+  const match = FILTER_SHORTCUT_DEFINITIONS.find((shortcut) => {
+    if (!shortcut || !shortcut.prefix) {
+      return false;
+    }
+    return normalized.startsWith(shortcut.prefix.toLowerCase());
+  });
+
+  return match ? match.id : null;
+}
+
+function updateFilterShortcutsActiveState(query) {
+  const normalizedQuery = typeof query === "string" ? query.trim() : "";
+  const shouldShow = !normalizedQuery;
+  if (filterShortcutsEl) {
+    filterShortcutsEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  }
+
+  if (!filterShortcutButtons.size) {
+    return;
+  }
+
+  const fromQuery = resolveFilterShortcutFromQuery(query);
+  const resolved =
+    (activeFilter && filterShortcutButtons.has(activeFilter) ? activeFilter : null) || fromQuery;
+
+  filterShortcutButtons.forEach((button, id) => {
+    const isActive = resolved === id;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
 }
 
 function resetSubfilterState() {
@@ -1717,6 +1817,7 @@ async function openOverlay() {
   statusEl.textContent = "";
   statusSticky = false;
   activeFilter = null;
+  updateFilterShortcutsActiveState("");
   resetSubfilterState();
   resultsEl.innerHTML = "";
   inputEl.value = "";
@@ -1757,6 +1858,7 @@ function closeOverlay() {
   }
   statusSticky = false;
   activeFilter = null;
+  updateFilterShortcutsActiveState("");
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
@@ -1899,6 +2001,7 @@ function handleInputKeydown(event) {
 
 function handleInputChange() {
   const query = inputEl.value;
+  updateFilterShortcutsActiveState(query);
   updateSlashMenu();
   updateEngineMenu();
   const trimmed = query.trim();
@@ -1981,6 +2084,7 @@ function requestResults(query) {
       applyCachedFavicons(resultsState);
       activeIndex = resultsState.length > 0 ? 0 : -1;
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
+      updateFilterShortcutsActiveState(inputEl ? inputEl.value : "");
       deactivateHistoryAssistantResults();
       updateHistoryAssistantVisibility();
       updateHistoryAssistantUI();

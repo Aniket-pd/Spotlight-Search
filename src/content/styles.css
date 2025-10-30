@@ -230,6 +230,44 @@
   flex: 0 0 auto;
 }
 
+.spotlight-filter-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spotlight-gap-xs);
+  padding: 0 2px;
+}
+
+.spotlight-filter-shortcuts[aria-hidden="true"] {
+  display: none;
+}
+
+.spotlight-filter-chip {
+  border-radius: var(--spotlight-radius-pill);
+  border: 1px solid var(--spotlight-chip-border);
+  background: var(--spotlight-chip-bg);
+  color: var(--spotlight-color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 6px 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+}
+
+.spotlight-filter-chip:hover,
+.spotlight-filter-chip:focus-visible {
+  background: var(--spotlight-chip-hover);
+  color: var(--spotlight-color-text-primary);
+  outline: none;
+}
+
+.spotlight-filter-chip.active {
+  background: var(--spotlight-color-accent-soft-strong);
+  color: var(--spotlight-color-text-primary);
+  border-color: var(--spotlight-color-accent-strong);
+}
+
 .spotlight-input-container {
   position: relative;
   display: flex;
