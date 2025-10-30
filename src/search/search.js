@@ -608,6 +608,28 @@ function formatBookmarkCount(count) {
   return `${count} bookmarks`;
 }
 
+function buildCloseDomainCommand(domain, count) {
+  if (!domain) {
+    return null;
+  }
+  const total = Math.max(Number(count) || 0, 0);
+  const tabLabel = total === 1 ? "tab" : "tabs";
+  const title = `Close all ${tabLabel} from ${domain}`;
+  const description = `${total} ${tabLabel} · ${domain}`;
+  return {
+    id: `command:close-domain:${domain}`,
+    title,
+    url: description,
+    description,
+    type: "command",
+    command: "tab-close-domain",
+    args: { domain },
+    label: "Command",
+    score: COMMAND_SCORE,
+    faviconUrl: COMMAND_ICON_DATA_URL,
+  };
+}
+
 function buildCloseAudioTabsCommandResult(audibleCount) {
   const countLabel = formatTabCount(audibleCount);
   const title = audibleCount === 1
@@ -1447,27 +1469,62 @@ function collectCloseAllSuggestions(words, context) {
     return { results: [], ghost: null, answer: "" };
   }
 
-  const results = domainMatches.map(({ domain, count }) => {
-    const title = `Close all ${count === 1 ? "tab" : "tabs"} from ${domain}`;
-    const description = `${count} ${count === 1 ? "tab" : "tabs"} · ${domain}`;
-    return {
-      id: `command:close-domain:${domain}`,
-      title,
-      url: description,
-      description,
-      type: "command",
-      command: "tab-close-domain",
-      args: { domain },
-      label: "Command",
-      score: COMMAND_SCORE,
-      faviconUrl: COMMAND_ICON_DATA_URL,
-    };
-  });
+  const results = domainMatches
+    .map(({ domain, count }) => buildCloseDomainCommand(domain, count))
+    .filter(Boolean);
 
   return {
     results,
     ghost: results[0]?.title || null,
     answer: `Closes ${results[0].description || "matching tabs"}.`,
+  };
+}
+
+function collectDefaultCloseDomainCommands(context, limit = 5) {
+  const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+  if (!tabs.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const counts = new Map();
+  for (const tab of tabs) {
+    const domain = getTabDomain(tab);
+    if (!domain) {
+      continue;
+    }
+    counts.set(domain, (counts.get(domain) || 0) + 1);
+  }
+
+  if (!counts.size) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const maxEntries = Number.isFinite(limit) ? Math.max(Math.floor(limit), 1) : counts.size;
+
+  const sorted = Array.from(counts.entries())
+    .map(([domain, count]) => ({ domain, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.domain.localeCompare(b.domain);
+    })
+    .slice(0, maxEntries);
+
+  const results = sorted
+    .map(({ domain, count }) => buildCloseDomainCommand(domain, count))
+    .filter(Boolean);
+
+  if (!results.length) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const primary = results[0];
+  const answer = primary.description ? `Closes ${primary.description}.` : "";
+  return {
+    results,
+    ghost: primary.title,
+    answer,
   };
 }
 
@@ -1495,28 +1552,39 @@ function collectDomainMatches(tabs, query) {
 
 function collectDefaultCommandEntries(context) {
   const entries = [];
+  let hasGhost = false;
+  let hasAnswer = false;
 
-  const closeAllDefaults = collectTabCloseSuggestions("close all", context);
-  if (closeAllDefaults.results.length) {
-    closeAllDefaults.results.forEach((result, index) => {
-      entries.push({
-        result,
-        ghost: index === 0 ? closeAllDefaults.ghost || result.title || null : null,
-        answer: index === 0 ? closeAllDefaults.answer || "" : "",
-      });
-    });
-  }
+  const pushEntry = (result, ghost = null, answer = "") => {
+    if (!result) {
+      return;
+    }
+    const entryGhost = !hasGhost && ghost ? ghost : null;
+    if (entryGhost) {
+      hasGhost = true;
+    }
+    const entryAnswer = !hasAnswer && answer ? answer : "";
+    if (entryAnswer) {
+      hasAnswer = true;
+    }
+    entries.push({ result, ghost: entryGhost, answer: entryAnswer });
+  };
 
-  const focusDefaults = collectFocusCommandSuggestions("focus", context);
-  if (focusDefaults.results.length) {
-    focusDefaults.results.forEach((result, index) => {
-      entries.push({
-        result,
-        ghost: index === 0 ? focusDefaults.ghost || result.title || null : null,
-        answer: index === 0 ? focusDefaults.answer || "" : "",
-      });
+  const pushSuggestionSet = (set) => {
+    if (!set || !Array.isArray(set.results) || !set.results.length) {
+      return;
+    }
+    set.results.forEach((result, index) => {
+      const ghost = index === 0 ? set.ghost || result.title || null : null;
+      const answer = index === 0 ? set.answer || "" : "";
+      pushEntry(result, ghost, answer);
     });
-  }
+  };
+
+  pushSuggestionSet(collectTabCloseSuggestions("close all", context));
+  pushSuggestionSet(collectTabCloseSuggestions("close", context));
+  pushSuggestionSet(collectDefaultCloseDomainCommands(context));
+  pushSuggestionSet(collectFocusCommandSuggestions("focus", context));
 
   for (const command of STATIC_COMMANDS) {
     if (!command || typeof command.action !== "string" || !command.action.startsWith("tab-")) {
@@ -1526,11 +1594,7 @@ function collectDefaultCommandEntries(context) {
     if (!suggestion) {
       continue;
     }
-    entries.push({
-      result: suggestion.result,
-      ghost: suggestion.ghostText || null,
-      answer: suggestion.answer || "",
-    });
+    pushEntry(suggestion.result, suggestion.ghostText || null, suggestion.answer || "");
   }
 
   return entries;
