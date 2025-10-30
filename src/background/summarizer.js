@@ -1,25 +1,5 @@
-const SUMMARY_CACHE_LIMIT = 40;
-const PAGE_CACHE_LIMIT = 24;
-const SUMMARY_TTL = 15 * 60 * 1000;
-const PAGE_CACHE_TTL = 6 * 60 * 1000;
 const MAX_CONTENT_LENGTH = 12000;
 const STREAMING_UPDATE_INTERVAL = 350;
-
-function pruneCache(map, limit) {
-  if (!map || map.size <= limit) {
-    return;
-  }
-  const entries = Array.from(map.entries());
-  entries.sort((a, b) => {
-    const aTime = a[1]?.lastUsed || 0;
-    const bTime = b[1]?.lastUsed || 0;
-    return aTime - bTime;
-  });
-  while (map.size > limit && entries.length) {
-    const [key] = entries.shift();
-    map.delete(key);
-  }
-}
 
 function normalizeWhitespace(text = "") {
   return text
@@ -368,8 +348,6 @@ async function fetchRemoteContent(url) {
 }
 
 export function createSummarizerService() {
-  const summaryCache = new Map();
-  const pageCache = new Map();
   const pendingSummaries = new Map();
   let summarizerInstance = null;
   let summarizerPromise = null;
@@ -418,12 +396,6 @@ export function createSummarizerService() {
   }
 
   async function resolvePageContent(url, tabId) {
-    const now = Date.now();
-    const cached = pageCache.get(url);
-    if (cached && now - cached.timestamp < PAGE_CACHE_TTL) {
-      cached.lastUsed = now;
-      return cached;
-    }
     let result = await queryTabText(tabId);
     if (!result) {
       result = await fetchRemoteContent(url);
@@ -442,44 +414,13 @@ export function createSummarizerService() {
       etag: result.etag || null,
       title: result.title || "",
       source: result.source || "unknown",
-      timestamp: now,
-      lastUsed: now,
     };
-    pageCache.set(url, payload);
-    pruneCache(pageCache, PAGE_CACHE_LIMIT);
     return payload;
-  }
-
-  function getCachedSummary(url, pageData) {
-    const entry = summaryCache.get(url);
-    if (!entry) {
-      return null;
-    }
-    const now = Date.now();
-    const isFresh = now - entry.timestamp < SUMMARY_TTL;
-    const fingerprintMatches = entry.fingerprint === pageData.fingerprint;
-    const etagMatches = !pageData.etag || entry.etag === pageData.etag;
-    const lastModifiedMatches = !pageData.lastModified || entry.lastModified === pageData.lastModified;
-    if (isFresh && fingerprintMatches && etagMatches && lastModifiedMatches) {
-      entry.lastUsed = now;
-      return {
-        bullets: entry.bullets.slice(),
-        raw: entry.raw,
-        cached: true,
-        source: entry.source || "cache",
-      };
-    }
-    return null;
   }
 
   async function generateSummary(url, tabId, options = {}) {
     const { onProgress } = options;
     const pageData = await resolvePageContent(url, tabId);
-    const cached = getCachedSummary(url, pageData);
-    if (cached) {
-      safeNotify(onProgress, { ...cached, done: true });
-      return cached;
-    }
     let summarizer;
     try {
       summarizer = await ensureSummarizer();
@@ -549,23 +490,11 @@ export function createSummarizerService() {
     }
 
     const bullets = parseSummaryBullets(summaryText).slice(0, 3);
-    const entry = {
-      bullets,
-      raw: summaryText,
-      fingerprint: pageData.fingerprint,
-      etag: pageData.etag,
-      lastModified: pageData.lastModified,
-      timestamp: Date.now(),
-      lastUsed: Date.now(),
-      source: summarySource,
-    };
-    summaryCache.set(url, entry);
-    pruneCache(summaryCache, SUMMARY_CACHE_LIMIT);
     const result = {
       bullets: bullets.slice(),
       raw: summaryText,
       cached: false,
-      source: entry.source,
+      source: summarySource,
     };
     safeNotify(onProgress, { ...result, done: true });
     return result;
