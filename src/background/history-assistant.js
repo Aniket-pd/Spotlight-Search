@@ -2026,10 +2026,7 @@ export function createHistoryAssistantService(options = {}) {
           : 0,
         contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
       });
-      return {
-        ...generalInquiry.response,
-        responseSource: generalInquiry.usedModel ? "promptApi" : "fallback",
-      };
+      return generalInquiry.response;
     }
     const nowIso = new Date(now).toISOString();
     let promptKeywords = extractMeaningfulKeywords(trimmed);
@@ -2228,7 +2225,6 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: 0,
         confidence,
       };
-      responsePayload.responseSource = "local";
       recordConversationTurn(state, {
         type: "history",
         prompt: trimmed,
@@ -2293,7 +2289,6 @@ export function createHistoryAssistantService(options = {}) {
         datasetSize: planMatchCount,
         confidence: responseConfidence,
       };
-      responsePayload.responseSource = "local";
       recordConversationTurn(state, {
         type: "history",
         prompt: trimmed,
@@ -2433,8 +2428,6 @@ export function createHistoryAssistantService(options = {}) {
       datasetSize: planMatchCount,
       confidence,
     };
-
-    responsePayload.responseSource = summarySource || "promptApi";
 
       recordConversationTurn(state, {
         type: "history",
