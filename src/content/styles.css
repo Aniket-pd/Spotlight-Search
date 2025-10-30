@@ -1072,9 +1072,10 @@
     var(--spotlight-color-accent),
     rgba(255, 255, 255, 0.35)
   );
-  background-size: 220% 100%;
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
   background-position: 0% 50%;
-  animation: spotlight-ai-panel-status-loading-gradient 1.8s ease-in-out infinite;
+  animation: spotlight-ai-panel-status-loading-gradient 1.8s linear infinite;
 }
 
 @supports ((-webkit-background-clip: text) or (background-clip: text)) {
@@ -1140,11 +1141,11 @@
 }
 
 @keyframes spotlight-ai-panel-status-loading-gradient {
-  from {
+  0% {
     background-position: 0% 50%;
   }
 
-  to {
+  100% {
     background-position: 200% 50%;
   }
 }
