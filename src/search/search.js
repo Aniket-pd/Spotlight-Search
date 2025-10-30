@@ -106,6 +106,7 @@ const FILTER_ALIASES = {
   back: ["back:"],
   forward: ["forward:"],
   topSite: ["topsites:", "topsite:", "top-sites:", "ts:"],
+  command: ["command:", "commands:", "cmd:"],
 };
 
 const NAVIGATION_FILTERS = new Set(["back", "forward"]);
@@ -563,6 +564,33 @@ const STATIC_COMMANDS = [
   },
 ];
 
+function buildStaticCommandSuggestion(command, context) {
+  if (!command) {
+    return null;
+  }
+  if (command.isAvailable && !command.isAvailable(context)) {
+    return null;
+  }
+  const answer = command.answer ? command.answer(context) : "";
+  const description = command.description ? command.description(context) : answer;
+  return {
+    ghostText: command.title,
+    answer,
+    result: {
+      id: command.id,
+      title: command.title,
+      url: description,
+      description,
+      type: "command",
+      command: command.action,
+      args: command.args || {},
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    },
+  };
+}
+
 function formatTabCount(count) {
   if (count === 1) {
     return "1 tab";
@@ -941,7 +969,7 @@ function findBestStaticCommand(query, context) {
   }
 
   for (const command of STATIC_COMMANDS) {
-    if (!command.isAvailable?.(context)) {
+    if (command.isAvailable && !command.isAvailable(context)) {
       continue;
     }
     const phrases = [command.title, ...(command.aliases || [])];
@@ -949,23 +977,7 @@ function findBestStaticCommand(query, context) {
     if (!matched) {
       continue;
     }
-    const answer = command.answer ? command.answer(context) : "";
-    const description = command.description ? command.description(context) : answer;
-    return {
-      ghostText: command.title,
-      answer,
-      result: {
-        id: command.id,
-        title: command.title,
-        url: description,
-        description,
-        type: "command",
-        command: command.action,
-        label: "Command",
-        score: COMMAND_SCORE,
-        faviconUrl: COMMAND_ICON_DATA_URL,
-      },
-    };
+    return buildStaticCommandSuggestion(command, context);
   }
 
   return null;
@@ -1481,7 +1493,50 @@ function collectDomainMatches(tabs, query) {
     .slice(0, 5);
 }
 
-function collectCommandSuggestions(query, context) {
+function collectDefaultCommandEntries(context) {
+  const entries = [];
+
+  const closeAllDefaults = collectTabCloseSuggestions("close all", context);
+  if (closeAllDefaults.results.length) {
+    closeAllDefaults.results.forEach((result, index) => {
+      entries.push({
+        result,
+        ghost: index === 0 ? closeAllDefaults.ghost || result.title || null : null,
+        answer: index === 0 ? closeAllDefaults.answer || "" : "",
+      });
+    });
+  }
+
+  const focusDefaults = collectFocusCommandSuggestions("focus", context);
+  if (focusDefaults.results.length) {
+    focusDefaults.results.forEach((result, index) => {
+      entries.push({
+        result,
+        ghost: index === 0 ? focusDefaults.ghost || result.title || null : null,
+        answer: index === 0 ? focusDefaults.answer || "" : "",
+      });
+    });
+  }
+
+  for (const command of STATIC_COMMANDS) {
+    if (!command || typeof command.action !== "string" || !command.action.startsWith("tab-")) {
+      continue;
+    }
+    const suggestion = buildStaticCommandSuggestion(command, context);
+    if (!suggestion) {
+      continue;
+    }
+    entries.push({
+      result: suggestion.result,
+      ghost: suggestion.ghostText || null,
+      answer: suggestion.answer || "",
+    });
+  }
+
+  return entries;
+}
+
+function collectCommandSuggestions(query, context, options = {}) {
   const suggestions = [];
   const seenIds = new Set();
   let ghost = null;
@@ -1494,6 +1549,19 @@ function collectCommandSuggestions(query, context) {
     seenIds.add(result.id);
     suggestions.push({ ...result, commandRank: suggestions.length });
   };
+
+  if (options.includeDefault && (!query || !query.trim())) {
+    const defaults = collectDefaultCommandEntries(context);
+    for (const entry of defaults) {
+      pushSuggestion(entry.result);
+      if (!ghost && entry.ghost) {
+        ghost = entry.ghost;
+      }
+      if (!answer && entry.answer) {
+        answer = entry.answer;
+      }
+    }
+  }
 
   const staticMatch = findBestStaticCommand(query, context);
   if (staticMatch) {
@@ -1744,9 +1812,25 @@ export function runSearch(query, data, options = {}) {
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
   const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount, focusedTab: focusedTabInfo };
-  const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
+  const includeDefaultCommands = filterType === "command" && !trimmed;
+  const commandSuggestions =
+    trimmed || includeDefaultCommands
+      ? collectCommandSuggestions(trimmed, commandContext, { includeDefault: includeDefaultCommands })
+      : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
+    if (filterType === "command") {
+      const limit = getResultLimit(filterType);
+      const limited = sliceResultsForLimit(commandSuggestions.results, limit);
+      return {
+        results: limited,
+        ghost: commandSuggestions.ghost ? { text: commandSuggestions.ghost } : null,
+        answer: commandSuggestions.answer || "",
+        filter: filterType,
+        subfilters: subfilterPayload,
+      };
+    }
+
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()

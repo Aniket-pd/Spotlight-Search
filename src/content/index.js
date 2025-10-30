@@ -193,6 +193,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     keywords: ["download", "downloads", "dl", "files"],
   },
   {
+    id: "slash-command",
+    label: "Commands",
+    hint: "Run tab commands like close all tabs",
+    value: "command:",
+    keywords: ["command", "commands", "cmd", "tab command"],
+  },
+  {
     id: "slash-back",
     label: "Back",
     hint: "Current tab back history",
@@ -220,6 +227,7 @@ const FILTER_SHORTCUT_DEFINITIONS = [
   { id: "bookmark", label: "Bookmarks", prefix: "bookmark:" },
   { id: "history", label: "History", prefix: "history:" },
   { id: "download", label: "Downloads", prefix: "download:" },
+  { id: "command", label: "Commands", prefix: "command:" },
   { id: "topSite", label: "Top Sites", prefix: "topsite:" },
 ];
 
