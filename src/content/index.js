@@ -2569,6 +2569,7 @@ function renderSummaryPanelForElement(item, url, entry) {
     const previousText = statusEl.textContent || "";
     if (!nextText) {
       statusEl.textContent = "";
+      delete statusEl.dataset.text;
       statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
       statusEl.hidden = true;
       statusEl.classList.remove("changing");
@@ -2577,6 +2578,7 @@ function renderSummaryPanelForElement(item, url, entry) {
     statusEl.hidden = false;
     statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
     statusEl.textContent = nextText;
+    statusEl.dataset.text = nextText;
     if (nextText !== previousText) {
       statusEl.classList.remove("changing");
       void statusEl.offsetWidth;
