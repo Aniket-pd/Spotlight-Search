@@ -832,10 +832,15 @@
 }
 
 .spotlight-result {
+  --spotlight-result-icon-size: 28px;
+  --spotlight-result-icon-gap: 12px;
+  --spotlight-result-summary-offset: calc(
+    var(--spotlight-result-icon-size) + var(--spotlight-result-icon-gap)
+  );
   padding: 12px 20px;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-start;
+  gap: var(--spotlight-result-icon-gap, 12px);
   cursor: pointer;
   transition: background 0.18s ease, transform 0.18s ease;
 }
@@ -849,8 +854,8 @@
 }
 
 .spotlight-result-icon {
-  width: 28px;
-  height: 28px;
+  width: var(--spotlight-result-icon-size, 28px);
+  height: var(--spotlight-result-icon-size, 28px);
   border-radius: 50%;
   flex-shrink: 0;
   display: flex;
@@ -964,6 +969,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-left: calc(-1 * var(--spotlight-result-summary-offset, 40px));
+  width: calc(100% + var(--spotlight-result-summary-offset, 40px));
 }
 
 .spotlight-ai-panel-header {
