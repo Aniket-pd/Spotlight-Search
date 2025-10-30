@@ -97,6 +97,7 @@ const COMMAND_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzYzNzlmZiIvPjxwYXRoIGQ9Ik0xMCAxNmgxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xNiAxMHYxMiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
 
 const AUDIO_KEYWORDS = ["audio", "sound", "music", "noisy", "noise"];
+const CLOSE_COMMAND_KEYWORDS = ["close", "remove", "delete", "shut", "kill"];
 
 const FILTER_ALIASES = {
   tab: ["tab:", "tabs:", "t:", "summarize:"],
@@ -963,6 +964,26 @@ function hasAudioCommandIntent(text = "", words = []) {
   return false;
 }
 
+function hasCloseCommandIntent(text = "", words = []) {
+  const normalizedText = normalizeCommandToken(text);
+  if (
+    normalizedText &&
+    CLOSE_COMMAND_KEYWORDS.some((keyword) => normalizedText.startsWith(keyword))
+  ) {
+    return true;
+  }
+  for (const word of words || []) {
+    const normalizedWord = normalizeCommandToken(word);
+    if (
+      normalizedWord &&
+      CLOSE_COMMAND_KEYWORDS.some((keyword) => normalizedWord.startsWith(keyword))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function findBestStaticCommand(query, context) {
   const compactQuery = normalizeCommandToken(query);
   if (!compactQuery) {
@@ -1097,7 +1118,8 @@ function collectTabCloseSuggestions(query, context) {
   const looksLikeClose =
     matchToken(firstWord, "close") ||
     matchToken(normalizedToken, "close") ||
-    normalizeWord(query).startsWith("close");
+    normalizeWord(query).startsWith("close") ||
+    hasCloseCommandIntent(query, query.split(/\s+/));
 
   if (!looksLikeClose) {
     return { results: [], ghost: null, answer: "" };
@@ -1465,7 +1487,11 @@ function collectCloseAllSuggestions(words, context) {
     };
   }
 
-  const domainMatches = collectDomainMatches(tabs, domainQuery);
+  const sanitizedDomainQuery = sanitizeDomainQueryForClose(domainQuery);
+  const domainMatches = collectDomainMatches(
+    tabs,
+    sanitizedDomainQuery || domainQuery
+  );
   if (!domainMatches.length) {
     return { results: [], ghost: null, answer: "" };
   }
@@ -1492,6 +1518,13 @@ function collectCloseAllSuggestions(words, context) {
     ghost: results[0]?.title || null,
     answer: `Closes ${results[0].description || "matching tabs"}.`,
   };
+}
+
+function sanitizeDomainQueryForClose(query = "") {
+  return query
+    .replace(/\b(tabs?|tab|all|the|from|of|on|in|my|this|these|those)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function collectDomainMatches(tabs, query) {
@@ -1551,6 +1584,10 @@ function collectCommandSuggestions(query, context, options = {}) {
 
     if (activeTab) {
       pushSuggestion(buildFocusTabCommandResult(activeTab));
+      const closeActive = buildCloseTabResult(activeTab);
+      if (closeActive) {
+        pushSuggestion(closeActive);
+      }
     }
 
     const closeAllPayload = buildCloseAllTabsCommandPayload(context);
