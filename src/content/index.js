@@ -62,13 +62,24 @@ let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
-const TAB_SUMMARY_COPY_CLASS = "spotlight-ai-panel-copy";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
 const TAB_SUMMARY_BADGE_CLASS = "spotlight-ai-panel-badge";
 const TAB_SUMMARY_STATUS_CLASS = "spotlight-ai-panel-status";
+const TAB_SUMMARY_STREAM_CLASS = "spotlight-ai-panel-stream";
+const TAB_SUMMARY_PANEL_VERSION = "2";
+const SUMMARY_STREAM_FRAME_CHARS = 6;
+const SUMMARY_STREAM_FAST_THRESHOLD = 28;
+const SUMMARY_PROGRESS_STEPS = [
+  { text: "Fetching content from source…", duration: 1600 },
+  { text: "Analyzing the data…", duration: 1800 },
+  { text: "Generating your summary…", duration: 2000 },
+  { text: "Finalizing and formatting response…", duration: 2200 },
+];
+const SUMMARY_PROGRESS_DEFAULT_MESSAGE = "Preparing summary…";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const tabSummaryProgressState = new Map();
 let focusBannerEl = null;
 let focusStyleEl = null;
 let focusOriginalTitle = null;
@@ -2303,12 +2314,89 @@ function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
     const [key] = entries.shift();
     if (tabSummaryState.has(key)) {
       tabSummaryState.delete(key);
+      stopSummaryProgress(key);
       removed.push(key);
     }
   }
   removed.forEach((url) => {
     updateSummaryUIForUrl(url);
   });
+}
+
+function stopSummaryProgress(url) {
+  if (!url) {
+    return;
+  }
+  const state = tabSummaryProgressState.get(url);
+  if (state && state.timeoutId) {
+    clearTimeout(state.timeoutId);
+  }
+  tabSummaryProgressState.delete(url);
+}
+
+function scheduleSummaryProgressAdvance(url, state) {
+  if (!url || !state) {
+    return;
+  }
+  const currentStep = SUMMARY_PROGRESS_STEPS[state.stepIndex] || null;
+  const duration = Math.max(600, currentStep?.duration || 1800);
+  if (state.stepIndex >= SUMMARY_PROGRESS_STEPS.length - 1) {
+    state.timeoutId = 0;
+    return;
+  }
+  state.timeoutId = setTimeout(() => {
+    const latest = tabSummaryProgressState.get(url);
+    if (!latest || latest !== state) {
+      return;
+    }
+    if (latest.stepIndex < SUMMARY_PROGRESS_STEPS.length - 1) {
+      latest.stepIndex += 1;
+      latest.message =
+        SUMMARY_PROGRESS_STEPS[latest.stepIndex]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+      updateSummaryUIForUrl(url);
+      scheduleSummaryProgressAdvance(url, latest);
+    } else {
+      latest.timeoutId = 0;
+    }
+  }, duration);
+}
+
+function beginSummaryProgress(url) {
+  if (!url) {
+    return;
+  }
+  stopSummaryProgress(url);
+  const initialMessage = SUMMARY_PROGRESS_STEPS[0]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  const state = { stepIndex: 0, message: initialMessage, timeoutId: 0 };
+  tabSummaryProgressState.set(url, state);
+  scheduleSummaryProgressAdvance(url, state);
+}
+
+function ensureSummaryProgress(url) {
+  if (!url) {
+    return null;
+  }
+  let state = tabSummaryProgressState.get(url);
+  if (!state) {
+    beginSummaryProgress(url);
+    state = tabSummaryProgressState.get(url) || null;
+  }
+  if (state && !state.message) {
+    state.message =
+      SUMMARY_PROGRESS_STEPS[state.stepIndex]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  }
+  return state;
+}
+
+function getSummaryProgressMessage(url) {
+  if (!url) {
+    return SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  }
+  const state = tabSummaryProgressState.get(url);
+  if (state && state.message) {
+    return state.message;
+  }
+  return SUMMARY_PROGRESS_STEPS[0]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
 }
 
 function updateSummaryButtonElement(button, entry) {
@@ -2324,7 +2412,7 @@ function updateSummaryButtonElement(button, entry) {
     return;
   }
   if (entry.status === "loading") {
-    button.textContent = "Summarizing…";
+    button.textContent = "Summarize";
     button.disabled = true;
     button.classList.add("loading");
     button.setAttribute("aria-busy", "true");
@@ -2355,123 +2443,203 @@ function renderSummaryPanelForElement(item, url, entry) {
   if (!body) {
     return;
   }
-  const existingPanel = body.querySelector(`.${TAB_SUMMARY_PANEL_CLASS}`);
-  if (existingPanel) {
-    existingPanel.remove();
+  let panel = body.querySelector(`.${TAB_SUMMARY_PANEL_CLASS}`);
+  if (panel && panel.dataset.version !== TAB_SUMMARY_PANEL_VERSION) {
+    panel.remove();
+    panel = null;
   }
   if (!entry || !entry.status) {
+    stopSummaryProgress(url);
+    if (panel) {
+      panel.remove();
+    }
     return;
   }
 
-  const panel = document.createElement("div");
-  panel.className = TAB_SUMMARY_PANEL_CLASS;
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = TAB_SUMMARY_PANEL_CLASS;
+    panel.dataset.version = TAB_SUMMARY_PANEL_VERSION;
+    panel.dataset.url = url;
+
+    const header = document.createElement("div");
+    header.className = "spotlight-ai-panel-header";
+
+    const title = document.createElement("span");
+    title.className = "spotlight-ai-panel-title";
+    title.textContent = "Tab Digest";
+    header.appendChild(title);
+
+    const controls = document.createElement("div");
+    controls.className = "spotlight-ai-panel-controls";
+    controls.dataset.role = "controls";
+    header.appendChild(controls);
+
+    panel.appendChild(header);
+
+    const stream = document.createElement("ul");
+    stream.className = `${TAB_SUMMARY_STREAM_CLASS} ${TAB_SUMMARY_LIST_CLASS}`;
+    stream.dataset.role = "stream";
+    stream.setAttribute("aria-live", "polite");
+    stream.setAttribute("aria-atomic", "false");
+    stream.hidden = true;
+    panel.appendChild(stream);
+
+    const list = document.createElement("ul");
+    list.className = TAB_SUMMARY_LIST_CLASS;
+    list.dataset.role = "list";
+    list.hidden = true;
+    panel.appendChild(list);
+
+    const status = document.createElement("div");
+    status.className = TAB_SUMMARY_STATUS_CLASS;
+    status.dataset.role = "status";
+    status.hidden = true;
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "false");
+    panel.appendChild(status);
+
+    body.appendChild(panel);
+  }
+
+  if (!panel.isConnected) {
+    body.appendChild(panel);
+  }
+
   panel.dataset.url = url;
 
-  const header = document.createElement("div");
-  header.className = "spotlight-ai-panel-header";
-  const title = document.createElement("span");
-  title.className = "spotlight-ai-panel-title";
-  title.textContent = "Tab Digest";
-  header.appendChild(title);
+  const controls = panel.querySelector('[data-role="controls"]');
+  const streamEl = panel.querySelector(`[data-role="stream"]`);
+  const listEl = panel.querySelector(`[data-role="list"]`);
+  const statusEl = panel.querySelector(`[data-role="status"]`);
 
-  const controls = document.createElement("div");
-  controls.className = "spotlight-ai-panel-controls";
-  let hasControls = false;
+  if (!controls || !streamEl || !listEl || !statusEl) {
+    panel.remove();
+    renderSummaryPanelForElement(item, url, entry);
+    return;
+  }
+
+  controls.innerHTML = "";
+  controls.hidden = true;
+  controls.style.display = "none";
 
   if (entry.cached) {
     const badge = document.createElement("span");
     badge.className = TAB_SUMMARY_BADGE_CLASS;
     badge.textContent = "Cached";
     controls.appendChild(badge);
-    hasControls = true;
   }
 
-  const canCopy =
-    entry.status === "ready" &&
-    (Array.isArray(entry.bullets) ? entry.bullets.length > 0 : Boolean(entry.raw));
-  if (canCopy) {
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = TAB_SUMMARY_COPY_CLASS;
-    copyButton.textContent = "Copy";
-    copyButton.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    copyButton.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    copyButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      handleSummaryCopy(url);
-    });
-    controls.appendChild(copyButton);
-    hasControls = true;
+  if (controls.childElementCount > 0) {
+    controls.hidden = false;
+    controls.style.display = "flex";
   }
 
-  if (hasControls) {
-    header.appendChild(controls);
-  }
+  const renderBullets = (bullets, { loading } = {}) => {
+    listEl.innerHTML = "";
+    const normalized = normalizeSummaryStreamText(bullets, "bullets");
+    if (!normalized) {
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+      delete listEl.dataset.mode;
+      return;
+    }
+    normalized.split("\n").forEach((line) => {
+      const text = line.trim();
+      if (!text) {
+        return;
+      }
+      const itemEl = document.createElement("li");
+      itemEl.textContent = text;
+      listEl.appendChild(itemEl);
+    });
+    if (!listEl.childElementCount) {
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+      delete listEl.dataset.mode;
+      return;
+    }
+    listEl.hidden = false;
+    listEl.dataset.mode = "bullets";
+    listEl.classList.toggle("loading", Boolean(loading));
+  };
 
-  panel.appendChild(header);
+  const setStatus = (text, className) => {
+    const nextText = text || "";
+    if (!nextText) {
+      statusEl.textContent = "";
+      delete statusEl.dataset.text;
+      statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
+      statusEl.hidden = true;
+      return;
+    }
+    statusEl.hidden = false;
+    statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
+    statusEl.textContent = nextText;
+    statusEl.dataset.text = nextText;
+  };
+
+  const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
+  const hasRawText = typeof entry.raw === "string" && entry.raw;
 
   if (entry.status === "loading") {
-    if (Array.isArray(entry.bullets) && entry.bullets.length) {
-      const list = document.createElement("ul");
-      list.className = `${TAB_SUMMARY_LIST_CLASS} loading`;
-      entry.bullets.slice(0, 3).forEach((bullet) => {
-        const itemEl = document.createElement("li");
-        itemEl.textContent = bullet;
-        list.appendChild(itemEl);
-      });
-      panel.appendChild(list);
-    } else if (entry.raw) {
-      const preview = document.createElement("div");
-      preview.className = `${TAB_SUMMARY_STATUS_CLASS} loading-preview`;
-      preview.textContent = entry.raw;
-      panel.appendChild(preview);
-    }
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
-    status.textContent = "Summarizing…";
-    panel.appendChild(status);
-  } else if (entry.status === "error") {
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} error`;
-    status.textContent = entry.error || "Summary unavailable";
-    panel.appendChild(status);
-  } else if (entry.status === "ready") {
-    if (Array.isArray(entry.bullets) && entry.bullets.length) {
-      const list = document.createElement("ul");
-      list.className = TAB_SUMMARY_LIST_CLASS;
-      entry.bullets.slice(0, 3).forEach((bullet) => {
-        const itemEl = document.createElement("li");
-        itemEl.textContent = bullet;
-        list.appendChild(itemEl);
-      });
-      panel.appendChild(list);
-    } else if (entry.raw) {
-      const fallback = document.createElement("div");
-      fallback.className = TAB_SUMMARY_STATUS_CLASS;
-      fallback.textContent = entry.raw;
-      panel.appendChild(fallback);
+    ensureSummaryProgress(url);
+    const progressText = getSummaryProgressMessage(url);
+    if (hasBullets) {
+      streamEl.hidden = false;
+      streamEl.classList.add("loading");
+      updateSummaryStreamText(streamEl, entry.bullets.slice(0, 3), { format: "bullets" });
+      listEl.innerHTML = "";
+      listEl.hidden = true;
+      listEl.classList.remove("loading");
+    } else if (hasRawText) {
+      streamEl.hidden = false;
+      streamEl.classList.add("loading");
+      updateSummaryStreamText(streamEl, entry.raw, { format: "text" });
+      renderBullets([]);
     } else {
-      const empty = document.createElement("div");
-      empty.className = `${TAB_SUMMARY_STATUS_CLASS} empty`;
-      empty.textContent = "No summary available.";
-      panel.appendChild(empty);
+      streamEl.classList.remove("loading");
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+      renderBullets(entry.bullets, { loading: true });
+    }
+    setStatus(progressText, `${TAB_SUMMARY_STATUS_CLASS} loading`);
+  } else if (entry.status === "error") {
+    stopSummaryProgress(url);
+    streamEl.classList.remove("loading");
+    updateSummaryStreamText(streamEl, "", { immediate: true });
+    streamEl.hidden = true;
+    renderBullets([]);
+    setStatus(entry.error || "Summary unavailable", `${TAB_SUMMARY_STATUS_CLASS} error`);
+  } else if (entry.status === "ready") {
+    stopSummaryProgress(url);
+    renderBullets(entry.bullets, { loading: false });
+    streamEl.classList.remove("loading");
+    if (hasBullets) {
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+    } else if (entry.raw) {
+      streamEl.hidden = false;
+      updateSummaryStreamText(streamEl, entry.raw, { immediate: true, format: "text" });
+    } else {
+      updateSummaryStreamText(streamEl, "", { immediate: true });
+      streamEl.hidden = true;
+    }
+    if (!hasBullets && !entry.raw) {
+      setStatus("No summary available.", `${TAB_SUMMARY_STATUS_CLASS} empty`);
+    } else {
+      setStatus("", TAB_SUMMARY_STATUS_CLASS);
     }
   } else {
-    const status = document.createElement("div");
-    status.className = `${TAB_SUMMARY_STATUS_CLASS} loading`;
-    status.textContent = "Preparing summary…";
-    panel.appendChild(status);
+    ensureSummaryProgress(url);
+    streamEl.classList.remove("loading");
+    updateSummaryStreamText(streamEl, "", { immediate: true });
+    streamEl.hidden = true;
+    renderBullets([]);
+    setStatus(getSummaryProgressMessage(url), `${TAB_SUMMARY_STATUS_CLASS} loading`);
   }
 
   entry.lastUsed = Date.now();
-  body.appendChild(panel);
 }
 
 function updateSummaryUIForUrl(url) {
@@ -2490,59 +2658,6 @@ function updateSummaryUIForUrl(url) {
     }
     renderSummaryPanelForElement(item, url, entry);
   });
-}
-
-function buildSummaryCopyText(entry) {
-  if (!entry) {
-    return "";
-  }
-  if (Array.isArray(entry.bullets) && entry.bullets.length) {
-    return entry.bullets.map((bullet) => `• ${bullet}`).join("\n");
-  }
-  if (typeof entry.raw === "string" && entry.raw) {
-    return entry.raw;
-  }
-  return "";
-}
-
-function handleSummaryCopy(url) {
-  if (!url) {
-    return;
-  }
-  const entry = tabSummaryState.get(url);
-  if (!entry || entry.status !== "ready") {
-    return;
-  }
-  entry.lastUsed = Date.now();
-  const text = buildSummaryCopyText(entry);
-  if (!text) {
-    setStatus("No summary available", { force: true });
-    return;
-  }
-  const onSuccess = () => {
-    setStatus("Summary copied to clipboard", { force: true });
-  };
-  const onError = (error) => {
-    console.warn("Spotlight: failed to copy summary", error);
-    setStatus("Unable to copy summary", { force: true });
-  };
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-    navigator.clipboard.writeText(text).then(onSuccess).catch(onError);
-    return;
-  }
-  try {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-    onSuccess();
-  } catch (err) {
-    onError(err);
-  }
 }
 
 function handleSummaryProgress(message) {
@@ -2578,14 +2693,305 @@ function handleSummaryProgress(message) {
   if (message.done) {
     entry.status = "ready";
     entry.error = "";
+    stopSummaryProgress(url);
   } else if (entry.status !== "error") {
     entry.status = "loading";
     entry.error = "";
+    ensureSummaryProgress(url);
   }
   entry.lastUsed = now;
   tabSummaryState.set(url, entry);
   pruneSummaryState();
   updateSummaryUIForUrl(url);
+}
+
+const summaryStreamControllers = new WeakMap();
+
+function stopSummaryStreamAnimation(controller) {
+  if (controller && controller.rafId) {
+    cancelAnimationFrame(controller.rafId);
+    controller.rafId = 0;
+  }
+}
+
+function resolveSummaryStreamMode(nextText, formatHint, fallbackMode = "text") {
+  const hint = typeof formatHint === "string" ? formatHint.toLowerCase() : "";
+  if (hint === "bullet" || hint === "bullets") {
+    return "bullets";
+  }
+  if (hint === "text" || hint === "raw" || hint === "paragraph") {
+    return "text";
+  }
+  if (Array.isArray(nextText)) {
+    return "bullets";
+  }
+  if (typeof nextText === "string") {
+    const trimmed = nextText.trimStart();
+    if (trimmed.startsWith("•") || trimmed.startsWith("- ")) {
+      return "bullets";
+    }
+  }
+  return fallbackMode || "text";
+}
+
+function normalizeSummaryStreamText(nextText, mode) {
+  if (mode === "bullets") {
+    if (Array.isArray(nextText)) {
+      return nextText
+        .map((line) => (typeof line === "string" ? line.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 3)
+        .join("\n");
+    }
+    if (typeof nextText === "string") {
+      const normalized = nextText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const lines = normalized
+        .split("\n")
+        .map((line) => line.replace(/^\s*[•*-]\s?/, "").trim())
+        .filter(Boolean)
+        .slice(0, 3);
+      return lines.join("\n");
+    }
+    return "";
+  }
+  if (typeof nextText === "string") {
+    return nextText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+  return "";
+}
+
+function resetSummaryStreamElement(element, controller) {
+  if (!element || !controller) {
+    return;
+  }
+  element.textContent = "";
+  controller.displayed = "";
+  controller.pending = "";
+  controller.currentLine = null;
+  controller.lines = [];
+}
+
+function createSummaryStreamLine(element, controller) {
+  if (!element || !controller) {
+    return null;
+  }
+  const lineEl = document.createElement("li");
+  lineEl.className = "spotlight-ai-panel-stream-line";
+  lineEl.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
+  const contentEl = document.createElement("span");
+  contentEl.className = "spotlight-ai-panel-stream-line-content";
+  lineEl.appendChild(contentEl);
+  element.appendChild(lineEl);
+  const record = { element: lineEl, content: contentEl, text: "" };
+  if (Array.isArray(controller.lines)) {
+    controller.lines.push(record);
+  } else {
+    controller.lines = [record];
+  }
+  controller.currentLine = record;
+  return record;
+}
+
+function ensureSummaryStreamLine(element, controller) {
+  if (!element || !controller) {
+    return null;
+  }
+  let record = controller.currentLine;
+  if (record && record.element && record.element.isConnected) {
+    if (record.element.dataset.kind !== (controller.mode === "bullets" ? "bullet" : "text")) {
+      record.element.dataset.kind = controller.mode === "bullets" ? "bullet" : "text";
+    }
+    return record;
+  }
+  return createSummaryStreamLine(element, controller);
+}
+
+function reconcileSummaryStreamElement(element, controller, fullText) {
+  if (!element || !controller) {
+    return;
+  }
+
+  const lines = fullText ? fullText.split("\n") : [];
+  const hasTrailingNewline = Boolean(fullText && fullText.endsWith("\n"));
+  if (hasTrailingNewline && lines.length) {
+    lines.pop();
+  }
+
+  const desiredCount = lines.length;
+  const existing = Array.isArray(controller.lines)
+    ? controller.lines.filter((record) => record && record.element && record.element.isConnected)
+    : [];
+  const kind = controller.mode === "bullets" ? "bullet" : "text";
+
+  controller.lines = existing;
+
+  while (existing.length < desiredCount) {
+    createSummaryStreamLine(element, controller);
+  }
+
+  for (let index = 0; index < desiredCount; index += 1) {
+    const lineText = lines[index];
+    let record = existing[index];
+    if (!record) {
+      record = createSummaryStreamLine(element, controller);
+      existing[index] = record;
+    }
+    record.element.dataset.kind = kind;
+    if (record.text !== lineText) {
+      record.content.textContent = "";
+      if (lineText) {
+        const span = document.createElement("span");
+        span.className = "spotlight-ai-panel-stream-chunk instant";
+        span.textContent = lineText;
+        record.content.appendChild(span);
+      }
+      record.text = lineText;
+    }
+  }
+
+  for (let index = existing.length - 1; index >= desiredCount; index -= 1) {
+    const record = existing[index];
+    if (record && record.element && record.element.parentNode === element) {
+      element.removeChild(record.element);
+    }
+    existing.pop();
+  }
+
+  controller.lines = existing;
+  controller.displayed = fullText || "";
+  controller.pending = "";
+  controller.currentLine = null;
+  if (!hasTrailingNewline && controller.lines.length > 0) {
+    controller.currentLine = controller.lines[controller.lines.length - 1];
+  }
+}
+
+function appendSummaryStreamText(element, controller, text, { animate } = {}) {
+  if (!element || !controller || !text) {
+    return;
+  }
+  let index = 0;
+  while (index < text.length) {
+    const newlineIndex = text.indexOf("\n", index);
+    const slice = newlineIndex === -1 ? text.slice(index) : text.slice(index, newlineIndex);
+    if (slice) {
+      const lineRecord = ensureSummaryStreamLine(element, controller);
+      const span = document.createElement("span");
+      span.className = "spotlight-ai-panel-stream-chunk";
+      if (!animate) {
+        span.classList.add("instant");
+      }
+      span.textContent = slice;
+      lineRecord.content.appendChild(span);
+      lineRecord.text = `${lineRecord.text || ""}${slice}`;
+    }
+    if (newlineIndex === -1) {
+      break;
+    }
+    controller.currentLine = null;
+    index = newlineIndex + 1;
+  }
+}
+
+function updateSummaryStreamText(element, nextText, options = {}) {
+  if (!element) {
+    return;
+  }
+  const { immediate = false, format } = options || {};
+  let controller = summaryStreamControllers.get(element);
+  if (!controller) {
+    controller = { displayed: "", pending: "", rafId: 0, mode: "text", currentLine: null, lines: [] };
+    summaryStreamControllers.set(element, controller);
+  }
+
+  const mode = resolveSummaryStreamMode(nextText, format, controller.mode);
+  if (controller.mode !== mode) {
+    resetSummaryStreamElement(element, controller);
+    controller.mode = mode;
+  }
+  element.dataset.mode = controller.mode;
+
+  const safeText = normalizeSummaryStreamText(nextText, controller.mode);
+
+  if (immediate) {
+    stopSummaryStreamAnimation(controller);
+    resetSummaryStreamElement(element, controller);
+    if (safeText) {
+      appendSummaryStreamText(element, controller, safeText, { animate: false });
+      controller.displayed = safeText;
+    }
+    return;
+  }
+
+  if (!safeText) {
+    stopSummaryStreamAnimation(controller);
+    resetSummaryStreamElement(element, controller);
+    return;
+  }
+
+  const baseline = controller.displayed || "";
+  if (baseline.length > safeText.length || !safeText.startsWith(baseline)) {
+    stopSummaryStreamAnimation(controller);
+    reconcileSummaryStreamElement(element, controller, safeText);
+    return;
+  }
+
+  const applied = controller.displayed || "";
+  const difference = safeText.slice(applied.length);
+  if (!difference) {
+    return;
+  }
+
+  controller.pending += difference;
+  if (controller.rafId) {
+    return;
+  }
+
+  const step = () => {
+    if (!element.isConnected) {
+      stopSummaryStreamAnimation(controller);
+      resetSummaryStreamElement(element, controller);
+      return;
+    }
+
+    const chunkSize =
+      controller.pending.length > SUMMARY_STREAM_FAST_THRESHOLD
+        ? SUMMARY_STREAM_FRAME_CHARS * 2
+        : SUMMARY_STREAM_FRAME_CHARS;
+    const baseLength = Math.max(1, Math.min(chunkSize, controller.pending.length));
+    const pendingSlice = controller.pending.slice(0, baseLength);
+    const newlineMatch = pendingSlice.indexOf("\n");
+
+    let chunkLength = baseLength;
+    if (newlineMatch !== -1) {
+      chunkLength = newlineMatch + 1;
+    } else if (controller.pending.length > baseLength) {
+      const maxExtension = SUMMARY_STREAM_FRAME_CHARS * 2;
+      let extension = 0;
+      let cursor = baseLength;
+      while (cursor < controller.pending.length && !/\s/.test(controller.pending[cursor]) && extension < maxExtension) {
+        cursor += 1;
+        extension += 1;
+      }
+      if (cursor < controller.pending.length && /\s/.test(controller.pending[cursor])) {
+        cursor += 1;
+      }
+      chunkLength = cursor;
+    }
+
+    const chunk = controller.pending.slice(0, chunkLength);
+    controller.pending = controller.pending.slice(chunkLength);
+    appendSummaryStreamText(element, controller, chunk, { animate: true });
+    controller.displayed = `${controller.displayed || ""}${chunk}`;
+
+    if (controller.pending) {
+      controller.rafId = requestAnimationFrame(step);
+    } else {
+      controller.rafId = 0;
+    }
+  };
+
+  controller.rafId = requestAnimationFrame(step);
 }
 
 function requestSummaryForResult(result, options = {}) {
@@ -2600,6 +3006,9 @@ function requestSummaryForResult(result, options = {}) {
   const now = Date.now();
   const existing = tabSummaryState.get(url);
   if (!forceRefresh && existing && (existing.status === "loading" || existing.status === "ready")) {
+    if (existing.status === "loading") {
+      ensureSummaryProgress(url);
+    }
     updateSummaryUIForUrl(url);
     return;
   }
@@ -2619,6 +3028,7 @@ function requestSummaryForResult(result, options = {}) {
   };
   tabSummaryState.set(url, entry);
   pruneSummaryState();
+  beginSummaryProgress(url);
   updateSummaryUIForUrl(url);
   const payload = {
     type: "SPOTLIGHT_SUMMARIZE",
@@ -2657,6 +3067,7 @@ function requestSummaryForResult(result, options = {}) {
         current.error = errorMessage;
         current.cached = false;
         current.lastUsed = Date.now();
+        stopSummaryProgress(url);
         tabSummaryState.set(url, current);
         pruneSummaryState();
         updateSummaryUIForUrl(url);
@@ -2669,6 +3080,7 @@ function requestSummaryForResult(result, options = {}) {
       current.cached = Boolean(response.cached);
       current.source = typeof response.source === "string" ? response.source : "";
       current.lastUsed = Date.now();
+      stopSummaryProgress(url);
       tabSummaryState.set(url, current);
       pruneSummaryState();
       updateSummaryUIForUrl(url);
@@ -2682,6 +3094,7 @@ function requestSummaryForResult(result, options = {}) {
     current.error = err?.message || "Summary unavailable";
     current.cached = false;
     current.lastUsed = Date.now();
+    stopSummaryProgress(url);
     tabSummaryState.set(url, current);
     pruneSummaryState();
     updateSummaryUIForUrl(url);
