@@ -875,6 +875,7 @@
   --spotlight-result-summary-offset: calc(
     var(--spotlight-result-icon-size) + var(--spotlight-result-icon-gap)
   );
+  border-radius: var(--spotlight-radius-medium);
   padding: 12px 20px;
   display: flex;
   align-items: flex-start;
