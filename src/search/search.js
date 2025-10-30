@@ -103,7 +103,6 @@ const FILTER_ALIASES = {
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
   download: ["download:", "downloads:", "dl:", "d:"],
-  command: ["command:", "commands:", "cmd:"],
   back: ["back:"],
   forward: ["forward:"],
   topSite: ["topsites:", "topsite:", "top-sites:", "ts:"],
@@ -563,67 +562,6 @@ const STATIC_COMMANDS = [
     },
   },
 ];
-
-function buildStaticCommandResult(command, context) {
-  if (!command) {
-    return null;
-  }
-  if (typeof command.isAvailable === "function" && !command.isAvailable(context)) {
-    return null;
-  }
-  const answer = command.answer ? command.answer(context) : "";
-  const description = command.description ? command.description(context) : answer;
-  return {
-    id: command.id,
-    title: command.title,
-    url: description,
-    description,
-    type: "command",
-    command: command.action,
-    label: "Command",
-    score: COMMAND_SCORE,
-    faviconUrl: COMMAND_ICON_DATA_URL,
-  };
-}
-
-function buildDefaultCommandResults(context) {
-  const results = [];
-  const seen = new Set();
-
-  const push = (result) => {
-    if (!result || !result.id || seen.has(result.id)) {
-      return;
-    }
-    seen.add(result.id);
-    results.push(result);
-  };
-
-  for (const command of STATIC_COMMANDS) {
-    push(buildStaticCommandResult(command, context));
-  }
-
-  const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
-  const focusedTab = context?.focusedTab || null;
-  const activeTab = tabs.find((tab) => tab && tab.active);
-
-  push(buildFocusTabCommandResult(activeTab));
-  push(buildFocusJumpCommandResult(focusedTab));
-  push(buildFocusRemoveCommandResult(focusedTab));
-
-  const audibleCount = typeof context?.audibleTabCount === "number"
-    ? context.audibleTabCount
-    : tabs.reduce((count, tab) => (tab && tab.audible ? count + 1 : count), 0);
-  if (audibleCount > 0) {
-    push(buildCloseAudioTabsCommandResult(audibleCount));
-  }
-
-  const closeAll = collectCloseAllSuggestions([], { ...context, tabs, audibleTabCount: audibleCount });
-  if (closeAll && Array.isArray(closeAll.results)) {
-    closeAll.results.forEach((result) => push(result));
-  }
-
-  return results;
-}
 
 function formatTabCount(count) {
   if (count === 1) {
@@ -1543,13 +1481,11 @@ function collectDomainMatches(tabs, query) {
     .slice(0, 5);
 }
 
-function collectCommandSuggestions(query, context, options = {}) {
+function collectCommandSuggestions(query, context) {
   const suggestions = [];
   const seenIds = new Set();
   let ghost = null;
   let answer = "";
-  const trimmed = (query || "").trim();
-  const includeDefaults = Boolean(options?.includeDefaults);
 
   const pushSuggestion = (result) => {
     if (!result || !result.id || seenIds.has(result.id)) {
@@ -1559,22 +1495,14 @@ function collectCommandSuggestions(query, context, options = {}) {
     suggestions.push({ ...result, commandRank: suggestions.length });
   };
 
-  if (!trimmed) {
-    if (includeDefaults) {
-      const defaults = buildDefaultCommandResults(context);
-      defaults.forEach((result) => pushSuggestion(result));
-    }
-    return { results: suggestions, ghost: null, answer: "" };
-  }
-
-  const staticMatch = findBestStaticCommand(trimmed, context);
+  const staticMatch = findBestStaticCommand(query, context);
   if (staticMatch) {
     pushSuggestion(staticMatch.result);
     ghost = ghost || staticMatch.ghostText;
     answer = answer || staticMatch.answer;
   }
 
-  const focusSuggestions = collectFocusCommandSuggestions(trimmed, context);
+  const focusSuggestions = collectFocusCommandSuggestions(query, context);
   if (focusSuggestions.results.length) {
     focusSuggestions.results.forEach((result) => pushSuggestion(result));
     if (!ghost && focusSuggestions.ghost) {
@@ -1585,7 +1513,7 @@ function collectCommandSuggestions(query, context, options = {}) {
     }
   }
 
-  const closeSuggestions = collectTabCloseSuggestions(trimmed, context);
+  const closeSuggestions = collectTabCloseSuggestions(query, context);
   if (closeSuggestions.results.length) {
     closeSuggestions.results.forEach((result) => pushSuggestion(result));
     if (!ghost && closeSuggestions.ghost) {
@@ -1816,24 +1744,9 @@ export function runSearch(query, data, options = {}) {
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
   const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount, focusedTab: focusedTabInfo };
-  const includeDefaultCommands = filterType === "command" && !trimmed;
-  const commandSuggestions = collectCommandSuggestions(trimmed, commandContext, {
-    includeDefaults: includeDefaultCommands,
-  });
+  const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
-    if (filterType === "command") {
-      const limit = getResultLimit(filterType);
-      const limitedCommands = sliceResultsForLimit(commandSuggestions.results, limit);
-      return {
-        results: limitedCommands,
-        ghost: commandSuggestions.ghost,
-        answer: commandSuggestions.answer,
-        filter: filterType,
-        subfilters: subfilterPayload,
-      };
-    }
-
     let defaultItems = filterType
       ? filterType === "download"
         ? downloadItems.slice()

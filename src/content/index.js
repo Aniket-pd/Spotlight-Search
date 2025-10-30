@@ -221,7 +221,6 @@ const FILTER_SHORTCUT_DEFINITIONS = [
   { id: "history", label: "History", prefix: "history:" },
   { id: "download", label: "Downloads", prefix: "download:" },
   { id: "topSite", label: "Top Sites", prefix: "topsite:" },
-  { id: "command", label: "Commands", prefix: "command:" },
 ];
 
 const filterShortcutButtons = new Map();
@@ -3501,8 +3500,6 @@ function getFilterStatusLabel(type) {
       return "history";
     case "download":
       return "downloads";
-    case "command":
-      return "commands";
     case "back":
       return "back history";
     case "forward":
