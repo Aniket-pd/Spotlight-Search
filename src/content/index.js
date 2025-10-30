@@ -2448,7 +2448,7 @@ function renderSummaryPanelForElement(item, url, entry) {
     panel.remove();
     panel = null;
   }
-  if (!entry || !entry.status) {
+  if (!entry || entry.status !== "ready") {
     stopSummaryProgress(url);
     if (panel) {
       panel.remove();
@@ -2507,6 +2507,7 @@ function renderSummaryPanelForElement(item, url, entry) {
   }
 
   panel.dataset.url = url;
+  panel.hidden = false;
 
   const controls = panel.querySelector('[data-role="controls"]');
   const streamEl = panel.querySelector(`[data-role="stream"]`);
@@ -2582,61 +2583,23 @@ function renderSummaryPanelForElement(item, url, entry) {
   const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
   const hasRawText = typeof entry.raw === "string" && entry.raw;
 
-  if (entry.status === "loading") {
-    ensureSummaryProgress(url);
-    const progressText = getSummaryProgressMessage(url);
-    if (hasBullets) {
-      streamEl.hidden = false;
-      streamEl.classList.add("loading");
-      updateSummaryStreamText(streamEl, entry.bullets.slice(0, 3), { format: "bullets" });
-      listEl.innerHTML = "";
-      listEl.hidden = true;
-      listEl.classList.remove("loading");
-    } else if (hasRawText) {
-      streamEl.hidden = false;
-      streamEl.classList.add("loading");
-      updateSummaryStreamText(streamEl, entry.raw, { format: "text" });
-      renderBullets([]);
-    } else {
-      streamEl.classList.remove("loading");
-      updateSummaryStreamText(streamEl, "", { immediate: true });
-      streamEl.hidden = true;
-      renderBullets(entry.bullets, { loading: true });
-    }
-    setStatus(progressText, `${TAB_SUMMARY_STATUS_CLASS} loading`);
-  } else if (entry.status === "error") {
-    stopSummaryProgress(url);
-    streamEl.classList.remove("loading");
+  stopSummaryProgress(url);
+  renderBullets(entry.bullets, { loading: false });
+  streamEl.classList.remove("loading");
+  if (hasBullets) {
     updateSummaryStreamText(streamEl, "", { immediate: true });
     streamEl.hidden = true;
-    renderBullets([]);
-    setStatus(entry.error || "Summary unavailable", `${TAB_SUMMARY_STATUS_CLASS} error`);
-  } else if (entry.status === "ready") {
-    stopSummaryProgress(url);
-    renderBullets(entry.bullets, { loading: false });
-    streamEl.classList.remove("loading");
-    if (hasBullets) {
-      updateSummaryStreamText(streamEl, "", { immediate: true });
-      streamEl.hidden = true;
-    } else if (entry.raw) {
-      streamEl.hidden = false;
-      updateSummaryStreamText(streamEl, entry.raw, { immediate: true, format: "text" });
-    } else {
-      updateSummaryStreamText(streamEl, "", { immediate: true });
-      streamEl.hidden = true;
-    }
-    if (!hasBullets && !entry.raw) {
-      setStatus("No summary available.", `${TAB_SUMMARY_STATUS_CLASS} empty`);
-    } else {
-      setStatus("", TAB_SUMMARY_STATUS_CLASS);
-    }
+  } else if (entry.raw) {
+    streamEl.hidden = false;
+    updateSummaryStreamText(streamEl, entry.raw, { immediate: true, format: "text" });
   } else {
-    ensureSummaryProgress(url);
-    streamEl.classList.remove("loading");
     updateSummaryStreamText(streamEl, "", { immediate: true });
     streamEl.hidden = true;
-    renderBullets([]);
-    setStatus(getSummaryProgressMessage(url), `${TAB_SUMMARY_STATUS_CLASS} loading`);
+  }
+  if (!hasBullets && !entry.raw) {
+    setStatus("No summary available.", `${TAB_SUMMARY_STATUS_CLASS} empty`);
+  } else {
+    setStatus("", TAB_SUMMARY_STATUS_CLASS);
   }
 
   entry.lastUsed = Date.now();

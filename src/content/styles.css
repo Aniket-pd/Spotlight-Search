@@ -859,6 +859,8 @@
   overflow: hidden;
   background: var(--spotlight-chip-bg);
   border: 1px solid var(--spotlight-chip-border);
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 .spotlight-result-icon-download {
