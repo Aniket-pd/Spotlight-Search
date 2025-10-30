@@ -1071,7 +1071,7 @@
 .spotlight-ai-panel-status.loading::after {
   opacity: 1;
   background-image: linear-gradient(
-    120deg,
+    90deg,
     rgba(255, 255, 255, 0.35),
     var(--spotlight-color-accent),
     rgba(255, 255, 255, 0.35)
