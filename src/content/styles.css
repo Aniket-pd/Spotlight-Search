@@ -281,7 +281,7 @@
   background: var(--spotlight-input-bg);
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: var(--spotlight-input-shadow);
-  padding: 0 12px 0 48px;
+  padding: 0 12px 0 52px;
 }
 
 .spotlight-input-container.focused {
@@ -297,12 +297,12 @@
 
 .spotlight-input-icon {
   position: absolute;
-  left: 18px;
+  left: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
   z-index: 3;
@@ -838,7 +838,7 @@
 
 .spotlight-input {
   width: 100%;
-  font-size: 18px;
+  font-size: 20px;
   padding: 10px 0;
   border: none;
   background: transparent;
@@ -861,7 +861,7 @@
   padding: 10px 0;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
-  font-size: 18px;
+  font-size: 20px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
