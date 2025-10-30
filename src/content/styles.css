@@ -198,12 +198,15 @@
 
 .spotlight-shell {
   width: min(720px, 92vw);
+  max-height: min(80vh, 640px);
   border-radius: var(--spotlight-radius-large);
   background: var(--spotlight-surface-gradient);
   box-shadow: var(--spotlight-shadow-elevated);
   overflow: hidden;
   border: 1px solid var(--spotlight-surface-border);
   backdrop-filter: var(--spotlight-backdrop-filter);
+  display: flex;
+  flex-direction: column;
 }
 
 .spotlight-input-wrapper {
@@ -212,6 +215,7 @@
   padding: 22px 24px 16px;
   gap: var(--spotlight-gap-sm);
   background: transparent;
+  flex: 0 0 auto;
 }
 
 .spotlight-input-container {
@@ -802,6 +806,8 @@
   max-height: 420px;
   overflow-y: auto;
   scrollbar-width: thin;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .spotlight-results::-webkit-scrollbar {
