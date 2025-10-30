@@ -184,24 +184,21 @@
 
 #spotlight-overlay,
 .spotlight-overlay {
-  --spotlight-overlay-padding-block: clamp(24px, 8vh, 104px);
-  --spotlight-overlay-padding-inline: clamp(16px, 6vw, 56px);
   position: fixed;
   inset: 0;
   background: var(--spotlight-color-overlay);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding-block: var(--spotlight-overlay-padding-block);
-  padding-inline: var(--spotlight-overlay-padding-inline);
+  padding: 12vh 16px 4vh;
   z-index: 2147483647;
   font-family: var(--spotlight-font-family);
   color: var(--spotlight-color-text-primary);
 }
 
 .spotlight-shell {
-  width: min(720px, calc(100vw - 2 * var(--spotlight-overlay-padding-inline)));
-  max-height: min(640px, calc(100vh - 2 * var(--spotlight-overlay-padding-block)));
+  width: min(720px, 92vw);
+  max-height: min(80vh, 640px);
   border-radius: var(--spotlight-radius-large);
   background: var(--spotlight-surface-gradient);
   box-shadow: var(--spotlight-shadow-elevated);
