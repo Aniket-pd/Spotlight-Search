@@ -1060,10 +1060,6 @@
   white-space: inherit;
 }
 
-.spotlight-ai-panel-status.changing {
-  animation: spotlight-ai-panel-status-fade 0.45s ease;
-}
-
 .spotlight-ai-panel-status.loading {
   color: var(--spotlight-color-accent);
 }
@@ -1135,18 +1131,6 @@
   from {
     opacity: 0;
     transform: translateY(6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes spotlight-ai-panel-status-fade {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
   }
 
   to {

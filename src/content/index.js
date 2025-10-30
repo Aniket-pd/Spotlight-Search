@@ -2566,26 +2566,17 @@ function renderSummaryPanelForElement(item, url, entry) {
 
   const setStatus = (text, className) => {
     const nextText = text || "";
-    const previousText = statusEl.textContent || "";
     if (!nextText) {
       statusEl.textContent = "";
       delete statusEl.dataset.text;
       statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
       statusEl.hidden = true;
-      statusEl.classList.remove("changing");
       return;
     }
     statusEl.hidden = false;
     statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
     statusEl.textContent = nextText;
     statusEl.dataset.text = nextText;
-    if (nextText !== previousText) {
-      statusEl.classList.remove("changing");
-      void statusEl.offsetWidth;
-      statusEl.classList.add("changing");
-    } else {
-      statusEl.classList.remove("changing");
-    }
   };
 
   const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
