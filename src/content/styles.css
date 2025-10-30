@@ -683,6 +683,13 @@
   margin: 0;
 }
 
+.spotlight-history-assistant-stream {
+  font-size: inherit;
+  line-height: 1.45;
+  color: inherit;
+  gap: 4px;
+}
+
 .spotlight-history-assistant-header-meta {
   margin-top: 6px;
   display: flex;

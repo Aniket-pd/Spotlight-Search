@@ -1218,6 +1218,7 @@ function createInitialHistoryAssistantState() {
     actionPending: false,
     lastPrompt: "",
     error: "",
+    responseSource: "",
   };
 }
 
@@ -1448,6 +1449,8 @@ function deactivateHistoryAssistantResults() {
     status: historyAssistantState.status === "ready" ? "idle" : historyAssistantState.status,
     message: historyAssistantState.status === "ready" ? "" : historyAssistantState.message,
     notes: historyAssistantState.status === "ready" ? "" : historyAssistantState.notes,
+    responseSource:
+      historyAssistantState.status === "ready" ? "" : historyAssistantState.responseSource,
   };
 }
 
@@ -1467,6 +1470,7 @@ function applyHistoryAssistantResults(response) {
     resultsActive: true,
     actionPending: false,
     error: "",
+    responseSource: typeof response?.responseSource === "string" ? response.responseSource : "",
   };
   resultsState = results.slice();
   lazyList.setItems(resultsState);
@@ -1484,6 +1488,7 @@ function handleHistoryAssistantResponse(response) {
       status: "error",
       error: typeof response.error === "string" ? response.error : "History assistant unavailable",
       resultsActive: false,
+      responseSource: "",
     };
     updateHistoryAssistantUI();
     renderResults();
@@ -1505,6 +1510,7 @@ function runHistoryAssistantQuery(prompt) {
     lastPrompt: prompt,
     actionPending: false,
     error: "",
+    responseSource: "",
   };
   updateHistoryAssistantUI();
   chrome.runtime.sendMessage(
@@ -1516,6 +1522,7 @@ function runHistoryAssistantQuery(prompt) {
           status: "error",
           error: "History assistant unavailable",
           resultsActive: false,
+          responseSource: "",
         };
         updateHistoryAssistantUI();
         console.warn("Spotlight history assistant error", chrome.runtime.lastError);
@@ -3134,7 +3141,13 @@ function renderResults() {
 
     const text = document.createElement("div");
     text.className = "spotlight-history-assistant-header-text";
-    text.textContent = historyAssistantState.message || "History assistant results";
+    const stream = document.createElement("ul");
+    stream.className = "spotlight-ai-panel-stream spotlight-history-assistant-stream";
+    stream.dataset.role = "history-message";
+    stream.setAttribute("aria-live", "polite");
+    stream.setAttribute("aria-atomic", "false");
+    stream.hidden = true;
+    text.appendChild(stream);
     header.appendChild(text);
 
     const meta = document.createElement("div");
@@ -3156,6 +3169,18 @@ function renderResults() {
       header.appendChild(meta);
     }
     resultsEl.appendChild(header);
+
+    const message = historyAssistantState.message || "History assistant results";
+    const shouldStream = historyAssistantState.responseSource === "promptApi";
+    if (stream) {
+      if (message) {
+        stream.hidden = false;
+        updateSummaryStreamText(stream, message, shouldStream ? { format: "text" } : { format: "text", immediate: true });
+      } else {
+        updateSummaryStreamText(stream, "", { immediate: true });
+        stream.hidden = true;
+      }
+    }
   }
 
   if (!resultsState.length) {
