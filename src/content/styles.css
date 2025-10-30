@@ -237,6 +237,10 @@
   padding: 0 2px;
 }
 
+.spotlight-filter-shortcuts[aria-hidden="true"] {
+  display: none;
+}
+
 .spotlight-filter-chip {
   border-radius: var(--spotlight-radius-pill);
   border: 1px solid var(--spotlight-chip-border);

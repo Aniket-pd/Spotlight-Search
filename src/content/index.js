@@ -1118,6 +1118,12 @@ function resolveFilterShortcutFromQuery(query) {
 }
 
 function updateFilterShortcutsActiveState(query) {
+  const normalizedQuery = typeof query === "string" ? query.trim() : "";
+  const shouldShow = !normalizedQuery;
+  if (filterShortcutsEl) {
+    filterShortcutsEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  }
+
   if (!filterShortcutButtons.size) {
     return;
   }
