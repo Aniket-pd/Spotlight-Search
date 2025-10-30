@@ -884,7 +884,7 @@
 .spotlight-results {
   list-style: none;
   margin: 0;
-  padding: 10px 0;
+  padding: 10px var(--spotlight-gap-lg);
   max-height: 420px;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -907,6 +907,7 @@
   --spotlight-result-summary-offset: calc(
     var(--spotlight-result-icon-size) + var(--spotlight-result-icon-gap)
   );
+  border-radius: var(--spotlight-radius-medium);
   padding: 12px 20px;
   display: flex;
   align-items: flex-start;
