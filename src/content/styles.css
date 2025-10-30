@@ -429,7 +429,7 @@
   transform: translateY(-6px);
   transition: opacity 0.2s ease, transform 0.2s ease;
   pointer-events: none;
-  margin-top: 6px;
+  margin-top: 0;
   padding-left: 2px;
 }
 
