@@ -2527,8 +2527,10 @@ function renderSummaryPanelForElement(item, url, entry) {
   panel.hidden = isHidden;
   if (isHidden) {
     panel.setAttribute("aria-hidden", "true");
+    panel.style.display = "none";
   } else {
     panel.removeAttribute("aria-hidden");
+    panel.style.display = "";
   }
 
   controls.innerHTML = "";
