@@ -839,6 +839,7 @@
 .spotlight-input {
   width: 100%;
   font-size: 20px;
+  line-height: 1.4;
   padding: 10px 0;
   border: none;
   background: transparent;
@@ -846,6 +847,7 @@
   outline: none;
   position: relative;
   z-index: 2;
+  font-family: inherit;
 }
 
 .spotlight-input::placeholder {
@@ -862,6 +864,8 @@
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
   font-size: 20px;
+  line-height: 1.4;
+  font-family: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
