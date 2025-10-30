@@ -39,7 +39,7 @@
   --spotlight-color-critical: #f87171;
 
   --spotlight-input-bg: transparent;
-  --spotlight-input-border: rgba(218, 220, 226, 0.58);
+  --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(24, 26, 32, 0.42);
   --spotlight-input-shadow: 0 32px 70px rgba(20, 22, 28, 0.15);
   --spotlight-input-focus-ring: 0 0 0 3px rgba(24, 26, 32, 0.12);
@@ -76,7 +76,7 @@
   --spotlight-color-accent-soft: rgba(43, 221, 154, 0.22);
   --spotlight-color-accent-soft-strong: rgba(43, 221, 154, 0.3);
   --spotlight-input-bg: transparent;
-  --spotlight-input-border: rgba(96, 100, 116, 0.5);
+  --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
   --spotlight-input-shadow: 0 36px 70px rgba(0, 0, 0, 0.7);
   --spotlight-input-focus-ring: 0 0 0 3px rgba(244, 245, 247, 0.2);
@@ -109,7 +109,7 @@
   --spotlight-color-accent-soft: rgba(43, 221, 154, 0.18);
   --spotlight-color-accent-soft-strong: rgba(43, 221, 154, 0.26);
   --spotlight-input-bg: transparent;
-  --spotlight-input-border: rgba(218, 220, 226, 0.58);
+  --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(24, 26, 32, 0.42);
   --spotlight-input-shadow: 0 32px 70px rgba(20, 22, 28, 0.15);
   --spotlight-input-focus-ring: 0 0 0 3px rgba(24, 26, 32, 0.12);
@@ -143,7 +143,7 @@
     --spotlight-color-accent-soft: rgba(43, 221, 154, 0.22);
     --spotlight-color-accent-soft-strong: rgba(43, 221, 154, 0.3);
     --spotlight-input-bg: transparent;
-    --spotlight-input-border: rgba(96, 100, 116, 0.5);
+    --spotlight-input-border: transparent;
     --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
     --spotlight-input-shadow: 0 36px 70px rgba(0, 0, 0, 0.7);
     --spotlight-input-focus-ring: 0 0 0 3px rgba(244, 245, 247, 0.2);
