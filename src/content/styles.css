@@ -225,9 +225,12 @@
   display: flex;
   flex-direction: column;
   padding: 22px 24px 16px;
-  gap: var(--spotlight-gap-sm);
   background: transparent;
   flex: 0 0 auto;
+}
+
+.spotlight-input-wrapper > * + * {
+  margin-top: var(--spotlight-gap-sm);
 }
 
 .spotlight-filter-shortcuts {
@@ -235,6 +238,7 @@
   flex-wrap: wrap;
   gap: var(--spotlight-gap-xs);
   padding: 0 2px;
+  margin-top: var(--spotlight-gap-xs);
 }
 
 .spotlight-filter-shortcuts[aria-hidden="true"] {
@@ -277,10 +281,39 @@
   background: var(--spotlight-input-bg);
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: var(--spotlight-input-shadow);
+  padding: 0 12px 0 48px;
 }
 
 .spotlight-input-container.focused {
   box-shadow: var(--spotlight-input-focus-ring);
+}
+
+.spotlight-input-divider {
+  align-self: stretch;
+  height: 1px;
+  background: var(--spotlight-surface-border-subtle);
+  margin-top: var(--spotlight-gap-xs);
+}
+
+.spotlight-input-icon {
+  position: absolute;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--spotlight-color-text-tertiary);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.spotlight-input-container.focused .spotlight-input-icon {
+  color: var(--spotlight-color-text-secondary);
+}
+
+.spotlight-input-icon svg {
+  display: block;
 }
 
 .spotlight-slash-menu,
@@ -806,7 +839,7 @@
 .spotlight-input {
   width: 100%;
   font-size: 18px;
-  padding: 10px 12px;
+  padding: 10px 0;
   border: none;
   background: transparent;
   color: var(--spotlight-color-text-primary);
@@ -825,7 +858,7 @@
   inset: 0;
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  padding: 10px 0;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
   font-size: 18px;

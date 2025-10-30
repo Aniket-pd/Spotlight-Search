@@ -408,6 +408,19 @@ function createOverlay() {
   inputContainerEl = document.createElement("div");
   inputContainerEl.className = "spotlight-input-container";
 
+  const inputIconEl = document.createElement("span");
+  inputIconEl.className = "spotlight-input-icon";
+  inputIconEl.setAttribute("aria-hidden", "true");
+  inputIconEl.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M12.779 11.3654L15.8334 14.4199C16.0587 14.6451 16.0587 15.0108 15.8334 15.2361C15.6082 15.4613 15.2425 15.4613 15.0173 15.2361L11.9628 12.1816C11.8837 12.1025 11.8222 12.0099 11.7818 11.9094C10.7265 12.8297 9.3426 13.3646 7.84604 13.3646C4.52231 13.3646 1.84604 10.6883 1.84604 7.36455C1.84604 4.04083 4.52231 1.36455 7.84604 1.36455C11.1698 1.36455 13.846 4.04083 13.846 7.36455C13.846 8.86112 13.3112 10.245 12.3909 11.3002C12.4913 11.3407 12.5839 11.4022 12.6631 11.4812L12.779 11.3654ZM7.84604 12.1146C10.4782 12.1146 12.596 9.99677 12.596 7.36455C12.596 4.73233 10.4782 2.61455 7.84604 2.61455C5.21382 2.61455 3.09604 4.73233 3.09604 7.36455C3.09604 9.99677 5.21382 12.1146 7.84604 12.1146Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+  inputContainerEl.appendChild(inputIconEl);
+
   ghostEl = document.createElement("div");
   ghostEl.className = "spotlight-ghost";
   ghostEl.textContent = "";
@@ -436,6 +449,10 @@ function createOverlay() {
   inputContainerEl.appendChild(engineMenuEl);
 
   inputWrapper.appendChild(inputContainerEl);
+
+  const inputDividerEl = document.createElement("div");
+  inputDividerEl.className = "spotlight-input-divider";
+  inputWrapper.appendChild(inputDividerEl);
 
   filterShortcutsEl = document.createElement("div");
   filterShortcutsEl.className = "spotlight-filter-shortcuts";
