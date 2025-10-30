@@ -220,6 +220,7 @@ const FILTER_SHORTCUT_DEFINITIONS = [
   { id: "bookmark", label: "Bookmarks", prefix: "bookmark:" },
   { id: "history", label: "History", prefix: "history:" },
   { id: "download", label: "Downloads", prefix: "download:" },
+  { id: "command", label: "Commands", prefix: "command:" },
   { id: "topSite", label: "Top Sites", prefix: "topsite:" },
 ];
 
@@ -3500,6 +3501,8 @@ function getFilterStatusLabel(type) {
       return "history";
     case "download":
       return "downloads";
+    case "command":
+      return "commands";
     case "back":
       return "back history";
     case "forward":

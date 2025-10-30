@@ -103,6 +103,7 @@ const FILTER_ALIASES = {
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
   download: ["download:", "downloads:", "dl:", "d:"],
+  command: ["command:", "commands:", "cmd:"],
   back: ["back:"],
   forward: ["forward:"],
   topSite: ["topsites:", "topsite:", "top-sites:", "ts:"],
@@ -563,6 +564,34 @@ const STATIC_COMMANDS = [
   },
 ];
 
+function buildStaticCommandResult(command, context) {
+  if (!command || typeof command !== "object") {
+    return null;
+  }
+  if (typeof command.isAvailable === "function" && !command.isAvailable(context)) {
+    return null;
+  }
+  const answer = typeof command.answer === "function" ? command.answer(context) : "";
+  const description =
+    typeof command.description === "function"
+      ? command.description(context)
+      : answer;
+  return {
+    answer,
+    result: {
+      id: command.id,
+      title: command.title,
+      url: description,
+      description,
+      type: "command",
+      command: command.action,
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    },
+  };
+}
+
 function formatTabCount(count) {
   if (count === 1) {
     return "1 tab";
@@ -941,7 +970,8 @@ function findBestStaticCommand(query, context) {
   }
 
   for (const command of STATIC_COMMANDS) {
-    if (!command.isAvailable?.(context)) {
+    const payload = buildStaticCommandResult(command, context);
+    if (!payload) {
       continue;
     }
     const phrases = [command.title, ...(command.aliases || [])];
@@ -949,22 +979,10 @@ function findBestStaticCommand(query, context) {
     if (!matched) {
       continue;
     }
-    const answer = command.answer ? command.answer(context) : "";
-    const description = command.description ? command.description(context) : answer;
     return {
       ghostText: command.title,
-      answer,
-      result: {
-        id: command.id,
-        title: command.title,
-        url: description,
-        description,
-        type: "command",
-        command: command.action,
-        label: "Command",
-        score: COMMAND_SCORE,
-        faviconUrl: COMMAND_ICON_DATA_URL,
-      },
+      answer: payload.answer,
+      result: payload.result,
     };
   }
 
@@ -1138,6 +1156,43 @@ function collectTabCloseSuggestions(query, context) {
     results,
     ghost: results[0]?.title || null,
     answer: "",
+  };
+}
+
+function buildCloseAllTabsCommandPayload(context) {
+  const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+  if (!tabs.length) {
+    return null;
+  }
+  const activeTab = tabs.find((tab) => tab && tab.active);
+  const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
+  const windowTabs = windowId === null ? tabs : tabs.filter((tab) => tab.windowId === windowId);
+  const totalInWindow = windowTabs.length;
+  if (totalInWindow <= 0) {
+    return null;
+  }
+  const closingCount = Math.max(totalInWindow - 1, 0);
+  const countLabel = formatTabCount(totalInWindow);
+  const title = "Close all tabs";
+  const description = `${countLabel} in window · Active tab stays open`;
+  const answer =
+    closingCount === 0
+      ? "Only the active tab is open in this window."
+      : `Closes ${closingCount} other ${closingCount === 1 ? "tab" : "tabs"} in this window.`;
+  return {
+    answer,
+    result: {
+      id: "command:close-tabs-all",
+      title,
+      url: description,
+      description,
+      type: "command",
+      command: "tab-close-all",
+      args: {},
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    },
   };
 }
 
@@ -1399,34 +1454,14 @@ function collectCloseAllSuggestions(words, context) {
 
   const domainQuery = remainingWords.join(" ").trim();
   if (!domainQuery) {
-    const activeTab = tabs.find((tab) => tab.active);
-    const windowId = typeof activeTab?.windowId === "number" ? activeTab.windowId : null;
-    const windowTabs = windowId === null ? tabs : tabs.filter((tab) => tab.windowId === windowId);
-    const totalInWindow = windowTabs.length;
-    const closingCount = Math.max(totalInWindow - 1, 0);
-    const countLabel = formatTabCount(totalInWindow);
-    const title = "Close all tabs";
-    const description = `${countLabel} in window · Active tab stays open`;
-    const answer = closingCount === 0
-      ? "Only the active tab is open in this window."
-      : `Closes ${closingCount} other ${closingCount === 1 ? "tab" : "tabs"} in this window.`;
+    const payload = buildCloseAllTabsCommandPayload(context);
+    if (!payload) {
+      return { results: [], ghost: null, answer: "" };
+    }
     return {
-      results: [
-        {
-          id: "command:close-tabs-all",
-          title,
-          url: description,
-          description,
-          type: "command",
-          command: "tab-close-all",
-          args: {},
-          label: "Command",
-          score: COMMAND_SCORE,
-          faviconUrl: COMMAND_ICON_DATA_URL,
-        },
-      ],
-      ghost: title,
-      answer,
+      results: [payload.result],
+      ghost: payload.result.title,
+      answer: payload.answer,
     };
   }
 
@@ -1481,11 +1516,12 @@ function collectDomainMatches(tabs, query) {
     .slice(0, 5);
 }
 
-function collectCommandSuggestions(query, context) {
+function collectCommandSuggestions(query, context, options = {}) {
   const suggestions = [];
   const seenIds = new Set();
   let ghost = null;
   let answer = "";
+  const { collectAll = false } = options || {};
 
   const pushSuggestion = (result) => {
     if (!result || !result.id || seenIds.has(result.id)) {
@@ -1495,14 +1531,53 @@ function collectCommandSuggestions(query, context) {
     suggestions.push({ ...result, commandRank: suggestions.length });
   };
 
-  const staticMatch = findBestStaticCommand(query, context);
+  if (collectAll) {
+    for (const command of STATIC_COMMANDS) {
+      const payload = buildStaticCommandResult(command, context);
+      if (!payload) {
+        continue;
+      }
+      pushSuggestion(payload.result);
+    }
+
+    const tabs = Array.isArray(context?.tabs) ? context.tabs : [];
+    const focusedTab = context?.focusedTab || null;
+    const activeTab = tabs.find((tab) => tab && tab.active);
+
+    if (focusedTab) {
+      pushSuggestion(buildFocusJumpCommandResult(focusedTab));
+      pushSuggestion(buildFocusRemoveCommandResult(focusedTab));
+    }
+
+    if (activeTab) {
+      pushSuggestion(buildFocusTabCommandResult(activeTab));
+    }
+
+    const closeAllPayload = buildCloseAllTabsCommandPayload(context);
+    if (closeAllPayload) {
+      pushSuggestion(closeAllPayload.result);
+    }
+
+    if (!ghost && suggestions.length) {
+      ghost = suggestions[0]?.title || null;
+    }
+
+    return { results: suggestions, ghost, answer };
+  }
+
+  const trimmed = (query || "").trim();
+  if (!trimmed) {
+    return { results: [], ghost: null, answer: "" };
+  }
+
+  const staticMatch = findBestStaticCommand(trimmed, context);
   if (staticMatch) {
     pushSuggestion(staticMatch.result);
     ghost = ghost || staticMatch.ghostText;
     answer = answer || staticMatch.answer;
   }
 
-  const focusSuggestions = collectFocusCommandSuggestions(query, context);
+  const focusSuggestions = collectFocusCommandSuggestions(trimmed, context);
   if (focusSuggestions.results.length) {
     focusSuggestions.results.forEach((result) => pushSuggestion(result));
     if (!ghost && focusSuggestions.ghost) {
@@ -1513,7 +1588,7 @@ function collectCommandSuggestions(query, context) {
     }
   }
 
-  const closeSuggestions = collectTabCloseSuggestions(query, context);
+  const closeSuggestions = collectTabCloseSuggestions(trimmed, context);
   if (closeSuggestions.results.length) {
     closeSuggestions.results.forEach((result) => pushSuggestion(result));
     if (!ghost && closeSuggestions.ghost) {
@@ -1744,7 +1819,24 @@ export function runSearch(query, data, options = {}) {
   const subfilterContext = { historyBoundaries };
   const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
   const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount, focusedTab: focusedTabInfo };
-  const commandSuggestions = trimmed ? collectCommandSuggestions(trimmed, commandContext) : { results: [], ghost: null, answer: "" };
+
+  if (filterType === "command") {
+    const commandSuggestions = collectCommandSuggestions(trimmed, commandContext, {
+      collectAll: !trimmed,
+    });
+    const limit = getResultLimit(filterType);
+    return {
+      results: sliceResultsForLimit(commandSuggestions.results, limit),
+      ghost: commandSuggestions.ghost ? { text: commandSuggestions.ghost } : null,
+      answer: commandSuggestions.answer || "",
+      filter: filterType,
+      subfilters: null,
+    };
+  }
+
+  const commandSuggestions = trimmed
+    ? collectCommandSuggestions(trimmed, commandContext)
+    : { results: [], ghost: null, answer: "" };
 
   if (!trimmed) {
     let defaultItems = filterType
