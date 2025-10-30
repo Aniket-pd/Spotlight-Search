@@ -273,14 +273,13 @@
   display: flex;
   align-items: center;
   border-radius: var(--spotlight-radius-medium);
-  border: 1px solid var(--spotlight-input-border);
+  border: none;
   background: var(--spotlight-input-bg);
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: var(--spotlight-input-shadow);
 }
 
 .spotlight-input-container.focused {
-  border-color: var(--spotlight-input-border);
   box-shadow: var(--spotlight-input-focus-ring);
 }
 
