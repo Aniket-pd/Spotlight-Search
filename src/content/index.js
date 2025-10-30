@@ -69,9 +69,17 @@ const TAB_SUMMARY_STREAM_CLASS = "spotlight-ai-panel-stream";
 const TAB_SUMMARY_PANEL_VERSION = "2";
 const SUMMARY_STREAM_FRAME_CHARS = 6;
 const SUMMARY_STREAM_FAST_THRESHOLD = 28;
+const SUMMARY_PROGRESS_STEPS = [
+  { text: "Fetching content from source…", duration: 1600 },
+  { text: "Analyzing the data…", duration: 1800 },
+  { text: "Generating your summary…", duration: 2000 },
+  { text: "Finalizing and formatting response…", duration: 2200 },
+];
+const SUMMARY_PROGRESS_DEFAULT_MESSAGE = "Preparing summary…";
 const TAB_SUMMARY_BUTTON_CLASS = "spotlight-result-summary-button";
 const tabSummaryState = new Map();
 let tabSummaryRequestCounter = 0;
+const tabSummaryProgressState = new Map();
 let focusBannerEl = null;
 let focusStyleEl = null;
 let focusOriginalTitle = null;
@@ -2306,12 +2314,89 @@ function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
     const [key] = entries.shift();
     if (tabSummaryState.has(key)) {
       tabSummaryState.delete(key);
+      stopSummaryProgress(key);
       removed.push(key);
     }
   }
   removed.forEach((url) => {
     updateSummaryUIForUrl(url);
   });
+}
+
+function stopSummaryProgress(url) {
+  if (!url) {
+    return;
+  }
+  const state = tabSummaryProgressState.get(url);
+  if (state && state.timeoutId) {
+    clearTimeout(state.timeoutId);
+  }
+  tabSummaryProgressState.delete(url);
+}
+
+function scheduleSummaryProgressAdvance(url, state) {
+  if (!url || !state) {
+    return;
+  }
+  const currentStep = SUMMARY_PROGRESS_STEPS[state.stepIndex] || null;
+  const duration = Math.max(600, currentStep?.duration || 1800);
+  if (state.stepIndex >= SUMMARY_PROGRESS_STEPS.length - 1) {
+    state.timeoutId = 0;
+    return;
+  }
+  state.timeoutId = setTimeout(() => {
+    const latest = tabSummaryProgressState.get(url);
+    if (!latest || latest !== state) {
+      return;
+    }
+    if (latest.stepIndex < SUMMARY_PROGRESS_STEPS.length - 1) {
+      latest.stepIndex += 1;
+      latest.message =
+        SUMMARY_PROGRESS_STEPS[latest.stepIndex]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+      updateSummaryUIForUrl(url);
+      scheduleSummaryProgressAdvance(url, latest);
+    } else {
+      latest.timeoutId = 0;
+    }
+  }, duration);
+}
+
+function beginSummaryProgress(url) {
+  if (!url) {
+    return;
+  }
+  stopSummaryProgress(url);
+  const initialMessage = SUMMARY_PROGRESS_STEPS[0]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  const state = { stepIndex: 0, message: initialMessage, timeoutId: 0 };
+  tabSummaryProgressState.set(url, state);
+  scheduleSummaryProgressAdvance(url, state);
+}
+
+function ensureSummaryProgress(url) {
+  if (!url) {
+    return null;
+  }
+  let state = tabSummaryProgressState.get(url);
+  if (!state) {
+    beginSummaryProgress(url);
+    state = tabSummaryProgressState.get(url) || null;
+  }
+  if (state && !state.message) {
+    state.message =
+      SUMMARY_PROGRESS_STEPS[state.stepIndex]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  }
+  return state;
+}
+
+function getSummaryProgressMessage(url) {
+  if (!url) {
+    return SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  }
+  const state = tabSummaryProgressState.get(url);
+  if (state && state.message) {
+    return state.message;
+  }
+  return SUMMARY_PROGRESS_STEPS[0]?.text || SUMMARY_PROGRESS_DEFAULT_MESSAGE;
 }
 
 function updateSummaryButtonElement(button, entry) {
@@ -2364,6 +2449,7 @@ function renderSummaryPanelForElement(item, url, entry) {
     panel = null;
   }
   if (!entry || !entry.status) {
+    stopSummaryProgress(url);
     if (panel) {
       panel.remove();
     }
@@ -2409,6 +2495,8 @@ function renderSummaryPanelForElement(item, url, entry) {
     status.className = TAB_SUMMARY_STATUS_CLASS;
     status.dataset.role = "status";
     status.hidden = true;
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "false");
     panel.appendChild(status);
 
     body.appendChild(panel);
@@ -2477,15 +2565,33 @@ function renderSummaryPanelForElement(item, url, entry) {
   };
 
   const setStatus = (text, className) => {
-    statusEl.textContent = text || "";
+    const nextText = text || "";
+    const previousText = statusEl.textContent || "";
+    if (!nextText) {
+      statusEl.textContent = "";
+      statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
+      statusEl.hidden = true;
+      statusEl.classList.remove("changing");
+      return;
+    }
+    statusEl.hidden = false;
     statusEl.className = className || TAB_SUMMARY_STATUS_CLASS;
-    statusEl.hidden = !text;
+    statusEl.textContent = nextText;
+    if (nextText !== previousText) {
+      statusEl.classList.remove("changing");
+      void statusEl.offsetWidth;
+      statusEl.classList.add("changing");
+    } else {
+      statusEl.classList.remove("changing");
+    }
   };
 
   const hasBullets = Array.isArray(entry.bullets) && entry.bullets.length > 0;
   const hasRawText = typeof entry.raw === "string" && entry.raw;
 
   if (entry.status === "loading") {
+    ensureSummaryProgress(url);
+    const progressText = getSummaryProgressMessage(url);
     if (hasBullets) {
       streamEl.hidden = false;
       streamEl.classList.add("loading");
@@ -2504,14 +2610,16 @@ function renderSummaryPanelForElement(item, url, entry) {
       streamEl.hidden = true;
       renderBullets(entry.bullets, { loading: true });
     }
-    setStatus("", TAB_SUMMARY_STATUS_CLASS);
+    setStatus(progressText, `${TAB_SUMMARY_STATUS_CLASS} loading`);
   } else if (entry.status === "error") {
+    stopSummaryProgress(url);
     streamEl.classList.remove("loading");
     updateSummaryStreamText(streamEl, "", { immediate: true });
     streamEl.hidden = true;
     renderBullets([]);
     setStatus(entry.error || "Summary unavailable", `${TAB_SUMMARY_STATUS_CLASS} error`);
   } else if (entry.status === "ready") {
+    stopSummaryProgress(url);
     renderBullets(entry.bullets, { loading: false });
     streamEl.classList.remove("loading");
     if (hasBullets) {
@@ -2530,11 +2638,12 @@ function renderSummaryPanelForElement(item, url, entry) {
       setStatus("", TAB_SUMMARY_STATUS_CLASS);
     }
   } else {
+    ensureSummaryProgress(url);
     streamEl.classList.remove("loading");
     updateSummaryStreamText(streamEl, "", { immediate: true });
     streamEl.hidden = true;
     renderBullets([]);
-    setStatus("Preparing summary…", `${TAB_SUMMARY_STATUS_CLASS} loading`);
+    setStatus(getSummaryProgressMessage(url), `${TAB_SUMMARY_STATUS_CLASS} loading`);
   }
 
   entry.lastUsed = Date.now();
@@ -2591,9 +2700,11 @@ function handleSummaryProgress(message) {
   if (message.done) {
     entry.status = "ready";
     entry.error = "";
+    stopSummaryProgress(url);
   } else if (entry.status !== "error") {
     entry.status = "loading";
     entry.error = "";
+    ensureSummaryProgress(url);
   }
   entry.lastUsed = now;
   tabSummaryState.set(url, entry);
@@ -2902,6 +3013,9 @@ function requestSummaryForResult(result, options = {}) {
   const now = Date.now();
   const existing = tabSummaryState.get(url);
   if (!forceRefresh && existing && (existing.status === "loading" || existing.status === "ready")) {
+    if (existing.status === "loading") {
+      ensureSummaryProgress(url);
+    }
     updateSummaryUIForUrl(url);
     return;
   }
@@ -2921,6 +3035,7 @@ function requestSummaryForResult(result, options = {}) {
   };
   tabSummaryState.set(url, entry);
   pruneSummaryState();
+  beginSummaryProgress(url);
   updateSummaryUIForUrl(url);
   const payload = {
     type: "SPOTLIGHT_SUMMARIZE",
@@ -2959,6 +3074,7 @@ function requestSummaryForResult(result, options = {}) {
         current.error = errorMessage;
         current.cached = false;
         current.lastUsed = Date.now();
+        stopSummaryProgress(url);
         tabSummaryState.set(url, current);
         pruneSummaryState();
         updateSummaryUIForUrl(url);
@@ -2971,6 +3087,7 @@ function requestSummaryForResult(result, options = {}) {
       current.cached = Boolean(response.cached);
       current.source = typeof response.source === "string" ? response.source : "";
       current.lastUsed = Date.now();
+      stopSummaryProgress(url);
       tabSummaryState.set(url, current);
       pruneSummaryState();
       updateSummaryUIForUrl(url);
@@ -2984,6 +3101,7 @@ function requestSummaryForResult(result, options = {}) {
     current.error = err?.message || "Summary unavailable";
     current.cached = false;
     current.lastUsed = Date.now();
+    stopSummaryProgress(url);
     tabSummaryState.set(url, current);
     pruneSummaryState();
     updateSummaryUIForUrl(url);
