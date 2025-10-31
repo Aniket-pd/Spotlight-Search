@@ -1361,12 +1361,8 @@ function ensureHistoryAssistantElements(parent) {
   container.className = "spotlight-history-assistant";
   container.setAttribute("aria-hidden", "true");
 
-  const header = document.createElement("div");
-  header.className = "spotlight-history-assistant-header";
-  const label = document.createElement("span");
-  label.className = "spotlight-history-assistant-label";
-  label.textContent = "Smart history assistant";
-  header.appendChild(label);
+  const toolbar = document.createElement("div");
+  toolbar.className = "spotlight-history-assistant-toolbar";
 
   historyAssistantClearEl = document.createElement("button");
   historyAssistantClearEl.type = "button";
@@ -1378,11 +1374,21 @@ function ensureHistoryAssistantElements(parent) {
       historyAssistantInputEl.focus({ preventScroll: true });
     }
   });
-  header.appendChild(historyAssistantClearEl);
-  container.appendChild(header);
+  toolbar.appendChild(historyAssistantClearEl);
+  container.appendChild(toolbar);
 
   const form = document.createElement("form");
   form.className = "spotlight-history-assistant-form";
+  const inputWrapper = document.createElement("div");
+  inputWrapper.className = "spotlight-history-assistant-input-wrapper";
+
+  const icon = document.createElement("span");
+  icon.className = "spotlight-history-assistant-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML =
+    '<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" focusable="false"><path fill="currentColor" d="M10 1.75a.75.75 0 0 1 .68.44l1.33 2.97 3.2.28a.75.75 0 0 1 .43 1.31l-2.43 2.13.72 3.14a.75.75 0 0 1-1.1.82L10 11.77l-2.83 1.07a.75.75 0 0 1-1.1-.82l.72-3.14-2.43-2.13a.75.75 0 0 1 .43-1.31l3.2-.28 1.33-2.97A.75.75 0 0 1 10 1.75Zm0 6.28a1.97 1.97 0 1 0 0 3.94 1.97 1.97 0 0 0 0-3.94Z"/></svg>';
+  inputWrapper.appendChild(icon);
+
   historyAssistantInputEl = document.createElement("input");
   historyAssistantInputEl.type = "text";
   historyAssistantInputEl.className = "spotlight-history-assistant-input";
@@ -1394,7 +1400,8 @@ function ensureHistoryAssistantElements(parent) {
   historyAssistantInputEl.addEventListener("keydown", (event) => {
     event.stopPropagation();
   });
-  form.appendChild(historyAssistantInputEl);
+  inputWrapper.appendChild(historyAssistantInputEl);
+  form.appendChild(inputWrapper);
 
   historyAssistantSubmitEl = document.createElement("button");
   historyAssistantSubmitEl.type = "submit";

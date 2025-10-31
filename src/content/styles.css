@@ -616,20 +616,11 @@
   display: flex;
 }
 
-.spotlight-history-assistant-header {
+.spotlight-history-assistant-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-}
-
-
-.spotlight-history-assistant-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--spotlight-color-text-tertiary);
 }
 
 .spotlight-history-assistant-clear {
@@ -663,12 +654,34 @@
   gap: var(--spotlight-gap-sm);
 }
 
-.spotlight-history-assistant-input {
+.spotlight-history-assistant-input-wrapper {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.spotlight-history-assistant-icon {
+  position: absolute;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--spotlight-color-text-tertiary);
+  pointer-events: none;
+}
+
+.spotlight-history-assistant-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.spotlight-history-assistant-input {
+  width: 100%;
   border-radius: var(--spotlight-radius-small);
   border: 1px solid var(--spotlight-input-border);
   background: var(--spotlight-input-bg);
-  padding: 10px 12px;
+  padding: 10px 12px 10px 40px;
   color: var(--spotlight-color-text-primary);
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
