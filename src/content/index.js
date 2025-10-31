@@ -3460,16 +3460,17 @@ function renderResults() {
         "";
       if (engineLabel) {
         url.textContent = engineLabel;
-        url.title = engineLabel;
+        url.setAttribute("aria-label", engineLabel);
         meta.appendChild(url);
       }
     } else {
       const descriptionText = result.description || result.url || "";
       if (descriptionText) {
         url.textContent = descriptionText;
-        url.title = descriptionText;
+        url.setAttribute("aria-label", descriptionText);
       } else {
         url.textContent = "";
+        url.removeAttribute("aria-label");
       }
       meta.appendChild(url);
 
