@@ -25,10 +25,10 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 | `--spotlight-color-text-secondary` | Body text | Charcoal 68% | Mist grey |
 | `--spotlight-color-text-tertiary` | Hints & meta | Charcoal 52% | Smoky grey |
 | `--spotlight-color-text-quiet` | Low-emphasis captions | Charcoal 40% | Cool graphite |
-| `--spotlight-color-accent` | Accent base | `#2bdd9a` | `#2bdd9a` |
-| `--spotlight-color-accent-strong` | Accent highlight | `#16b67c` | `#16b67c` |
-| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(43, 221, 154, 0.18)` | `rgba(43, 221, 154, 0.22)` |
-| `--spotlight-result-hover` | Result hover fill | `rgba(43, 221, 154, 0.16)` | `rgba(43, 221, 154, 0.22)` |
+| `--spotlight-color-accent` | Accent base | `#0a84ff` | `#0a84ff` |
+| `--spotlight-color-accent-strong` | Accent highlight | `#0060df` | `#0060df` |
+| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(10, 132, 255, 0.18)` | `rgba(10, 132, 255, 0.24)` |
+| `--spotlight-result-hover` | Result hover fill | `rgba(10, 132, 255, 0.08)` | `rgba(10, 132, 255, 0.14)` |
 
 Additional tokens (chip borders, menu surfaces, shadows, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
 
@@ -59,7 +59,7 @@ Reusable spacing tokens keep layouts balanced:
 - Keep shell width capped to `min(720px, 92vw)` to maintain comfortable reading widths.
 
 ### Input region
-- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` to bring in the emerald accent without harsh glows.
+- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` to bring in the blue accent without harsh glows.
 - The query field inherits `--spotlight-color-text-primary`; placeholder text uses `--spotlight-input-placeholder` for consistent contrast.
 - Ghost suggestions (`.spotlight-ghost`) pull from `--spotlight-color-text-tertiary` and should only toggle opacity.
 
