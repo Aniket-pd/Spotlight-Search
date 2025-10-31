@@ -4347,6 +4347,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function initializeSpotlightContent() {
   ensureShadowRoot();
   requestFocusStatus();
+  if (typeof window !== "undefined" && window.SPOTLIGHT_AUTO_OPEN) {
+    Promise.resolve()
+      .then(() => {
+        delete window.SPOTLIGHT_AUTO_OPEN;
+        return openOverlay();
+      })
+      .catch((err) => {
+        console.warn("Spotlight: automatic overlay open failed", err);
+      });
+  }
 }
 
 if (document.readyState === "loading") {

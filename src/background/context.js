@@ -42,15 +42,66 @@ export function createBackgroundContext({ buildIndex }) {
     }, delay);
   }
 
-  async function sendToggleMessage() {
-    try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.id !== undefined) {
-        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
-      }
-    } catch (err) {
-      console.warn("Spotlight: unable to toggle overlay", err);
+  function isScriptRestrictedUrl(url) {
+    if (typeof url !== "string" || !url) {
+      return false;
     }
+    const lowered = url.toLowerCase();
+    if (
+      lowered.startsWith("chrome://") ||
+      lowered.startsWith("chrome-search://") ||
+      lowered.startsWith("edge://") ||
+      lowered.startsWith("about:")
+    ) {
+      return true;
+    }
+    try {
+      const { hostname } = new URL(url);
+      return hostname === "chrome.google.com" || hostname === "chromewebstore.google.com";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function openFallbackTab(activeTab) {
+    try {
+      const fallbackUrl = chrome.runtime.getURL("spotlight.html");
+      const createProperties = { url: fallbackUrl, active: true };
+      if (activeTab && activeTab.windowId !== undefined) {
+        createProperties.windowId = activeTab.windowId;
+      }
+      if (activeTab && typeof activeTab.index === "number") {
+        createProperties.index = activeTab.index + 1;
+      }
+      await chrome.tabs.create(createProperties);
+    } catch (err) {
+      console.error("Spotlight: failed to open fallback tab", err);
+    }
+  }
+
+  async function sendToggleMessage() {
+    let activeTab = null;
+    try {
+      [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch (err) {
+      console.warn("Spotlight: unable to determine active tab", err);
+    }
+
+    if (activeTab && isScriptRestrictedUrl(activeTab.url)) {
+      await openFallbackTab(activeTab);
+      return;
+    }
+
+    if (activeTab && activeTab.id !== undefined) {
+      try {
+        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+        return;
+      } catch (err) {
+        console.warn("Spotlight: unable to toggle overlay", err);
+      }
+    }
+
+    await openFallbackTab(activeTab);
   }
 
   async function openItem(itemId) {

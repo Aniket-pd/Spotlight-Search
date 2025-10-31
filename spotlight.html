@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotlight</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 20% 20%, #1d2236 0%, #101420 38%, #060810 100%);
+        color: #fff;
+        font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0.01em;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="src/shared/web-search.js"></script>
+    <script src="src/content/bookmark-organizer-ui.js"></script>
+    <script>
+      window.SPOTLIGHT_AUTO_OPEN = true;
+    </script>
+    <script src="src/content/index.js"></script>
+  </body>
+</html>
