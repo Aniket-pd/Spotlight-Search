@@ -47,7 +47,7 @@
   --spotlight-input-focus-ring: none;
 
   --spotlight-result-hover: rgba(17, 17, 17, 0.06);
-  --spotlight-result-active: rgba(0, 0, 0, 0.12);
+  --spotlight-result-active: rgba(0, 0, 0, 0.75);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.78);
   --spotlight-chip-border: rgba(222, 222, 226, 0.52);
   --spotlight-chip-hover: rgba(17, 17, 17, 0.16);
@@ -83,7 +83,7 @@
   --spotlight-input-shadow: none;
   --spotlight-input-focus-ring: none;
   --spotlight-result-hover: rgba(255, 255, 255, 0.12);
-  --spotlight-result-active: rgba(255, 255, 255, 0.18);
+  --spotlight-result-active: rgba(255, 255, 255, 0.75);
   --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
   --spotlight-chip-border: rgba(96, 100, 116, 0.5);
   --spotlight-chip-hover: rgba(255, 255, 255, 0.22);
@@ -116,7 +116,7 @@
   --spotlight-input-shadow: none;
   --spotlight-input-focus-ring: none;
   --spotlight-result-hover: rgba(17, 17, 17, 0.06);
-  --spotlight-result-active: rgba(0, 0, 0, 0.12);
+  --spotlight-result-active: rgba(0, 0, 0, 0.75);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.78);
   --spotlight-chip-border: rgba(222, 222, 226, 0.52);
   --spotlight-chip-hover: rgba(17, 17, 17, 0.16);
@@ -150,7 +150,7 @@
     --spotlight-input-shadow: none;
     --spotlight-input-focus-ring: none;
     --spotlight-result-hover: rgba(255, 255, 255, 0.12);
-    --spotlight-result-active: rgba(255, 255, 255, 0.18);
+    --spotlight-result-active: rgba(255, 255, 255, 0.75);
     --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
     --spotlight-chip-border: rgba(96, 100, 116, 0.5);
     --spotlight-chip-hover: rgba(255, 255, 255, 0.22);

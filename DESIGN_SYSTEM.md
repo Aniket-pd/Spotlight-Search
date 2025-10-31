@@ -29,6 +29,7 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 | `--spotlight-color-accent-strong` | Accent highlight | `#000000` | `#ffffff` |
 | `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(17, 17, 17, 0.12)` | `rgba(245, 245, 245, 0.16)` |
 | `--spotlight-result-hover` | Result hover fill | `rgba(17, 17, 17, 0.06)` | `rgba(255, 255, 255, 0.12)` |
+| `--spotlight-result-active` | Result active fill | `rgba(0, 0, 0, 0.75)` | `rgba(255, 255, 255, 0.75)` |
 
 Additional tokens (chip borders, menu surfaces, shadows, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
 
