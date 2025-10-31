@@ -996,8 +996,8 @@ function hasAudioCommandIntent(text = "", words = []) {
 }
 
 function findBestStaticCommand(query, context) {
-  const compactQuery = normalizeCommandToken(query);
-  if (!compactQuery) {
+  const normalizedQuery = normalizeCommandToken(query);
+  if (!normalizedQuery) {
     return null;
   }
 
@@ -1006,7 +1006,16 @@ function findBestStaticCommand(query, context) {
       continue;
     }
     const phrases = [command.title, ...(command.aliases || [])];
-    const matched = phrases.some((phrase) => normalizeCommandToken(phrase).startsWith(compactQuery));
+    const matched = phrases.some((phrase) => {
+      const normalizedPhrase = normalizeCommandToken(phrase);
+      if (!normalizedPhrase) {
+        return false;
+      }
+      return (
+        normalizedPhrase.startsWith(normalizedQuery) ||
+        normalizedQuery.startsWith(normalizedPhrase)
+      );
+    });
     if (!matched) {
       continue;
     }
