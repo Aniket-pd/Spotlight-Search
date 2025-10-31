@@ -1837,13 +1837,18 @@ export function runSearch(query, data, options = {}) {
   const { filterType, remainder } = extractFilterPrefix(initial);
   const trimmed = remainder.trim();
   const { index, termBuckets, items, metadata = {} } = data;
-  const tabCount = typeof metadata.tabCount === "number"
+  const indexedTabCount = typeof metadata.tabCount === "number"
     ? metadata.tabCount
     : items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0);
   const bookmarkCount = typeof metadata.bookmarkCount === "number"
     ? metadata.bookmarkCount
     : items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0);
   const focusedTabInfo = metadata && typeof metadata.focusedTab === "object" ? metadata.focusedTab : null;
+  const metadataCommandTabs = Array.isArray(metadata.commandTabs) ? metadata.commandTabs : null;
+  let commandTabCount = typeof metadata.commandTabCount === "number" ? metadata.commandTabCount : null;
+  if (commandTabCount === null) {
+    commandTabCount = metadataCommandTabs ? metadataCommandTabs.length : indexedTabCount;
+  }
 
   const navigationState = options.navigation || null;
 
@@ -1858,13 +1863,14 @@ export function runSearch(query, data, options = {}) {
     };
   }
 
-  const tabs = items.filter((item) => item.type === "tab");
+  const indexedTabs = items.filter((item) => item.type === "tab");
+  const tabs = metadataCommandTabs && metadataCommandTabs.length ? metadataCommandTabs : indexedTabs;
   const bookmarkItems = filterType === "bookmark" ? items.filter((item) => item.type === "bookmark") : [];
   const downloadItems = filterType === "download" ? items.filter((item) => item.type === "download") : [];
   const topSiteItems = items.filter((item) => item.type === "topSite");
   const historyBoundaries = computeHistoryBoundaries(Date.now());
   const availableSubfilters = buildSubfilterOptions(filterType, {
-    tabs,
+    tabs: indexedTabs,
     bookmarks: bookmarkItems,
     downloads: downloadItems,
   });
@@ -1874,8 +1880,19 @@ export function runSearch(query, data, options = {}) {
       ? { type: filterType, options: availableSubfilters, activeId: activeSubfilterId }
       : null;
   const subfilterContext = { historyBoundaries };
-  const audibleTabCount = tabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
-  const commandContext = { tabCount, tabs, audibleTabCount, bookmarkCount, focusedTab: focusedTabInfo };
+  const audibleTabCount =
+    typeof metadata.audibleTabCount === "number"
+      ? metadata.audibleTabCount
+      : tabs.reduce((count, tab) => (tab && tab.audible ? count + 1 : count), 0);
+  const focusedCommandTab =
+    focusedTabInfo || (tabs.find((tab) => tab && tab.active) || null);
+  const commandContext = {
+    tabCount: commandTabCount,
+    tabs,
+    audibleTabCount,
+    bookmarkCount,
+    focusedTab: focusedCommandTab,
+  };
   const includeDefaultCommands = filterType === "command" && !trimmed;
   const commandSuggestions =
     trimmed || includeDefaultCommands

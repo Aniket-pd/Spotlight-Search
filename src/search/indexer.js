@@ -162,8 +162,34 @@ function getDownloadDisplayPath(filename = "") {
 
 async function indexTabs(indexMap, termBuckets, items) {
   const tabs = await chrome.tabs.query({});
+  const commandTabs = [];
+  let fallbackLastAccessed = Date.now();
+
   for (const tab of tabs) {
-    if (!tab.url || tab.url.startsWith("chrome://")) continue;
+    const snapshot = {
+      id: tab.id,
+      tabId: tab.id,
+      windowId: tab.windowId,
+      title: tab.title || tab.url || "Untitled",
+      url: tab.url || "",
+      type: "tab",
+      active: Boolean(tab.active),
+      audible: Boolean(tab.audible),
+      lastAccessed:
+        typeof tab.lastAccessed === "number" && Number.isFinite(tab.lastAccessed)
+          ? tab.lastAccessed
+          : fallbackLastAccessed,
+    };
+    commandTabs.push(snapshot);
+
+    if (typeof tab.lastAccessed !== "number" || !Number.isFinite(tab.lastAccessed)) {
+      fallbackLastAccessed -= 1;
+    }
+
+    if (!tab.url || tab.url.startsWith("chrome://")) {
+      continue;
+    }
+
     const itemId = items.length;
     items.push({
       id: itemId,
@@ -174,7 +200,7 @@ async function indexTabs(indexMap, termBuckets, items) {
       windowId: tab.windowId,
       active: Boolean(tab.active),
       audible: Boolean(tab.audible),
-      lastAccessed: tab.lastAccessed || Date.now(),
+      lastAccessed: snapshot.lastAccessed,
       origin: extractOrigin(tab.url),
     });
 
@@ -187,6 +213,16 @@ async function indexTabs(indexMap, termBuckets, items) {
       // ignore malformed URL
     }
   }
+
+  const focusedTab = commandTabs.find((tab) => tab && tab.active) || null;
+  const audibleTabCount = commandTabs.reduce((count, tab) => (tab.audible ? count + 1 : count), 0);
+
+  return {
+    commandTabs,
+    focusedTab,
+    totalTabCount: commandTabs.length,
+    audibleTabCount,
+  };
 }
 
 function computeFolderKey(path = []) {
@@ -345,7 +381,7 @@ export async function buildIndex() {
   const indexMap = new Map();
   const termBuckets = new Map();
 
-  await Promise.all([
+  const [tabMetadata] = await Promise.all([
     indexTabs(indexMap, termBuckets, items),
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
@@ -362,11 +398,20 @@ export async function buildIndex() {
   }
   buckets["*"] = Array.from(allTerms);
 
+  const commandTabs = Array.isArray(tabMetadata?.commandTabs) ? tabMetadata.commandTabs : [];
+
   const metadata = {
     tabCount: items.reduce((count, item) => (item.type === "tab" ? count + 1 : count), 0),
     bookmarkCount: items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0),
     downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
     topSiteCount: items.reduce((count, item) => (item.type === "topSite" ? count + 1 : count), 0),
+    commandTabCount: commandTabs.length,
+    commandTabs,
+    focusedTab: tabMetadata?.focusedTab || null,
+    audibleTabCount:
+      typeof tabMetadata?.audibleTabCount === "number"
+        ? tabMetadata.audibleTabCount
+        : undefined,
   };
 
   return {
