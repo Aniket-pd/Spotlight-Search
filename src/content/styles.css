@@ -883,6 +883,7 @@
   opacity: 0;
   transition: opacity 0.15s ease;
   text-rendering: auto;
+  user-select: none;
 }
 
 .spotlight-ghost-prefix,
@@ -891,7 +892,7 @@
 }
 
 .spotlight-ghost-prefix {
-  visibility: hidden;
+  color: transparent;
 }
 
 .spotlight-ghost-suffix {

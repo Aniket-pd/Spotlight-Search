@@ -425,6 +425,7 @@ function createOverlay() {
 
   ghostEl = document.createElement("div");
   ghostEl.className = "spotlight-ghost";
+  ghostEl.setAttribute("aria-hidden", "true");
   ghostPrefixEl = document.createElement("span");
   ghostPrefixEl.className = "spotlight-ghost-prefix";
   ghostSuffixEl = document.createElement("span");
