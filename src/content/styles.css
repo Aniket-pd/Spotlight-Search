@@ -224,21 +224,21 @@
 .spotlight-input-wrapper {
   display: flex;
   flex-direction: column;
-  padding: 22px 24px 16px;
+  padding: 22px 24px var(--spotlight-gap-sm);
   background: transparent;
   flex: 0 0 auto;
 }
 
 .spotlight-input-wrapper > * + * {
-  margin-top: var(--spotlight-gap-sm);
+  margin-top: var(--spotlight-gap-xs);
 }
 
 .spotlight-filter-shortcuts {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--spotlight-gap-xs);
-  padding: 0 2px;
-  margin-top: var(--spotlight-gap-xs);
+  gap: var(--spotlight-gap-sm);
+  padding: 0;
+  margin-top: 0;
 }
 
 .spotlight-filter-shortcuts[aria-hidden="true"] {
@@ -466,8 +466,8 @@
   transform: translateY(-6px);
   transition: opacity 0.2s ease, transform 0.2s ease;
   pointer-events: none;
-  margin-top: 6px;
-  padding-left: 2px;
+  margin-top: 0;
+  padding-left: 0;
 }
 
 .spotlight-subfilters.visible {
@@ -908,11 +908,17 @@
   min-height: 18px;
 }
 
+.spotlight-status:empty {
+  display: none;
+  min-height: 0;
+  margin: 0;
+}
+
 
 .spotlight-results {
   list-style: none;
   margin: 0;
-  padding: 10px var(--spotlight-gap-lg);
+  padding: var(--spotlight-gap-sm) 24px var(--spotlight-gap-lg);
   max-height: 420px;
   overflow-y: auto;
   scrollbar-width: thin;
