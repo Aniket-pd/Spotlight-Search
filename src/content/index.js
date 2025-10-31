@@ -4349,8 +4349,42 @@ function initializeSpotlightContent() {
   requestFocusStatus();
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initializeSpotlightContent, { once: true });
-} else {
+function scheduleAutoLaunchIfRequested() {
+  if (!globalThis || !globalThis.__spotlightAutoLaunch) {
+    return;
+  }
+
+  const launch = () => {
+    setTimeout(() => {
+      try {
+        void openOverlay();
+      } finally {
+        globalThis.__spotlightAutoLaunch = false;
+      }
+    }, 20);
+  };
+
+  if (document.readyState === "loading") {
+    window.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        launch();
+      },
+      { once: true }
+    );
+    return;
+  }
+
+  launch();
+}
+
+function handleContentReady() {
   initializeSpotlightContent();
+  scheduleAutoLaunchIfRequested();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", handleContentReady, { once: true });
+} else {
+  handleContentReady();
 }
