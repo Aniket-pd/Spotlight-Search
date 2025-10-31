@@ -461,7 +461,7 @@
   transform: translateY(-6px);
   transition: opacity 0.2s ease, transform 0.2s ease;
   pointer-events: none;
-  margin-top: var(--spotlight-gap-xs);
+  margin-top: 0;
   padding-left: 0;
 }
 
