@@ -1,4 +1,7 @@
 const DEFAULT_REBUILD_DELAY = 600;
+const FALLBACK_PAGE_URL = chrome.runtime.getURL("fallback/launcher.html");
+const FALLBACK_SEND_ATTEMPTS = 5;
+const FALLBACK_SEND_DELAY_MS = 200;
 
 export function createBackgroundContext({ buildIndex }) {
   const state = {
@@ -42,14 +45,140 @@ export function createBackgroundContext({ buildIndex }) {
     }, delay);
   }
 
-  async function sendToggleMessage() {
+  function isFallbackTab(tab) {
+    if (!tab?.url) {
+      return false;
+    }
+    return tab.url.startsWith(FALLBACK_PAGE_URL);
+  }
+
+  function isRestrictedUrl(rawUrl) {
+    if (!rawUrl) {
+      return true;
+    }
+    const lower = rawUrl.toLowerCase();
+    if (
+      lower.startsWith("chrome://") ||
+      lower.startsWith("chrome-untrusted://") ||
+      lower.startsWith("edge://") ||
+      lower.startsWith("brave://") ||
+      lower.startsWith("vivaldi://") ||
+      lower.startsWith("opera://") ||
+      lower.startsWith("about:") ||
+      lower.startsWith("devtools://") ||
+      lower.startsWith("view-source:") ||
+      lower.startsWith("chrome-extension://")
+    ) {
+      return true;
+    }
     try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.id !== undefined) {
-        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+      const url = new URL(rawUrl);
+      const host = url.hostname.toLowerCase();
+      if (host === "chrome.google.com" && url.pathname.startsWith("/webstore")) {
+        return true;
+      }
+      if (host === "chromewebstore.google.com") {
+        return true;
       }
     } catch (err) {
+      return false;
+    }
+    return false;
+  }
+
+  function shouldLaunchFallback(tab, error) {
+    if (!tab || isFallbackTab(tab)) {
+      return false;
+    }
+    if (isRestrictedUrl(tab.url || "")) {
+      return true;
+    }
+    const message = typeof error?.message === "string" ? error.message : "";
+    return message.includes("Receiving end does not exist");
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  async function sendToggleWithRetry(tabId) {
+    let attempt = 0;
+    while (attempt < FALLBACK_SEND_ATTEMPTS) {
+      try {
+        await chrome.tabs.sendMessage(tabId, { type: "SPOTLIGHT_TOGGLE" });
+        return true;
+      } catch (err) {
+        attempt += 1;
+        if (attempt >= FALLBACK_SEND_ATTEMPTS) {
+          throw err;
+        }
+        await delay(FALLBACK_SEND_DELAY_MS);
+      }
+    }
+    return false;
+  }
+
+  let fallbackLaunchPromise = null;
+
+  async function launchFallbackOverlay() {
+    if (!fallbackLaunchPromise) {
+      fallbackLaunchPromise = (async () => {
+        const pattern = `${FALLBACK_PAGE_URL}*`;
+        let targetTab = null;
+        try {
+          const existing = await chrome.tabs.query({ url: [pattern] });
+          targetTab = existing.find((tab) => tab.id !== undefined) || null;
+          if (targetTab && targetTab.id !== undefined) {
+            await chrome.tabs.update(targetTab.id, { active: true });
+          }
+        } catch (err) {
+          console.warn("Spotlight: failed to locate fallback tab", err);
+        }
+
+        if (!targetTab) {
+          try {
+            targetTab = await chrome.tabs.create({ url: FALLBACK_PAGE_URL, active: true });
+          } catch (err) {
+            console.warn("Spotlight: failed to open fallback tab", err);
+            return;
+          }
+        }
+
+        if (!targetTab || targetTab.id === undefined) {
+          return;
+        }
+
+        try {
+          await sendToggleWithRetry(targetTab.id);
+        } catch (err) {
+          console.warn("Spotlight: unable to toggle fallback overlay", err);
+        }
+      })().finally(() => {
+        fallbackLaunchPromise = null;
+      });
+    }
+    await fallbackLaunchPromise;
+  }
+
+  async function sendToggleMessage() {
+    let activeTab = null;
+    try {
+      [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!activeTab || activeTab.id === undefined) {
+        return;
+      }
+      await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+    } catch (err) {
       console.warn("Spotlight: unable to toggle overlay", err);
+      try {
+        if (shouldLaunchFallback(activeTab, err)) {
+          await launchFallbackOverlay();
+        }
+      } catch (fallbackErr) {
+        console.warn("Spotlight: fallback evaluation failed", fallbackErr);
+      }
     }
   }
 

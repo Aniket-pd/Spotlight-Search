@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotlight Launcher</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at top, #121b36, #070a14 56%);
+        color: rgba(233, 238, 255, 0.86);
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        text-rendering: optimizeLegibility;
+      }
+      main {
+        max-width: 440px;
+        padding: 32px;
+        text-align: center;
+        background: rgba(8, 13, 28, 0.85);
+        border-radius: 24px;
+        box-shadow: 0 30px 60px rgba(2, 6, 19, 0.55);
+        backdrop-filter: blur(24px);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+        letter-spacing: 0.01em;
+      }
+      p {
+        margin: 0;
+        font-size: 15px;
+        line-height: 1.6;
+        color: rgba(215, 226, 255, 0.72);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Launching Spotlight…</h1>
+      <p>
+        Chrome doesn’t allow Spotlight to run on that page, so we opened a fresh tab that
+        can host the overlay for you. It should appear momentarily.
+      </p>
+    </main>
+    <script src="../shared/web-search.js"></script>
+    <script src="../content/bookmark-organizer-ui.js"></script>
+    <script src="../content/index.js"></script>
+  </body>
+</html>
