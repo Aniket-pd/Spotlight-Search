@@ -273,7 +273,7 @@
 .spotlight-filter-chip.active {
   background: var(--spotlight-color-accent-soft-strong);
   color: var(--spotlight-color-text-primary);
-  border-color: transparent;
+  border-color: var(--spotlight-color-accent-strong);
 }
 
 .spotlight-input-container {
