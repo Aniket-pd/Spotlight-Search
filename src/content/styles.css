@@ -272,6 +272,7 @@
 
 .spotlight-filter-chip:not(.active) {
   color: var(--spotlight-button-text-inactive, var(--spotlight-color-text-secondary));
+  background: transparent;
 }
 
 .spotlight-filter-chip:hover,
@@ -836,6 +837,7 @@
 
 .spotlight-subfilter:not(.active) {
   color: var(--spotlight-button-text-inactive, var(--spotlight-color-text-secondary));
+  background: transparent;
 }
 
 .spotlight-subfilter:hover {
