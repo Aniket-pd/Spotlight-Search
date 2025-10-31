@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Spotlight Animation Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at 20% 20%, rgba(49, 200, 155, 0.24), transparent 48%),
+          radial-gradient(circle at 90% 30%, rgba(129, 140, 248, 0.24), transparent 52%),
+          #0f1117;
+        color: #f4f6ff;
+        padding: 48px clamp(24px, 6vw, 80px);
+        box-sizing: border-box;
+      }
+      h1 {
+        font-size: clamp(28px, 3vw, 42px);
+        margin-bottom: 8px;
+      }
+      p.lede {
+        max-width: 680px;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 16px;
+        line-height: 1.6;
+        margin-bottom: 32px;
+      }
+      .demo-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 24px;
+        align-items: stretch;
+      }
+      .demo-card {
+        background: rgba(18, 21, 28, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 20px;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        box-shadow: 0 18px 48px rgba(15, 18, 24, 0.32);
+        backdrop-filter: blur(24px);
+      }
+      .demo-card header {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        font-size: 14px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .demo-card button {
+        align-self: flex-start;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        padding: 8px 18px;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        transition: background-color 0.18s ease, border-color 0.18s ease;
+      }
+      .demo-card button:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .demo-overlay-backdrop {
+        position: relative;
+        width: 100%;
+        height: 240px;
+        border-radius: 16px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 18, 24, 0.65);
+        overflow: hidden;
+      }
+      .demo-overlay-backdrop.show {
+        display: flex;
+      }
+      .demo-overlay-shell {
+        width: min(360px, 90%);
+      }
+      .demo-chip-stack {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .demo-results {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .demo-result {
+        display: flex;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .demo-result .title {
+        font-weight: 600;
+      }
+      .demo-result .meta {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 12px;
+      }
+      .demo-menu {
+        position: relative;
+      }
+      .demo-menu-list {
+        position: absolute;
+        top: 44px;
+        left: 0;
+        right: auto;
+        min-width: 220px;
+        border-radius: 12px;
+        background: rgba(24, 27, 35, 0.95);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 8px 0;
+        display: none;
+        box-shadow: 0 16px 40px rgba(12, 18, 32, 0.35);
+      }
+      .demo-menu-list.show {
+        display: block;
+      }
+      .demo-menu-item {
+        padding: 10px 18px;
+        cursor: pointer;
+      }
+      .demo-menu-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .demo-panel {
+        position: relative;
+        min-height: 120px;
+      }
+      .demo-panel-content {
+        border-radius: 16px;
+        padding: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(24, 27, 35, 0.9);
+        display: none;
+      }
+      .demo-panel-content.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Spotlight Animation Playground</h1>
+    <p class="lede">
+      Trigger the helpers that power the Spotlight overlay. Each demo uses the shared spring + FLIP utilities to keep layout updates
+      smooth and responsive.
+    </p>
+    <section class="demo-grid">
+      <article class="demo-card" data-demo="overlay">
+        <header>Overlay spring</header>
+        <p>Toggle the launcher shell with the shared overlay animation helper.</p>
+        <button type="button" data-overlay-toggle>Toggle overlay</button>
+        <div class="demo-overlay-backdrop" data-overlay-backdrop>
+          <div class="spotlight-shell demo-overlay-shell">
+            <div class="spotlight-input-wrapper">
+              <div class="spotlight-input-container">
+                <span class="spotlight-input-icon" aria-hidden="true"></span>
+                <input class="spotlight-input" placeholder="Ask Spotlight anything…" />
+              </div>
+            </div>
+            <ul class="spotlight-results" data-overlay-results>
+              <li class="spotlight-result">Keep typing to populate…</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+      <article class="demo-card" data-demo="chips">
+        <header>Filter chips</header>
+        <p>Randomise the set of filters to see FLIP + stagger in action.</p>
+        <button type="button" data-chip-shuffle>Shuffle chips</button>
+        <div class="demo-chip-stack" data-chip-stack></div>
+      </article>
+      <article class="demo-card" data-demo="results">
+        <header>Result list</header>
+        <p>Add, remove, and re-order results. Inserts scale in, removals shrink + fade.</p>
+        <div>
+          <button type="button" data-results-add>Add result</button>
+          <button type="button" data-results-remove>Remove result</button>
+          <button type="button" data-results-shuffle>Shuffle</button>
+        </div>
+        <ul class="demo-results" data-results-list></ul>
+      </article>
+      <article class="demo-card" data-demo="menu">
+        <header>Menus</header>
+        <p>Menus slide and fade while each option flips into place.</p>
+        <div class="demo-menu">
+          <button type="button" data-menu-toggle>Toggle menu</button>
+          <div class="demo-menu-list" data-menu-list></div>
+        </div>
+      </article>
+      <article class="demo-card" data-demo="panel">
+        <header>Assistant panel</header>
+        <p>Panels use the shared helper to slide from a subtle offset.</p>
+        <button type="button" data-panel-toggle>Toggle panel</button>
+        <div class="demo-panel">
+          <div class="demo-panel-content" data-panel-content>
+            <strong>History assistant</strong>
+            <p>Ask “What did I read about CSS animations last week?”</p>
+          </div>
+        </div>
+      </article>
+    </section>
+    <script src="animations.js"></script>
+    <script src="animation-demo.js"></script>
+  </body>
+</html>

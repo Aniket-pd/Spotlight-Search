@@ -230,6 +230,7 @@
   flex-direction: column;
   padding: 16px 12px;
   gap: 16px;
+  transform-origin: 50% 16px;
 }
 
 .spotlight-input-wrapper {
@@ -267,7 +268,7 @@
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .spotlight-filter-chip:not(.active) {
@@ -519,6 +520,7 @@
   scrollbar-width: none;
   mask-image: linear-gradient(to right, rgba(0, 0, 0, 0), #000 12px, #000 calc(100% - 12px), rgba(0, 0, 0, 0));
   flex: 1 1 auto;
+  position: relative;
 }
 
 .spotlight-subfilters-scroll::-webkit-scrollbar {
@@ -831,7 +833,7 @@
   background: var(--spotlight-chip-bg);
   backdrop-filter: var(--spotlight-backdrop-filter);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, border 0.2s ease;
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
   white-space: nowrap;
 }
 
@@ -958,6 +960,12 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+}
+
+.spotlight-flip-ghost {
+  pointer-events: none;
+  filter: saturate(0.96);
 }
 
 .spotlight-results::-webkit-scrollbar {

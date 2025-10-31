@@ -97,6 +97,20 @@ When introducing new elements:
 - Hover states shift background and optionally translate by 1px for tactile feedback.
 - Focus-visible states rely on accent-colored outlines (`var(--spotlight-color-accent)` variants). Do not use browser defaults.
 - Loading spinners share the `.spotlight-spinner` component to keep motion consistent.
+- Layout changes animate using the shared FLIP helpers in `src/content/animations.js`.
+- Only transform + opacity are animated; avoid animating layout-affecting properties like width/height directly.
+
+### Spring presets & selection
+- `gentle` (default) — Low bounce, medium stiffness. Use for shell transitions, result list updates, and general layout shuffles.
+- `snappy` — High stiffness with quick settling. Reserve for subtle micro-interactions that should resolve fast (e.g., inline confirmations).
+- `delicate` — Softer stiffness and damping that pair well with lightweight UI like chips, menus, and tooltips.
+
+Guidance:
+
+- Clamp distances with the helper’s adaptive duration window (~140–320 ms). Larger moves auto-lengthen while keeping overshoot under 2%.
+- Stagger densely updated lists by 10–20 ms to hint at directionality without delaying feedback.
+- Respect `prefers-reduced-motion` — the helper already shortens duration and distance when the user opts in.
+- Avoid springing critical caret/text affordances; keep those instant to preserve usability.
 
 ## Implementation checklist
 Before merging a new UI change:
