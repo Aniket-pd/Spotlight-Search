@@ -28,6 +28,14 @@ const SUMMARY_META_PATTERNS = [
   /here'?s\s+how\s+(?:i|we)\s+(?:would|will)\s+(?:approach|handle)/i,
 ];
 
+const INPUT_TOO_LARGE_PATTERNS = [
+  /input[\s_-]*(?:too\s*)?(?:long|large)/i,
+  /too\s*(?:long|large)[\s_-]*input/i,
+  /context[\s_-]*(?:length|limit)/i,
+  /token[\s_-]*(?:length|limit)/i,
+  /exceeds?[\s_-]*(?:the\s*)?(?:maximum|max|limit)/i,
+];
+
 const DEV_MODE =
   typeof process !== "undefined" &&
   process &&
@@ -621,6 +629,87 @@ function truncateForContext(text, maxLength = 240) {
     return trimmed;
   }
   return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function isInputTooLargeError(error) {
+  if (!error) {
+    return false;
+  }
+  const values = [];
+  const pushValue = (value) => {
+    if (typeof value === "string" && value) {
+      values.push(value.toLowerCase());
+    }
+  };
+  pushValue(error.code);
+  pushValue(error.name);
+  pushValue(error.message);
+  if (error?.cause && typeof error.cause === "object") {
+    pushValue(error.cause.code);
+    pushValue(error.cause.name);
+    pushValue(error.cause.message);
+    pushValue(error.cause.error);
+  }
+  if (!values.length) {
+    return false;
+  }
+  if (
+    values.some((value) =>
+      value.includes("input_too_large") || value.includes("input-too-large") || value.includes("input too large")
+    )
+  ) {
+    return true;
+  }
+  if (values.some((value) => value.includes("context_length") || value.includes("context-length"))) {
+    return true;
+  }
+  if (values.some((value) => value.includes("token_limit") || value.includes("token-limit"))) {
+    return true;
+  }
+  const combined = values.join(" ");
+  if (!/(input|context|token|size|length)/.test(combined)) {
+    return false;
+  }
+  return INPUT_TOO_LARGE_PATTERNS.some((pattern) => pattern.test(combined));
+}
+
+function buildDatasetSizeFallbacks(length) {
+  if (!Number.isFinite(length) || length <= 0) {
+    return [];
+  }
+  const normalizedLength = Math.max(1, Math.floor(length));
+  const sizes = [];
+  const seen = new Set();
+  const addSize = (value) => {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    const normalized = Math.max(1, Math.min(normalizedLength, Math.floor(value)));
+    if (seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    sizes.push(normalized);
+  };
+
+  let current = normalizedLength;
+  addSize(current);
+  while (current > 12) {
+    const next = Math.max(12, Math.floor(current * 0.75));
+    if (next >= current) {
+      break;
+    }
+    current = next;
+    addSize(current);
+  }
+
+  for (const fallback of [12, 9, 6, 4, 2, 1]) {
+    if (normalizedLength >= fallback) {
+      addSize(fallback);
+    }
+  }
+
+  return sizes;
 }
 
 function summarizeStringsForContext(values, limit = 4) {
@@ -2190,33 +2279,34 @@ export function createHistoryAssistantService(options = {}) {
     }
     const planMatchCount = annotatedItems.length;
 
-    const datasetAnnotated = annotatedItems.slice(0, MAX_DATASET_ENTRIES);
-    const dataset = datasetAnnotated
-      .map(({ item, score, matches }) => {
-        const sanitizedMatches = {};
-        if (Array.isArray(matches?.required) && matches.required.length) {
-          sanitizedMatches.required = matches.required;
-        }
-        if (Array.isArray(matches?.optional) && matches.optional.length) {
-          sanitizedMatches.optional = matches.optional;
-        }
-        if (Array.isArray(matches?.phrases) && matches.phrases.length) {
-          sanitizedMatches.phrases = matches.phrases;
-        }
-        if (Array.isArray(matches?.domains) && matches.domains.length) {
-          sanitizedMatches.domains = matches.domains;
-        }
-        const annotations = { score: Math.round(score) };
-        if (Object.keys(sanitizedMatches).length) {
-          annotations.matches = sanitizedMatches;
-        }
-        return toDatasetEntry(item, annotations);
-      })
-      .filter(Boolean);
+    const datasetRecords = [];
+    for (const annotated of annotatedItems.slice(0, MAX_DATASET_ENTRIES)) {
+      const { item, score, matches } = annotated;
+      const sanitizedMatches = {};
+      if (Array.isArray(matches?.required) && matches.required.length) {
+        sanitizedMatches.required = matches.required;
+      }
+      if (Array.isArray(matches?.optional) && matches.optional.length) {
+        sanitizedMatches.optional = matches.optional;
+      }
+      if (Array.isArray(matches?.phrases) && matches.phrases.length) {
+        sanitizedMatches.phrases = matches.phrases;
+      }
+      if (Array.isArray(matches?.domains) && matches.domains.length) {
+        sanitizedMatches.domains = matches.domains;
+      }
+      const annotations = { score: Math.round(score) };
+      if (Object.keys(sanitizedMatches).length) {
+        annotations.matches = sanitizedMatches;
+      }
+      const entry = toDatasetEntry(item, annotations);
+      if (!entry) {
+        continue;
+      }
+      datasetRecords.push({ annotated, entry });
+    }
 
-    const summaryAnalytics = buildSummaryAnalytics(dataset, planKeywordsForRecord, planDomainsForRecord);
-
-    if (!dataset.length) {
+    if (!datasetRecords.length) {
       const responsePayload = {
         action: "show",
         message: "No matching history entries were found for that request.",
@@ -2244,6 +2334,7 @@ export function createHistoryAssistantService(options = {}) {
       return responsePayload;
     }
 
+    const datasetEntriesInitial = datasetRecords.map((record) => record.entry);
     const maxReturn = plan?.maxResults ? Math.min(MAX_RESULT_IDS, Math.max(1, plan.maxResults)) : MAX_RESULT_IDS;
 
     const localResponse = maybeHandleLocally({
@@ -2256,31 +2347,31 @@ export function createHistoryAssistantService(options = {}) {
       followup: isFollowup,
     });
 
-    console.info("Spotlight history assistant dataset", {
-      prompt: trimmed,
-      timeRange: timeRangeIso,
-      count: dataset.length,
-      planMatches: planMatchCount,
-      total: totalRangeCount,
-      truncated: planMatchCount > dataset.length,
-      handledLocally: Boolean(localResponse),
-      followup: isFollowup,
-      filters: filterMeta,
-      plan: {
-        intent: plan?.intent || null,
-        must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
-        should: Array.isArray(plan?.should) ? plan.should.map((entry) => entry.value) : [],
-        exclude: Array.isArray(plan?.exclude) ? plan.exclude.map((entry) => entry.value) : [],
-        domainHints: Array.isArray(plan?.domainHints) ? plan.domainHints.map((entry) => entry.value) : [],
-        phrases: Array.isArray(plan?.phrases) ? plan.phrases.map((entry) => entry.value) : [],
-        maxResults: plan?.maxResults || null,
-        requireModel: Boolean(plan?.requireModel),
-      },
-      tabs: dataset,
-      contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
-    });
-
     if (localResponse) {
+      console.info("Spotlight history assistant dataset", {
+        prompt: trimmed,
+        timeRange: timeRangeIso,
+        count: datasetEntriesInitial.length,
+        planMatches: planMatchCount,
+        total: totalRangeCount,
+        truncated: planMatchCount > datasetRecords.length,
+        promptTrimmed: false,
+        handledLocally: true,
+        followup: isFollowup,
+        filters: filterMeta,
+        plan: {
+          intent: plan?.intent || null,
+          must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
+          should: Array.isArray(plan?.should) ? plan.should.map((entry) => entry.value) : [],
+          exclude: Array.isArray(plan?.exclude) ? plan.exclude.map((entry) => entry.value) : [],
+          domainHints: Array.isArray(plan?.domainHints) ? plan.domainHints.map((entry) => entry.value) : [],
+          phrases: Array.isArray(plan?.phrases) ? plan.phrases.map((entry) => entry.value) : [],
+          maxResults: plan?.maxResults || null,
+          requireModel: Boolean(plan?.requireModel),
+        },
+        tabs: datasetEntriesInitial,
+        contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
+      });
       const responseConfidence =
         typeof localResponse.confidence === "number" ? localResponse.confidence : confidence;
       const responsePayload = {
@@ -2303,6 +2394,8 @@ export function createHistoryAssistantService(options = {}) {
         followup: isFollowup,
         confidence: responseConfidence,
         source: "local",
+        promptDatasetSize: datasetEntriesInitial.length,
+        promptTrimmed: false,
       });
       return responsePayload;
     }
@@ -2320,29 +2413,93 @@ export function createHistoryAssistantService(options = {}) {
       }
     }
 
-    const interpretation = await runPrompt(
-      stage2Session,
-      buildInterpretationPrompt({
-        prompt: trimmed,
-        dataset,
-        nowIso,
-        range: timeRangeIso,
-        confidence,
-        planSummary,
-        datasetSize: planMatchCount,
-        totalAvailable: totalRangeCount,
-        maxReturn,
-        conversation: conversationContext,
-        followup: isFollowup,
-      }),
-      INTERPRETATION_SCHEMA
-    );
+    let datasetRecordsForPrompt = datasetRecords;
+    let datasetForPrompt = datasetEntriesInitial;
+    let promptTrimmedForLimit = false;
+    let interpretation = null;
+    let lastPromptError = null;
+
+    const datasetSizesToTry = buildDatasetSizeFallbacks(datasetRecords.length);
+    for (const size of datasetSizesToTry) {
+      const limitedRecords = datasetRecords.slice(0, size);
+      const limitedDataset = limitedRecords.map((record) => record.entry);
+      try {
+        interpretation = await runPrompt(
+          stage2Session,
+          buildInterpretationPrompt({
+            prompt: trimmed,
+            dataset: limitedDataset,
+            nowIso,
+            range: timeRangeIso,
+            confidence,
+            planSummary,
+            datasetSize: planMatchCount,
+            totalAvailable: totalRangeCount,
+            maxReturn,
+            conversation: conversationContext,
+            followup: isFollowup,
+          }),
+          INTERPRETATION_SCHEMA
+        );
+        if (size < datasetRecords.length) {
+          promptTrimmedForLimit = true;
+        }
+        datasetRecordsForPrompt = limitedRecords;
+        datasetForPrompt = limitedDataset;
+        break;
+      } catch (error) {
+        lastPromptError = error;
+        if (!isInputTooLargeError(error) || size === datasetSizesToTry[datasetSizesToTry.length - 1]) {
+          throw error;
+        }
+        promptTrimmedForLimit = true;
+        console.warn("Spotlight history assistant prompt trimmed", {
+          prompt: trimmed,
+          attemptedSize: size,
+          available: datasetRecords.length,
+          message: error?.message || "Input too large",
+        });
+      }
+    }
+
+    if (!interpretation) {
+      throw lastPromptError || new Error("History assistant interpretation failed");
+    }
+
+    const summaryAnalytics = buildSummaryAnalytics(datasetForPrompt, planKeywordsForRecord, planDomainsForRecord);
+
+    console.info("Spotlight history assistant dataset", {
+      prompt: trimmed,
+      timeRange: timeRangeIso,
+      count: datasetForPrompt.length,
+      planMatches: planMatchCount,
+      total: totalRangeCount,
+      truncated: planMatchCount > datasetRecords.length,
+      promptTrimmed: promptTrimmedForLimit,
+      handledLocally: Boolean(localResponse),
+      followup: isFollowup,
+      filters: filterMeta,
+      plan: {
+        intent: plan?.intent || null,
+        must: Array.isArray(plan?.must) ? plan.must.map((entry) => entry.value) : [],
+        should: Array.isArray(plan?.should) ? plan.should.map((entry) => entry.value) : [],
+        exclude: Array.isArray(plan?.exclude) ? plan.exclude.map((entry) => entry.value) : [],
+        domainHints: Array.isArray(plan?.domainHints) ? plan.domainHints.map((entry) => entry.value) : [],
+        phrases: Array.isArray(plan?.phrases) ? plan.phrases.map((entry) => entry.value) : [],
+        maxResults: plan?.maxResults || null,
+        requireModel: Boolean(plan?.requireModel),
+      },
+      tabs: datasetForPrompt,
+      contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
+    });
 
     const normalizedAction = normalizeAction(interpretation?.action);
     const requestedIds = Array.isArray(interpretation?.filteredResultIds)
       ? interpretation.filteredResultIds
       : [];
-    const idToAnnotated = new Map(datasetAnnotated.map((entry) => [entry.item.id, entry]));
+    const idToAnnotated = new Map(
+      datasetRecordsForPrompt.map(({ annotated }) => [annotated.item.id, annotated])
+    );
     const idSet = new Set();
     const results = [];
     for (const idValue of requestedIds) {
@@ -2378,6 +2535,10 @@ export function createHistoryAssistantService(options = {}) {
     }
     if (plan?.reasoning && (!interpretationNotes || !interpretationNotes.includes(plan.reasoning))) {
       notesParts.push(plan.reasoning);
+    }
+
+    if (promptTrimmedForLimit) {
+      notesParts.push("Showing a trimmed set of history entries to stay within the assistant's input limit.");
     }
 
     let summarySource = null;
@@ -2445,6 +2606,8 @@ export function createHistoryAssistantService(options = {}) {
         confidence,
         source: "promptApi",
         summarySource,
+        promptDatasetSize: datasetForPrompt.length,
+        promptTrimmed: promptTrimmedForLimit,
       });
 
     return responsePayload;
