@@ -50,6 +50,7 @@ Reusable spacing tokens keep layouts balanced:
 - Elevated surfaces use `--spotlight-shadow-elevated` (`0 40px 80px rgba(18, 20, 26, 0.16)` light / `0 46px 90px rgba(0, 0, 0, 0.72)` dark).
 - Floating menus use `--spotlight-shadow-floating`.
 - Inputs and buttons add accent-colored shadows on hover/focus to match HIG depth cues.
+- Accent controls share dedicated shadows: `--spotlight-shadow-accent` (resting), `--spotlight-shadow-accent-strong` (hover), `--spotlight-shadow-accent-focus` (focus ring), and `--spotlight-shadow-accent-inline` (chip-style buttons). Critical states reuse `--spotlight-shadow-critical` to stay tonally aligned.
 
 ## Component guidelines
 
@@ -72,11 +73,14 @@ Reusable spacing tokens keep layouts balanced:
 - `.spotlight-subfilter` and `.spotlight-subfilters-action-button` use the pill radius token and accent soft states.
 - Primary CTAs (AI organizer, history assistant submit) always use the accent gradient (accent → accent-strong) with the shared drop shadow.
 - Counts or metadata chips should use `--spotlight-color-accent-soft` background with primary text.
+- Use `--spotlight-button-gradient`, `--spotlight-button-gradient-success`, and `--spotlight-button-gradient-error` for accent CTAs so states remain visually consistent across components.
+- `--spotlight-focus-ring-subtle` keeps pill focus-visible states uniform across filters and chips.
 
 ### Results list
 - Rows highlight with `--spotlight-result-hover` / `--spotlight-result-active` and never change typography weight.
 - Titles rely on `--spotlight-color-text-primary`, URLs on `--spotlight-color-text-tertiary`, and timestamps on `--spotlight-color-text-quiet`.
 - Command results tint chips using accent soft tokens. Web-search URLs switch to the accent color to signal outbound actions.
+- Download result affordances use semantic tokens (`--spotlight-result-download-icon-bg`, `--spotlight-download-*`) for icon fills and status tags. Reference these instead of hard-coded rgba values to keep light/dark themes in sync.
 
 ### Panels (AI summaries, history assistant)
 - Panels use `--spotlight-surface-panel` and `--spotlight-surface-panel-border` with inset 1px highlights for glass depth.

@@ -8,7 +8,7 @@
   color: var(--spotlight-color-text-primary);
 
   --spotlight-font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --spotlight-radius-large: 20px;
+  --spotlight-radius-large: 24px;
   --spotlight-radius-medium: 16px;
   --spotlight-radius-small: 12px;
   --spotlight-radius-pill: 999px;
@@ -19,7 +19,7 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
-  --spotlight-shell-max-width: 700px;
+  --spotlight-shell-max-width: 720px;
 
   --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 244, 244, 0.72));
@@ -43,8 +43,8 @@
   --spotlight-input-bg: transparent;
   --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(24, 26, 32, 0.42);
-  --spotlight-input-shadow: none;
-  --spotlight-input-focus-ring: none;
+  --spotlight-input-shadow: 0 1px 0 rgba(15, 18, 24, 0.08);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(43, 221, 154, 0.24), 0 12px 24px rgba(43, 221, 154, 0.12);
 
   --spotlight-result-hover: rgba(43, 221, 154, 0.06);
   --spotlight-active-bg: rgba(255, 255, 255, 0.1);
@@ -55,6 +55,28 @@
 
   --spotlight-menu-surface: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(240, 240, 240, 0.86));
   --spotlight-menu-border: rgba(222, 222, 226, 0.62);
+
+  --spotlight-shadow-accent: 0 12px 26px rgba(49, 200, 155, 0.26);
+  --spotlight-shadow-accent-strong: 0 16px 32px rgba(49, 200, 155, 0.32);
+  --spotlight-shadow-accent-focus: 0 0 0 2px rgba(49, 200, 155, 0.42), 0 14px 30px rgba(49, 200, 155, 0.28);
+  --spotlight-shadow-accent-inline: 0 10px 20px rgba(49, 200, 155, 0.22);
+  --spotlight-shadow-critical: 0 16px 32px rgba(239, 68, 68, 0.28);
+
+  --spotlight-button-gradient: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
+  --spotlight-button-gradient-success: linear-gradient(135deg, rgba(56, 206, 160, 0.92), rgba(34, 169, 129, 0.88));
+  --spotlight-button-gradient-error: linear-gradient(135deg, rgba(248, 113, 113, 0.9), rgba(239, 68, 68, 0.82));
+  --spotlight-focus-ring-subtle: 0 0 0 2px rgba(49, 200, 155, 0.32);
+  --spotlight-panel-inset: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --spotlight-result-download-icon-bg: linear-gradient(135deg, rgba(49, 200, 155, 0.35), rgba(26, 173, 130, 0.35));
+
+  --spotlight-download-complete-bg: rgba(34, 197, 94, 0.26);
+  --spotlight-download-complete-text: #13824e;
+  --spotlight-download-progress-bg: var(--spotlight-color-accent-soft-strong);
+  --spotlight-download-progress-text: var(--spotlight-color-text-primary);
+  --spotlight-download-interrupted-bg: rgba(248, 113, 113, 0.3);
+  --spotlight-download-interrupted-text: #b42323;
+  --spotlight-download-paused-bg: rgba(249, 115, 22, 0.28);
+  --spotlight-download-paused-text: #a84410;
 
   --spotlight-shadow-elevated: 0 40px 80px rgba(18, 20, 26, 0.16);
   --spotlight-shadow-floating: 0 28px 50px rgba(18, 20, 26, 0.18);
@@ -81,8 +103,8 @@
   --spotlight-input-bg: transparent;
   --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
-  --spotlight-input-shadow: none;
-  --spotlight-input-focus-ring: none;
+  --spotlight-input-shadow: 0 1px 0 rgba(6, 8, 12, 0.48);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(43, 221, 154, 0.36), 0 12px 28px rgba(34, 169, 129, 0.32);
   --spotlight-result-hover: rgba(43, 221, 154, 0.1);
   --spotlight-result-active: var(--spotlight-active-bg);
   --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
@@ -92,6 +114,22 @@
   --spotlight-menu-border: rgba(96, 100, 116, 0.5);
   --spotlight-shadow-elevated: 0 46px 90px rgba(0, 0, 0, 0.72);
   --spotlight-shadow-floating: 0 30px 62px rgba(0, 0, 0, 0.62);
+  --spotlight-shadow-accent: 0 12px 28px rgba(34, 169, 129, 0.42);
+  --spotlight-shadow-accent-strong: 0 18px 36px rgba(34, 169, 129, 0.5);
+  --spotlight-shadow-accent-focus: 0 0 0 2px rgba(43, 221, 154, 0.5), 0 16px 36px rgba(34, 169, 129, 0.44);
+  --spotlight-shadow-accent-inline: 0 12px 26px rgba(34, 169, 129, 0.34);
+  --spotlight-shadow-critical: 0 18px 36px rgba(239, 68, 68, 0.34);
+  --spotlight-focus-ring-subtle: 0 0 0 2px rgba(43, 221, 154, 0.45);
+  --spotlight-panel-inset: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --spotlight-result-download-icon-bg: linear-gradient(135deg, rgba(56, 206, 160, 0.4), rgba(26, 173, 130, 0.4));
+  --spotlight-download-complete-bg: rgba(34, 197, 94, 0.32);
+  --spotlight-download-complete-text: #d1fae5;
+  --spotlight-download-progress-bg: var(--spotlight-color-accent-soft-strong);
+  --spotlight-download-progress-text: var(--spotlight-color-text-inverse);
+  --spotlight-download-interrupted-bg: rgba(248, 113, 113, 0.36);
+  --spotlight-download-interrupted-text: #fee2e2;
+  --spotlight-download-paused-bg: rgba(249, 115, 22, 0.34);
+  --spotlight-download-paused-text: #ffedd5;
   --spotlight-button-hover: rgba(255, 255, 255, 0.1);
   --spotlight-button-text-inactive: rgba(255, 255, 255, 0.6);
   --spotlight-button-text-active: rgba(255, 255, 255, 1);
@@ -117,8 +155,8 @@
   --spotlight-input-bg: transparent;
   --spotlight-input-border: transparent;
   --spotlight-input-placeholder: rgba(24, 26, 32, 0.42);
-  --spotlight-input-shadow: none;
-  --spotlight-input-focus-ring: none;
+  --spotlight-input-shadow: 0 1px 0 rgba(15, 18, 24, 0.08);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(43, 221, 154, 0.24), 0 12px 24px rgba(43, 221, 154, 0.12);
   --spotlight-result-hover: rgba(43, 221, 154, 0.06);
   --spotlight-result-active: var(--spotlight-active-bg);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.78);
@@ -151,8 +189,8 @@
     --spotlight-input-bg: transparent;
     --spotlight-input-border: transparent;
     --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
-    --spotlight-input-shadow: none;
-    --spotlight-input-focus-ring: none;
+    --spotlight-input-shadow: 0 1px 0 rgba(6, 8, 12, 0.48);
+    --spotlight-input-focus-ring: 0 0 0 1px rgba(43, 221, 154, 0.36), 0 12px 28px rgba(34, 169, 129, 0.32);
     --spotlight-result-hover: rgba(43, 221, 154, 0.1);
     --spotlight-result-active: var(--spotlight-active-bg);
     --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
@@ -222,7 +260,7 @@
   max-height: min(80vh, 640px);
   border-radius: var(--spotlight-radius-large);
   background: var(--spotlight-surface-gradient);
-  box-shadow: 0 24px 64px rgba(15, 18, 24, 0.18), 0 8px 20px rgba(15, 18, 24, 0.12);
+  box-shadow: var(--spotlight-shadow-elevated);
   overflow: hidden;
   border: 1px solid var(--spotlight-surface-border);
   backdrop-filter: var(--spotlight-backdrop-filter);
@@ -550,21 +588,21 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--spotlight-color-text-inverse);
-  background: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
+  background: var(--spotlight-button-gradient);
   backdrop-filter: var(--spotlight-backdrop-filter);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.28);
+  box-shadow: var(--spotlight-shadow-accent);
 }
 
 .spotlight-subfilters-action-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.32);
+  box-shadow: var(--spotlight-shadow-accent-strong);
 }
 
 .spotlight-subfilters-action-button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(49, 200, 155, 0.45), 0 14px 30px rgba(49, 200, 155, 0.3);
+  box-shadow: var(--spotlight-shadow-accent-focus);
 }
 
 .spotlight-subfilters-action-button:disabled {
@@ -579,13 +617,13 @@
 }
 
 .spotlight-subfilters-action-button.success {
-  background: linear-gradient(135deg, rgba(56, 206, 160, 0.92), rgba(34, 169, 129, 0.88));
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.32);
+  background: var(--spotlight-button-gradient-success);
+  box-shadow: var(--spotlight-shadow-accent-strong);
 }
 
 .spotlight-subfilters-action-button.error {
-  background: linear-gradient(135deg, rgba(248, 113, 113, 0.9), rgba(239, 68, 68, 0.82));
-  box-shadow: 0 16px 32px rgba(239, 68, 68, 0.28);
+  background: var(--spotlight-button-gradient-error);
+  box-shadow: var(--spotlight-shadow-critical);
 }
 
 .spotlight-subfilters-action-label {
@@ -621,7 +659,7 @@
   border-radius: var(--spotlight-radius-medium);
   background: var(--spotlight-surface-panel);
   border: 1px solid var(--spotlight-surface-panel-border);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: var(--spotlight-panel-inset);
 }
 
 .spotlight-history-assistant.visible {
@@ -701,16 +739,16 @@
   border-radius: var(--spotlight-radius-small);
   padding: 0 18px;
   font-weight: 600;
-  background: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
+  background: var(--spotlight-button-gradient);
   color: var(--spotlight-color-text-inverse);
   cursor: pointer;
   transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
-  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.24);
+  box-shadow: var(--spotlight-shadow-accent);
 }
 
 .spotlight-history-assistant-submit:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.3);
+  box-shadow: var(--spotlight-shadow-accent-strong);
 }
 
 .spotlight-history-assistant-submit:disabled {
@@ -847,7 +885,7 @@
 
 .spotlight-subfilter:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(49, 200, 155, 0.35);
+  box-shadow: var(--spotlight-focus-ring-subtle);
 }
 
 .spotlight-subfilter.active {
@@ -1008,7 +1046,7 @@
 }
 
 .spotlight-result-icon-download {
-  background: linear-gradient(135deg, rgba(49, 200, 155, 0.35), rgba(26, 173, 130, 0.35));
+  background: var(--spotlight-result-download-icon-bg);
 }
 
 .spotlight-result-icon-img {
@@ -1103,7 +1141,7 @@
   background: var(--spotlight-color-accent-soft-strong);
   border-color: var(--spotlight-color-accent-strong);
   color: var(--spotlight-color-text-primary);
-  box-shadow: 0 10px 20px rgba(49, 200, 155, 0.24);
+  box-shadow: var(--spotlight-shadow-accent-inline);
 }
 
 .spotlight-result-summary-button:disabled {
@@ -1122,6 +1160,7 @@
   border-radius: var(--spotlight-radius-medium);
   background: var(--spotlight-surface-panel);
   border: 1px solid var(--spotlight-surface-panel-border);
+  box-shadow: var(--spotlight-panel-inset);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1382,24 +1421,24 @@
 }
 
 .spotlight-result-tag.download-state-complete {
-  background: rgba(34, 197, 94, 0.28);
-  color: #bbf7d0;
+  background: var(--spotlight-download-complete-bg);
+  color: var(--spotlight-download-complete-text);
 }
 
 .spotlight-result-tag.download-state-in_progress {
-  background: rgba(49, 200, 155, 0.26);
-  color: #c7f3e3;
+  background: var(--spotlight-download-progress-bg);
+  color: var(--spotlight-download-progress-text);
 }
 
 .spotlight-result-tag.download-state-interrupted,
 .spotlight-result-tag.download-state-cancelled {
-  background: rgba(248, 113, 113, 0.3);
-  color: #fecaca;
+  background: var(--spotlight-download-interrupted-bg);
+  color: var(--spotlight-download-interrupted-text);
 }
 
 .spotlight-result-tag.download-state-paused {
-  background: rgba(249, 115, 22, 0.28);
-  color: #fed7aa;
+  background: var(--spotlight-download-paused-bg);
+  color: var(--spotlight-download-paused-text);
 }
 
 .spotlight-result-tag.spotlight-result-tag-topsite {
