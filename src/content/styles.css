@@ -19,6 +19,8 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
+  --spotlight-shell-max-width: 840px;
+
   --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 244, 244, 0.72));
   --spotlight-surface-border: rgba(255, 255, 255, 0.58);
@@ -209,7 +211,7 @@
 }
 
 .spotlight-shell {
-  width: min(920px, calc(100vw - 32px));
+  width: min(var(--spotlight-shell-max-width), calc(100vw - 32px));
   max-height: min(80vh, 640px);
   border-radius: var(--spotlight-radius-large);
   background: var(--spotlight-surface-gradient);
