@@ -263,11 +263,11 @@
 .spotlight-history-assistant-trigger {
   display: none;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   border-radius: var(--spotlight-radius-pill);
-  padding: 0 18px;
-  min-height: 44px;
-  font-size: 13px;
+  padding: 0 14px;
+  min-height: 36px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -302,6 +302,8 @@
 
 .spotlight-history-assistant-trigger-icon svg {
   display: block;
+  width: 14px;
+  height: 14px;
 }
 
 .spotlight-history-assistant-trigger-label {

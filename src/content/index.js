@@ -1174,7 +1174,7 @@ function resolveFilterShortcutFromQuery(query) {
 
 function updateFilterShortcutsActiveState(query) {
   const normalizedQuery = typeof query === "string" ? query.trim() : "";
-  const shouldShow = !normalizedQuery || activeFilter === "history";
+  const shouldShow = !normalizedQuery && activeFilter !== "history";
   if (filterShortcutsEl) {
     filterShortcutsEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   }
