@@ -253,6 +253,56 @@
   display: none;
 }
 
+.spotlight-history-assistant-trigger {
+  display: none;
+  margin-left: auto;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--spotlight-radius-pill);
+  padding: 0 14px;
+  min-height: 32px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
+  color: var(--spotlight-color-text-inverse);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.24);
+}
+
+.spotlight-history-assistant-trigger.visible {
+  display: inline-flex;
+}
+
+.spotlight-history-assistant-trigger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.3);
+}
+
+.spotlight-history-assistant-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.spotlight-history-assistant-trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spotlight-history-assistant-trigger-icon svg {
+  display: block;
+}
+
+.spotlight-history-assistant-trigger-label {
+  display: inline-flex;
+  align-items: center;
+}
+
 .spotlight-filter-chip {
   border-radius: var(--spotlight-radius-pill);
   border: 1px solid var(--spotlight-chip-border);
@@ -613,6 +663,13 @@
   }
 }
 
+.spotlight-shell.spotlight-ai-mode .spotlight-input-container,
+.spotlight-shell.spotlight-ai-mode .spotlight-input-divider,
+.spotlight-shell.spotlight-ai-mode .spotlight-filter-shortcuts,
+.spotlight-shell.spotlight-ai-mode .spotlight-subfilters {
+  display: none;
+}
+
 .spotlight-history-assistant {
   display: none;
   flex-direction: column;
@@ -633,6 +690,40 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.spotlight-history-assistant-header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spotlight-history-assistant-back {
+  display: none;
+  border: none;
+  background: none;
+  color: var(--spotlight-color-text-tertiary);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--spotlight-radius-circle, 999px);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.spotlight-history-assistant-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.spotlight-shell.spotlight-ai-mode .spotlight-history-assistant-back {
+  display: inline-flex;
+}
+
+.spotlight-history-assistant-back:hover {
+  color: var(--spotlight-color-text-primary);
+  background: var(--spotlight-color-accent-soft);
 }
 
 
