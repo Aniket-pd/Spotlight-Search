@@ -1,13 +1,13 @@
 # Spotlight Design System
 
 ## Overview
-The refreshed Spotlight extension follows Apple's Human Interface Guidelines (HIG) and embraces a glassmorphism aesthetic. The interface layers translucent surfaces over a softly blurred backdrop, combining depth, warmth, and clarity. Components are driven by a unified token set that keeps color, typography, spacing, and motion consistent across light and dark modes.
+The refreshed Spotlight extension follows Apple's Human Interface Guidelines (HIG) and leans into a minimal, layered-glass aesthetic. The interface stacks translucent neutrals with subtle opacity shifts, using blur and soft gradients to deliver depth without heavy ornamentation. Components are driven by a unified token set that keeps color, typography, spacing, and motion consistent across light and dark modes.
 
 Key principles:
 
 - **Clarity first.** Primary actions remain high contrast while supporting information uses secondary tones. Layouts breathe with generous spacing and rounded corners inspired by macOS.
-- **Comfortable depth.** Glassmorphic surfaces use gradients, translucency, and layered shadows to separate UI levels without heavy borders.
-- **Theme duality.** Light mode leans into frosted-white glass, while dark mode adopts obsidian-black glass layered over a softened scrim.
+- **Comfortable depth.** Layered neutrals and translucent surfaces use gradients, opacity, and shadows to separate UI levels without harsh borders.
+- **Theme duality.** Light mode leans into frosted neutrals, while dark mode adopts inky charcoal glass layered over a deep scrim.
 - **Responsive theming.** The design automatically adapts to the page's preferred color scheme and can be overridden by setting `data-theme="light" | "dark"` on the Shadow DOM host.
 - **Motion with purpose.** Hover, focus, and loading affordances rely on subtle elevation and opacity shifts that feel native to macOS.
 
@@ -18,17 +18,18 @@ All colors are defined in `src/content/styles.css` as custom properties on `:hos
 
 | Token | Purpose | Light theme | Dark theme |
 | --- | --- | --- | --- |
-| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(0, 0, 0, 0.1)` | `rgba(0, 0, 0, 0.1)` |
-| `--spotlight-surface-gradient` | Shell background gradient | White glass gradient | Obsidian glass gradient |
-| `--spotlight-surface-panel` | Panel/assistant surfaces | `linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(236, 236, 236, 0.78))` | `linear-gradient(135deg, rgba(34, 34, 42, 0.88), rgba(12, 12, 16, 0.94))` |
-| `--spotlight-color-text-primary` | Primary text | Charcoal 92% | Soft white |
-| `--spotlight-color-text-secondary` | Body text | Charcoal 68% | Mist grey |
-| `--spotlight-color-text-tertiary` | Hints & meta | Charcoal 52% | Smoky grey |
-| `--spotlight-color-text-quiet` | Low-emphasis captions | Charcoal 40% | Cool graphite |
-| `--spotlight-color-accent` | Accent base | `#2bdd9a` | `#2bdd9a` |
-| `--spotlight-color-accent-strong` | Accent highlight | `#16b67c` | `#16b67c` |
-| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(43, 221, 154, 0.18)` | `rgba(43, 221, 154, 0.22)` |
-| `--spotlight-result-hover` | Result hover fill | `rgba(43, 221, 154, 0.16)` | `rgba(43, 221, 154, 0.22)` |
+| `--spotlight-color-overlay` | Full-screen scrim behind the shell | `rgba(10, 12, 20, 0.28)` | `rgba(2, 4, 12, 0.64)` |
+| `--spotlight-surface-gradient` | Shell background gradient | `linear-gradient(160deg, rgba(255, 255, 255, 0.88), rgba(238, 240, 248, 0.65))` | `linear-gradient(160deg, rgba(34, 36, 46, 0.88), rgba(12, 14, 22, 0.92))` |
+| `--spotlight-surface-panel` | Panel/assistant surfaces | `linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(240, 242, 252, 0.65))` | `linear-gradient(160deg, rgba(40, 42, 54, 0.82), rgba(16, 18, 28, 0.9))` |
+| `--spotlight-color-text-primary` | Primary text | Ink 90% | Soft white |
+| `--spotlight-color-text-secondary` | Body text | Ink 64% | Mist lavender |
+| `--spotlight-color-text-tertiary` | Hints & meta | Ink 48% | Smoky lavender |
+| `--spotlight-color-text-quiet` | Low-emphasis captions | Ink 36% | Cool slate |
+| `--spotlight-color-accent` | Accent base | `#7a89ff` | `#7a89ff` |
+| `--spotlight-color-accent-strong` | Accent highlight | `#5c6ef5` | `#5c6ef5` |
+| `--spotlight-color-accent-soft` | Accent wash for hover states | `rgba(122, 137, 255, 0.16)` | `rgba(122, 137, 255, 0.18)` |
+| `--spotlight-result-hover` | Result hover fill | `rgba(122, 137, 255, 0.12)` | `rgba(255, 255, 255, 0.06)` |
+| `--spotlight-chip-active-border` | Active filter outline | `rgba(122, 137, 255, 0.35)` | `rgba(122, 137, 255, 0.32)` |
 
 Additional tokens (chip borders, menu surfaces, shadows, etc.) are declared adjacent to these in the CSS. Always reuse the variable that matches the semantic intent instead of introducing new colors.
 
@@ -46,20 +47,20 @@ Reusable spacing tokens keep layouts balanced:
 - Apply these tokens when adding new components to avoid uneven paddings or corners.
 
 ### Elevation & blur
-- Global blur strength is captured in `--spotlight-backdrop-filter` (`saturate(160%) blur(28px)`).
-- Elevated surfaces use `--spotlight-shadow-elevated` (`0 40px 80px rgba(18, 20, 26, 0.16)` light / `0 46px 90px rgba(0, 0, 0, 0.72)` dark).
+- Global blur strength is captured in `--spotlight-backdrop-filter` (`saturate(160%) blur(32px)`).
+- Elevated surfaces use `--spotlight-shadow-elevated` (`0 32px 64px rgba(18, 22, 40, 0.22), 0 10px 24px rgba(18, 22, 40, 0.18)` light / `0 38px 88px rgba(0, 0, 0, 0.55), 0 16px 32px rgba(0, 0, 0, 0.4)` dark).
 - Floating menus use `--spotlight-shadow-floating`.
 - Inputs and buttons add accent-colored shadows on hover/focus to match HIG depth cues.
 
 ## Component guidelines
 
 ### Overlay shell
-- `.spotlight-overlay` fills the viewport with the overlay token only—use the 10% black scrim without blur to keep the page context legible.
+- `.spotlight-overlay` fills the viewport with the overlay token only—use the translucent indigo-black scrim without blur to keep the page context legible.
 - `.spotlight-shell` applies the glass gradient, `--spotlight-shadow-elevated`, and `--spotlight-radius-large`.
 - Keep shell width capped to `min(720px, 92vw)` to maintain comfortable reading widths.
 
 ### Input region
-- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` to bring in the emerald accent without harsh glows.
+- `.spotlight-input-container` uses `--spotlight-input-bg` and `--spotlight-input-border`. Focus states use `--spotlight-input-focus-ring` to bring in the indigo accent without harsh glows.
 - The query field inherits `--spotlight-color-text-primary`; placeholder text uses `--spotlight-input-placeholder` for consistent contrast.
 - Ghost suggestions (`.spotlight-ghost`) pull from `--spotlight-color-text-tertiary` and should only toggle opacity.
 
@@ -81,7 +82,7 @@ Reusable spacing tokens keep layouts balanced:
 ### Panels (AI summaries, history assistant)
 - Panels use `--spotlight-surface-panel` and `--spotlight-surface-panel-border` with inset 1px highlights for glass depth.
 - Titles and meta lines fall back to tertiary text; actionable elements use accent soft fills.
-- Status colors: loading → `--spotlight-color-accent`, empty → `--spotlight-color-text-quiet`, error → `rgba(255, 138, 138, 0.92)`.
+- Status colors: loading → `--spotlight-color-accent`, empty → `--spotlight-color-text-quiet`, error → `rgba(255, 122, 133, 0.92)`.
 
 ## Theming
 `ensureThemeSync` in `src/content/index.js` applies the correct theme attribute to the Shadow DOM host based on `prefers-color-scheme`. To override in development, set `data-theme="light"` or `data-theme="dark"` on `#spotlight-root` before the stylesheet loads.
