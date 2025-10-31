@@ -241,6 +241,13 @@
   gap: 0;
 }
 
+.spotlight-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
 .spotlight-filter-shortcuts {
   display: flex;
   flex-wrap: wrap;
@@ -255,12 +262,11 @@
 
 .spotlight-history-assistant-trigger {
   display: none;
-  margin-left: auto;
   align-items: center;
   gap: 6px;
   border-radius: var(--spotlight-radius-pill);
-  padding: 0 14px;
-  min-height: 32px;
+  padding: 0 18px;
+  min-height: 44px;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -354,7 +360,9 @@
   letter-spacing: normal;
   line-height: 24px;
   height: 48px;
-  margin: 0 0 12px;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .spotlight-input-container.focused {
@@ -663,6 +671,7 @@
   }
 }
 
+.spotlight-shell.spotlight-ai-mode .spotlight-input-row,
 .spotlight-shell.spotlight-ai-mode .spotlight-input-container,
 .spotlight-shell.spotlight-ai-mode .spotlight-input-divider,
 .spotlight-shell.spotlight-ai-mode .spotlight-filter-shortcuts,

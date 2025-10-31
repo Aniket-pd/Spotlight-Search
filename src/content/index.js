@@ -27,6 +27,7 @@ let ghostEl = null;
 let ghostPrefixEl = null;
 let ghostSuffixEl = null;
 let inputContainerEl = null;
+let inputRowEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -410,8 +411,14 @@ function createOverlay() {
 
   const inputWrapper = document.createElement("div");
   inputWrapper.className = "spotlight-input-wrapper";
+
+  inputRowEl = document.createElement("div");
+  inputRowEl.className = "spotlight-input-row";
+  inputWrapper.appendChild(inputRowEl);
+
   inputContainerEl = document.createElement("div");
   inputContainerEl.className = "spotlight-input-container";
+  inputRowEl.appendChild(inputContainerEl);
 
   const inputIconEl = document.createElement("span");
   inputIconEl.className = "spotlight-input-icon";
@@ -458,7 +465,28 @@ function createOverlay() {
   engineMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(engineMenuEl);
 
-  inputWrapper.appendChild(inputContainerEl);
+  historyAssistantTriggerEl = document.createElement("button");
+  historyAssistantTriggerEl.type = "button";
+  historyAssistantTriggerEl.className = "spotlight-history-assistant-trigger";
+  historyAssistantTriggerEl.setAttribute("aria-hidden", "true");
+  historyAssistantTriggerEl.setAttribute("aria-label", "Open Smart history assistant");
+  historyAssistantTriggerEl.innerHTML = `
+    <span class="spotlight-history-assistant-trigger-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+          d="M8 1.33334L9.74667 5.84668L14.6667 6.25334L10.92 9.56668L12.08 14.5333L8 11.9333L3.92 14.5333L5.08 9.56668L1.33334 6.25334L6.25334 5.84668L8 1.33334Z"
+          fill="currentColor"
+        />
+      </svg>
+    </span>
+    <span class="spotlight-history-assistant-trigger-label">AI</span>
+  `;
+  historyAssistantTriggerEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activateHistoryAssistantAiMode();
+  });
+  inputRowEl.appendChild(historyAssistantTriggerEl);
 
   const inputDividerEl = document.createElement("div");
   inputDividerEl.className = "spotlight-input-divider";
@@ -1109,29 +1137,6 @@ function renderFilterShortcuts() {
     filterShortcutsEl.appendChild(button);
     filterShortcutButtons.set(shortcut.id, button);
   });
-
-  historyAssistantTriggerEl = document.createElement("button");
-  historyAssistantTriggerEl.type = "button";
-  historyAssistantTriggerEl.className = "spotlight-history-assistant-trigger";
-  historyAssistantTriggerEl.setAttribute("aria-hidden", "true");
-  historyAssistantTriggerEl.setAttribute("aria-label", "Open Smart history assistant");
-  historyAssistantTriggerEl.innerHTML = `
-    <span class="spotlight-history-assistant-trigger-icon" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path
-          d="M8 1.33334L9.74667 5.84668L14.6667 6.25334L10.92 9.56668L12.08 14.5333L8 11.9333L3.92 14.5333L5.08 9.56668L1.33334 6.25334L6.25334 5.84668L8 1.33334Z"
-          fill="currentColor"
-        />
-      </svg>
-    </span>
-    <span class="spotlight-history-assistant-trigger-label">AI</span>
-  `;
-  historyAssistantTriggerEl.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    activateHistoryAssistantAiMode();
-  });
-  filterShortcutsEl.appendChild(historyAssistantTriggerEl);
 
   updateFilterShortcutsActiveState(inputEl ? inputEl.value : "");
 }
