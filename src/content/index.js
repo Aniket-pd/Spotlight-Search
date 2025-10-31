@@ -55,6 +55,7 @@ let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
 let historyAssistantContainerEl = null;
+let historyAssistantFieldEl = null;
 let historyAssistantInputEl = null;
 let historyAssistantSubmitEl = null;
 let historyAssistantStatusEl = null;
@@ -1460,6 +1461,7 @@ function ensureHistoryAssistantElements(parent) {
 
   const form = document.createElement("form");
   form.className = "spotlight-history-assistant-form";
+
   historyAssistantBackEl = document.createElement("button");
   historyAssistantBackEl.type = "button";
   historyAssistantBackEl.className = "spotlight-history-assistant-back";
@@ -1476,6 +1478,11 @@ function ensureHistoryAssistantElements(parent) {
   });
   historyAssistantBackEl.setAttribute("aria-hidden", "true");
   form.appendChild(historyAssistantBackEl);
+
+  historyAssistantFieldEl = document.createElement("div");
+  historyAssistantFieldEl.className = "spotlight-history-assistant-field";
+  form.appendChild(historyAssistantFieldEl);
+
   historyAssistantInputEl = document.createElement("input");
   historyAssistantInputEl.type = "text";
   historyAssistantInputEl.className = "spotlight-history-assistant-input";
@@ -1487,13 +1494,13 @@ function ensureHistoryAssistantElements(parent) {
   historyAssistantInputEl.addEventListener("keydown", (event) => {
     event.stopPropagation();
   });
-  form.appendChild(historyAssistantInputEl);
+  historyAssistantFieldEl.appendChild(historyAssistantInputEl);
 
   historyAssistantSubmitEl = document.createElement("button");
   historyAssistantSubmitEl.type = "submit";
   historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
   historyAssistantSubmitEl.textContent = "Ask";
-  form.appendChild(historyAssistantSubmitEl);
+  historyAssistantFieldEl.appendChild(historyAssistantSubmitEl);
 
   historyAssistantClearEl = document.createElement("button");
   historyAssistantClearEl.type = "button";
@@ -1609,6 +1616,9 @@ function updateHistoryAssistantUI() {
       historyAssistantInputEl.setAttribute("disabled", "true");
     } else {
       historyAssistantInputEl.removeAttribute("disabled");
+    }
+    if (historyAssistantFieldEl) {
+      historyAssistantFieldEl.classList.toggle("loading", loading);
     }
   }
   if (historyAssistantSubmitEl) {
