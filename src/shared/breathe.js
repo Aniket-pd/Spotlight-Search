@@ -51,13 +51,18 @@ export function extractBreatheArgsString(query = "") {
   if (typeof query !== "string") {
     return "";
   }
-  const trimmed = query.trim();
-  if (!trimmed) {
+  const tokens = query
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (!tokens.length) {
     return "";
   }
-  const match = trimmed.match(/^breathe\b/i);
-  if (!match) {
+  const breatheIndex = tokens.findIndex((token) => /^(?:breathe)$/i.test(token));
+  if (breatheIndex === -1) {
     return "";
   }
-  return trimmed.slice(match[0].length).trim();
+  const argsTokens = tokens.slice(0, breatheIndex).concat(tokens.slice(breatheIndex + 1));
+  return argsTokens.join(" ").trim();
 }
