@@ -19,7 +19,7 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
-  --spotlight-shell-max-width: 840px;
+  --spotlight-shell-max-width: 700px;
 
   --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
   --spotlight-surface-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 244, 244, 0.72));
