@@ -133,7 +133,7 @@
 @media (prefers-color-scheme: dark) {
   :host(:not([data-theme="light"])) {
     --spotlight-color-overlay: rgba(0, 0, 0, 0.1);
-    --spotlight-surface-gradient: linear-gradient(135deg, rgba(30, 30, 36, 0.9), rgba(10, 10, 14, 0.94));
+    --spotlight-surface-gradient: linear-gradient(135deg, rgba(24, 24, 24, 0.8), rgba(24, 24, 24, 0.8));
     --spotlight-surface-border: rgba(120, 120, 132, 0.38);
     --spotlight-surface-border-subtle: rgba(80, 80, 96, 0.4);
     --spotlight-surface-muted: rgba(22, 22, 28, 0.82);
@@ -1046,12 +1046,14 @@
 
 .spotlight-result:focus-visible {
   background: var(--spotlight-result-active);
-  box-shadow: 0 0 0 1px rgba(43, 221, 154, 0.4);
+  outline: none;
+  box-shadow: none;
 }
 
 .spotlight-result.active {
   background: var(--spotlight-result-active);
-  box-shadow: 0 0 0 1px rgba(43, 221, 154, 0.4);
+  outline: none;
+  box-shadow: none;
 }
 
 .spotlight-result-title {
