@@ -1,4 +1,5 @@
 import { tokenize, BOOKMARK_ROOT_FOLDER_KEY } from "./indexer.js";
+import { extractBreatheArgsString } from "../shared/breathe.js";
 import "../shared/web-search.js";
 
 function getWebSearchApi() {
@@ -470,6 +471,33 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
 }
 
 const STATIC_COMMANDS = [
+  {
+    id: "command:breathe",
+    title: "Breathe",
+    aliases: [
+      "breathe",
+      "breathing break",
+      "relax",
+      "focus breathe",
+      "calm breathe",
+      "energy breathe",
+    ],
+    keywords: ["breathe", "relax", "focus", "energy", "break", "calm"],
+    category: "Action",
+    action: "breathe",
+    answer() {
+      return "Opens a guided calm, focus, or energy breathing timer.";
+    },
+    description() {
+      return "Take a short mindful breathing break (30s–2m).";
+    },
+    buildArgs({ query }) {
+      return { argsString: extractBreatheArgsString(query) };
+    },
+    isAvailable() {
+      return true;
+    },
+  },
   {
     id: "command:tab-sort",
     title: "Tab sort",
@@ -944,27 +972,66 @@ function findBestStaticCommand(query, context) {
     if (!command.isAvailable?.(context)) {
       continue;
     }
-    const phrases = [command.title, ...(command.aliases || [])];
-    const matched = phrases.some((phrase) => normalizeCommandToken(phrase).startsWith(compactQuery));
-    if (!matched) {
-      continue;
+    let matchedPhrase = null;
+
+    if (typeof command.match === "function") {
+      const matchResult = command.match({ query, compactQuery, context }) || null;
+      if (!matchResult) {
+        continue;
+      }
+      matchedPhrase = matchResult.phrase || command.title;
+    } else {
+      const phrases = [command.title, ...(command.aliases || [])];
+      for (const phrase of phrases) {
+        const normalizedPhrase = normalizeCommandToken(phrase);
+        if (!normalizedPhrase) {
+          continue;
+        }
+        if (
+          normalizedPhrase.startsWith(compactQuery) ||
+          compactQuery.startsWith(normalizedPhrase)
+        ) {
+          matchedPhrase = phrase;
+          break;
+        }
+      }
+      if (!matchedPhrase) {
+        continue;
+      }
     }
+
     const answer = command.answer ? command.answer(context) : "";
     const description = command.description ? command.description(context) : answer;
+    const result = {
+      id: command.id,
+      title: command.title,
+      url: description,
+      description,
+      type: "command",
+      command: command.action,
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+    };
+
+    if (typeof command.buildArgs === "function") {
+      const builtArgs = command.buildArgs({ query, compactQuery, matchedPhrase, context });
+      if (builtArgs && typeof builtArgs === "object") {
+        result.args = builtArgs;
+      }
+    }
+
+    if (command.category) {
+      result.category = command.category;
+    }
+    if (command.keywords) {
+      result.keywords = command.keywords;
+    }
+
     return {
       ghostText: command.title,
       answer,
-      result: {
-        id: command.id,
-        title: command.title,
-        url: description,
-        description,
-        type: "command",
-        command: command.action,
-        label: "Command",
-        score: COMMAND_SCORE,
-        faviconUrl: COMMAND_ICON_DATA_URL,
-      },
+      result,
     };
   }
 

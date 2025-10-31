@@ -1,3 +1,5 @@
+import { parseBreatheArgs } from "../shared/breathe.js";
+
 const REBUILD_DELAYS = {
   "tab-sort": 400,
   "tab-shuffle": 400,
@@ -71,6 +73,25 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
         }
         await bookmarkOrganizer.organizeBookmarks();
         return;
+      case "breathe": {
+        const argsString = typeof args.argsString === "string" ? args.argsString : "";
+        const parsed = parseBreatheArgs(argsString);
+        try {
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!activeTab || typeof activeTab.id !== "number") {
+            throw new Error("No active tab");
+          }
+          await chrome.tabs.sendMessage(activeTab.id, {
+            type: "SPOTLIGHT_BREATHE_START",
+            mode: parsed.mode,
+            duration: parsed.duration,
+          });
+          return;
+        } catch (err) {
+          console.warn("Spotlight: failed to dispatch breathe command", err);
+          throw new Error("Unable to start breathe session");
+        }
+      }
       default:
         throw new Error(`Unknown command: ${commandId}`);
     }

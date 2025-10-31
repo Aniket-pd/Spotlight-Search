@@ -155,6 +155,11 @@ export function registerMessageHandlers({
       return true;
     }
 
+    if (message.type === "SPOTLIGHT_BREATHE_STOP") {
+      sendResponse({ success: true });
+      return false;
+    }
+
     if (message.type === "SPOTLIGHT_FOCUS_STATUS_REQUEST") {
       const tabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
       const respond = (payload) => {
