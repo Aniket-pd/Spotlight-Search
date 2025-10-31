@@ -282,6 +282,11 @@
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: var(--spotlight-input-shadow);
   padding: 0 12px 0 52px;
+  font-family: var(--spotlight-font-family);
+  font-size: 20px;
+  font-weight: inherit;
+  letter-spacing: normal;
+  line-height: 1.45;
 }
 
 .spotlight-input-container.focused {
@@ -838,7 +843,11 @@
 
 .spotlight-input {
   width: 100%;
-  font-size: 20px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
   padding: 10px 0;
   border: none;
   background: transparent;
@@ -846,6 +855,7 @@
   outline: none;
   position: relative;
   z-index: 2;
+  text-rendering: auto;
 }
 
 .spotlight-input::placeholder {
@@ -861,13 +871,31 @@
   padding: 10px 0;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
-  font-size: 20px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
+  overflow: hidden;
   z-index: 1;
   opacity: 0;
   transition: opacity 0.15s ease;
+  text-rendering: auto;
+}
+
+.spotlight-ghost-prefix,
+.spotlight-ghost-suffix {
+  white-space: pre;
+}
+
+.spotlight-ghost-prefix {
+  visibility: hidden;
+}
+
+.spotlight-ghost-suffix {
+  color: inherit;
 }
 
 .spotlight-ghost.visible {
