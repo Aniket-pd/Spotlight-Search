@@ -12,6 +12,7 @@
     "scripting",
     "webNavigation",
     "downloads",
+    "sessions",
     "topSites"
   ],
   "host_permissions": ["file:///*"],

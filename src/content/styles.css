@@ -992,6 +992,10 @@
   background: linear-gradient(135deg, rgba(49, 200, 155, 0.35), rgba(26, 173, 130, 0.35));
 }
 
+.spotlight-result-icon-session {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.24), rgba(14, 165, 233, 0.28));
+}
+
 .spotlight-result-icon-img {
   width: 20px;
   height: 20px;
@@ -1387,6 +1391,20 @@
   color: var(--spotlight-color-text-secondary);
   margin-left: auto;
   align-self: baseline;
+}
+
+.spotlight-result-tag.spotlight-result-tag-session {
+  background: rgba(59, 130, 246, 0.18);
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  color: var(--spotlight-color-text-secondary);
+}
+
+.spotlight-result-session-preview {
+  color: var(--spotlight-color-text-tertiary);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 

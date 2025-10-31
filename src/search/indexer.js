@@ -2,6 +2,10 @@ const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 1500;
 const DOWNLOAD_SEARCH_LIMIT = 200;
+const RECENT_SESSION_LIMIT = 60;
+const RECENT_SESSION_SECONDARY_TITLE_WEIGHT = 1.4;
+const RECENT_SESSION_SECONDARY_URL_WEIGHT = 1.1;
+const RECENT_WINDOW_PREVIEW_LIMIT = 6;
 
 const TOP_SITE_TITLE_WEIGHT = TAB_TITLE_WEIGHT;
 
@@ -64,6 +68,155 @@ function extractOrigin(url) {
   } catch (err) {
     return "";
   }
+}
+
+function normalizeSessionTabEntry(tab) {
+  if (!tab || typeof tab !== "object") {
+    return null;
+  }
+  const rawTitle = typeof tab.title === "string" ? tab.title.trim() : "";
+  const url = typeof tab.url === "string" ? tab.url : "";
+  const title = rawTitle || url || "Untitled tab";
+  const favIconUrl = typeof tab.favIconUrl === "string" && tab.favIconUrl ? tab.favIconUrl : null;
+  const hostname = extractHostname(url);
+  return {
+    title,
+    url,
+    hostname,
+    favIconUrl,
+    active: Boolean(tab.active),
+  };
+}
+
+function buildSessionPreviewTabs(tabs, limit = RECENT_WINDOW_PREVIEW_LIMIT, primary = null) {
+  if (!Array.isArray(tabs) || !tabs.length) {
+    return [];
+  }
+  const normalizedLimit = Math.max(1, limit);
+  const ordered = [];
+  if (primary) {
+    ordered.push(primary);
+  }
+  for (const tab of tabs) {
+    if (!tab) {
+      continue;
+    }
+    if (primary && tab === primary) {
+      continue;
+    }
+    ordered.push(tab);
+  }
+  if (!ordered.length) {
+    ordered.push(...tabs.filter(Boolean));
+  }
+  return ordered.slice(0, normalizedLimit).map((tab) => ({
+    title: tab.title || "",
+    url: tab.url || "",
+  }));
+}
+
+function formatTabCountLabel(count) {
+  if (count === 1) {
+    return "1 tab";
+  }
+  return `${count} tabs`;
+}
+
+function normalizeSessionEntry(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const lastModifiedRaw = typeof entry.lastModified === "number" ? entry.lastModified : Number(entry.lastModified) || 0;
+  const closedAt = lastModifiedRaw > 0 ? lastModifiedRaw : Date.now();
+
+  if (entry.tab && typeof entry.tab === "object") {
+    const tab = entry.tab;
+    const url = typeof tab.url === "string" ? tab.url : "";
+    const sessionId = typeof entry.sessionId === "string" && entry.sessionId
+      ? entry.sessionId
+      : typeof tab.sessionId === "string" && tab.sessionId
+      ? tab.sessionId
+      : null;
+    if (!sessionId) {
+      return null;
+    }
+    const rawTitle = typeof tab.title === "string" ? tab.title.trim() : "";
+    const title = rawTitle || url || "Closed tab";
+    const hostname = extractHostname(url);
+    const descriptionParts = ["Closed tab"];
+    if (hostname) {
+      descriptionParts.push(hostname);
+    }
+    return {
+      type: "recentSession",
+      title,
+      url,
+      sessionId,
+      sessionType: "tab",
+      tabCount: 1,
+      closedAt,
+      createdAt: closedAt,
+      lastAccessed: closedAt,
+      description: descriptionParts.join(" · "),
+      origin: extractOrigin(url),
+      faviconUrl: typeof tab.favIconUrl === "string" && tab.favIconUrl ? tab.favIconUrl : null,
+      sessionTabs: url || title
+        ? [
+            {
+              title,
+              url,
+            },
+          ]
+        : [],
+    };
+  }
+
+  if (entry.window && typeof entry.window === "object") {
+    const sessionWindow = entry.window;
+    const rawTabs = Array.isArray(sessionWindow.tabs) ? sessionWindow.tabs : [];
+    const normalizedTabs = rawTabs.map((tab) => normalizeSessionTabEntry(tab)).filter(Boolean);
+    if (!normalizedTabs.length) {
+      return null;
+    }
+    const sessionId = typeof entry.sessionId === "string" && entry.sessionId
+      ? entry.sessionId
+      : typeof sessionWindow.sessionId === "string" && sessionWindow.sessionId
+      ? sessionWindow.sessionId
+      : null;
+    if (!sessionId) {
+      return null;
+    }
+    const tabCount = normalizedTabs.length;
+    const primaryTab = normalizedTabs.find((tab) => tab.active && tab.url) || normalizedTabs.find((tab) => tab.url) || normalizedTabs[0];
+    const rawTitle = typeof sessionWindow.title === "string" ? sessionWindow.title.trim() : "";
+    const title = rawTitle || primaryTab?.title || (tabCount === 1 ? normalizedTabs[0].title : "Recently closed window");
+    const hostname = primaryTab?.hostname || extractHostname(primaryTab?.url || "");
+    const descriptionParts = ["Closed window", formatTabCountLabel(tabCount)];
+    if (hostname) {
+      descriptionParts.push(hostname);
+    }
+    const previewTabs = buildSessionPreviewTabs(normalizedTabs, RECENT_WINDOW_PREVIEW_LIMIT, primaryTab);
+    return {
+      type: "recentSession",
+      title,
+      url: primaryTab?.url || "",
+      sessionId,
+      sessionType: "window",
+      tabCount,
+      closedAt,
+      createdAt: closedAt,
+      lastAccessed: closedAt,
+      description: descriptionParts.join(" · "),
+      origin: extractOrigin(primaryTab?.url || ""),
+      faviconUrl: primaryTab?.favIconUrl || null,
+      iconHint: "recent-window",
+      sessionTabs: previewTabs,
+      hasAdditionalTabs: normalizedTabs.length > previewTabs.length,
+    };
+  }
+
+  return null;
 }
 
 function requestTopSites() {
@@ -340,6 +493,67 @@ async function indexDownloads(indexMap, termBuckets, items) {
   }
 }
 
+async function indexRecentSessions(indexMap, termBuckets, items) {
+  if (!chrome?.sessions || typeof chrome.sessions.getRecentlyClosed !== "function") {
+    return 0;
+  }
+
+  let sessions = [];
+  try {
+    sessions = await chrome.sessions.getRecentlyClosed({ maxResults: RECENT_SESSION_LIMIT });
+  } catch (err) {
+    console.warn("Spotlight: failed to query recently closed sessions", err);
+    return 0;
+  }
+
+  let indexed = 0;
+
+  for (const entry of Array.isArray(sessions) ? sessions : []) {
+    const normalized = normalizeSessionEntry(entry);
+    if (!normalized) {
+      continue;
+    }
+
+    const itemId = items.length;
+    const item = { ...normalized, id: itemId };
+    items.push(item);
+    indexed += 1;
+
+    addToIndex(indexMap, termBuckets, itemId, item.title, TAB_TITLE_WEIGHT);
+
+    const primaryUrl = typeof item.url === "string" ? item.url : "";
+    if (primaryUrl) {
+      addToIndex(indexMap, termBuckets, itemId, primaryUrl, URL_WEIGHT);
+      const primaryHost = extractHostname(primaryUrl);
+      if (primaryHost) {
+        addToIndex(indexMap, termBuckets, itemId, primaryHost, URL_WEIGHT);
+      }
+    }
+
+    if (Array.isArray(item.sessionTabs)) {
+      item.sessionTabs.forEach((tab, index) => {
+        if (!tab) {
+          return;
+        }
+        if (tab.title) {
+          const weight = index === 0 ? TAB_TITLE_WEIGHT : RECENT_SESSION_SECONDARY_TITLE_WEIGHT;
+          addToIndex(indexMap, termBuckets, itemId, tab.title, weight);
+        }
+        if (tab.url) {
+          const weight = index === 0 ? URL_WEIGHT : RECENT_SESSION_SECONDARY_URL_WEIGHT;
+          addToIndex(indexMap, termBuckets, itemId, tab.url, weight);
+          const host = extractHostname(tab.url);
+          if (host) {
+            addToIndex(indexMap, termBuckets, itemId, host, weight);
+          }
+        }
+      });
+    }
+  }
+
+  return indexed;
+}
+
 export async function buildIndex() {
   const items = [];
   const indexMap = new Map();
@@ -350,6 +564,7 @@ export async function buildIndex() {
     indexBookmarks(indexMap, termBuckets, items),
     indexHistory(indexMap, termBuckets, items),
     indexDownloads(indexMap, termBuckets, items),
+    indexRecentSessions(indexMap, termBuckets, items),
     indexTopSites(indexMap, termBuckets, items),
   ]);
 
@@ -367,6 +582,7 @@ export async function buildIndex() {
     bookmarkCount: items.reduce((count, item) => (item.type === "bookmark" ? count + 1 : count), 0),
     downloadCount: items.reduce((count, item) => (item.type === "download" ? count + 1 : count), 0),
     topSiteCount: items.reduce((count, item) => (item.type === "topSite" ? count + 1 : count), 0),
+    recentSessionCount: items.reduce((count, item) => (item.type === "recentSession" ? count + 1 : count), 0),
   };
 
   return {

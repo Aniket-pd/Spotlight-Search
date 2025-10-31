@@ -44,6 +44,7 @@ const BASE_TYPE_SCORES = {
   history: 2,
   download: 3,
   topSite: 5,
+  recentSession: 5,
 };
 
 const MATCHED_TOKEN_BONUS = 4.5;
@@ -106,6 +107,18 @@ const FILTER_ALIASES = {
   back: ["back:"],
   forward: ["forward:"],
   topSite: ["topsites:", "topsite:", "top-sites:", "ts:"],
+  recentSession: [
+    "recent:",
+    "recently:",
+    "recentlyclosed:",
+    "closed:",
+    "recent-session:",
+    "recentwindow:",
+    "recenttab:",
+    "closedtab:",
+    "closedwindow:",
+    "session:",
+  ],
 };
 
 const NAVIGATION_FILTERS = new Set(["back", "forward"]);
@@ -602,7 +615,14 @@ function buildCloseAudioTabsCommandResult(audibleCount) {
 
 function computeRecencyBoost(item) {
   const now = Date.now();
-  const timestamp = item.lastAccessed || item.lastVisitTime || item.dateAdded || 0;
+  const candidates = [item.closedAt, item.lastAccessed, item.lastVisitTime, item.createdAt, item.dateAdded];
+  let timestamp = 0;
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      timestamp = value;
+      break;
+    }
+  }
   if (!timestamp) return 0;
   const hours = Math.max(0, (now - timestamp) / 36e5);
   if (hours < 1) return 2;
@@ -769,6 +789,29 @@ function buildResultFromItem(item, scoreValue) {
   if (typeof item.createdAt === "number") {
     result.createdAt = item.createdAt;
   }
+  if (item.type === "recentSession") {
+    if (typeof item.sessionId === "string" && item.sessionId) {
+      result.sessionId = item.sessionId;
+    }
+    if (typeof item.sessionType === "string" && item.sessionType) {
+      result.sessionType = item.sessionType;
+    }
+    if (typeof item.tabCount === "number" && Number.isFinite(item.tabCount)) {
+      result.tabCount = item.tabCount;
+    }
+    if (typeof item.closedAt === "number" && Number.isFinite(item.closedAt)) {
+      result.closedAt = item.closedAt;
+    }
+    if (Array.isArray(item.sessionTabs)) {
+      result.sessionTabs = item.sessionTabs.map((tab) => ({
+        title: typeof tab?.title === "string" ? tab.title : "",
+        url: typeof tab?.url === "string" ? tab.url : "",
+      }));
+    }
+    if (item.hasAdditionalTabs) {
+      result.hasAdditionalTabs = Boolean(item.hasAdditionalTabs);
+    }
+  }
   if (item.type === "download") {
     const normalizedState = normalizeDownloadState(item.state);
     result.state = normalizedState;
@@ -896,6 +939,14 @@ function compareResults(a, b) {
   if (a?.type === "history" && b?.type === "history") {
     const aTime = typeof a.lastVisitTime === "number" ? a.lastVisitTime : 0;
     const bTime = typeof b.lastVisitTime === "number" ? b.lastVisitTime : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+  }
+
+  if (a?.type === "recentSession" && b?.type === "recentSession") {
+    const aTime = typeof a.closedAt === "number" ? a.closedAt : 0;
+    const bTime = typeof b.closedAt === "number" ? b.closedAt : 0;
     if (bTime !== aTime) {
       return bTime - aTime;
     }
@@ -1775,6 +1826,18 @@ export function runSearch(query, data, options = {}) {
         const bTitle = b.title || "";
         return aTitle.localeCompare(bTitle);
       });
+    } else if (filterType === "recentSession") {
+      defaultItems.sort((a, b) => {
+        const aTime = typeof a.closedAt === "number" ? a.closedAt : 0;
+        const bTime = typeof b.closedAt === "number" ? b.closedAt : 0;
+        if (bTime !== aTime) return bTime - aTime;
+        const aScore = (BASE_TYPE_SCORES[a.type] || 0) + computeRecencyBoost(a);
+        const bScore = (BASE_TYPE_SCORES[b.type] || 0) + computeRecencyBoost(b);
+        if (bScore !== aScore) return bScore - aScore;
+        const aTitle = a.title || "";
+        const bTitle = b.title || "";
+        return aTitle.localeCompare(bTitle);
+      });
     } else if (filterType === "download") {
       defaultItems.sort((a, b) => compareDownloadItems(a, b));
     } else if (filterType === "topSite") {
@@ -1900,7 +1963,7 @@ export function runSearch(query, data, options = {}) {
         finalScore -= totalTokens * MISSING_TOKEN_PENALTY;
       }
     }
-    if (shortQuery && item.type === "tab") {
+    if (shortQuery && (item.type === "tab" || item.type === "recentSession")) {
       finalScore += TAB_BOOST_SHORT_QUERY;
     }
     if (item.type === "download") {

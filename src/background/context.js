@@ -100,6 +100,44 @@ export function createBackgroundContext({ buildIndex }) {
       return;
     }
 
+    if (item.type === "recentSession") {
+      const sessionId = typeof item.sessionId === "string" ? item.sessionId : null;
+      if (sessionId && chrome?.sessions && typeof chrome.sessions.restore === "function") {
+        try {
+          await chrome.sessions.restore(sessionId);
+          return;
+        } catch (err) {
+          console.warn("Spotlight: failed to restore session", err);
+        }
+      }
+
+      const fallbackUrls = [];
+      if (typeof item.url === "string" && item.url) {
+        fallbackUrls.push(item.url);
+      }
+      if (Array.isArray(item.sessionTabs)) {
+        for (const tab of item.sessionTabs) {
+          if (tab && typeof tab.url === "string" && tab.url) {
+            fallbackUrls.push(tab.url);
+          }
+        }
+      }
+      const seen = new Set();
+      for (const url of fallbackUrls) {
+        if (typeof url !== "string" || !url || seen.has(url)) {
+          continue;
+        }
+        seen.add(url);
+        try {
+          await chrome.tabs.create({ url });
+          return;
+        } catch (err) {
+          console.warn("Spotlight: failed to open session fallback tab", err);
+        }
+      }
+      return;
+    }
+
     await chrome.tabs.create({ url: item.url });
   }
 

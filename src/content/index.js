@@ -148,6 +148,7 @@ let faviconQueue = [];
 let faviconProcessing = false;
 const DOWNLOAD_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNiIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI2IiByeD0iMi41IiBmaWxsPSIjMEVBNUU5Ii8+PHBhdGggZD0iTTE2IDV2MTMuMTdsNC41OS00LjU4TDIyIDE1bC02IDYtNi02IDEuNDEtMS40MUwxNCAxOC4xN1Y1aDJ6IiBmaWxsPSIjRTBGMkZFIi8+PC9zdmc+";
+const RECENT_WINDOW_ICON_URL = chrome.runtime.getURL("icons/recent-window.svg");
 const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
@@ -195,6 +196,13 @@ const SLASH_COMMAND_DEFINITIONS = [
     keywords: ["download", "downloads", "dl", "files"],
   },
   {
+    id: "slash-recent",
+    label: "Recently Closed",
+    hint: "Restore closed tabs and windows",
+    value: "recent:",
+    keywords: ["recent", "recently closed", "closed", "session", "restore"],
+  },
+  {
     id: "slash-back",
     label: "Back",
     hint: "Current tab back history",
@@ -222,6 +230,7 @@ const FILTER_SHORTCUT_DEFINITIONS = [
   { id: "bookmark", label: "Bookmarks", prefix: "bookmark:" },
   { id: "history", label: "History", prefix: "history:" },
   { id: "download", label: "Downloads", prefix: "download:" },
+  { id: "recentSession", label: "Recently Closed", prefix: "recent:" },
   { id: "topSite", label: "Top Sites", prefix: "topsite:" },
 ];
 
@@ -2484,6 +2493,10 @@ function shouldSummarizeResult(result) {
     return isHttp;
   }
 
+  if (type === "recentSession") {
+    return isHttp;
+  }
+
   return false;
 }
 
@@ -3502,6 +3515,23 @@ function renderResults() {
         }
       }
 
+      if (result.type === "recentSession" && result.sessionType === "window") {
+        const tabCountLabel = formatSessionTabCount(result.tabCount);
+        if (tabCountLabel) {
+          const tabCountChip = document.createElement("span");
+          tabCountChip.className = "spotlight-result-tag spotlight-result-tag-session";
+          tabCountChip.textContent = tabCountLabel;
+          meta.appendChild(tabCountChip);
+        }
+        const previewLabel = formatSessionPreview(result.sessionTabs, result.hasAdditionalTabs, result.tabCount);
+        if (previewLabel) {
+          const previewEl = document.createElement("span");
+          previewEl.className = "spotlight-result-session-preview";
+          previewEl.textContent = previewLabel;
+          meta.appendChild(previewEl);
+        }
+      }
+
       const type = document.createElement("span");
       type.className = `spotlight-result-type type-${result.type}`;
       type.textContent = formatTypeLabel(result.type, result);
@@ -3585,6 +3615,8 @@ function getFilterStatusLabel(type) {
       return "history";
     case "download":
       return "downloads";
+    case "recentSession":
+      return "recently closed";
     case "back":
       return "back history";
     case "forward":
@@ -3695,6 +3727,11 @@ function formatTypeLabel(type, result) {
         return `Web · ${result.engineName}`;
       }
       return "Web Search";
+    case "recentSession":
+      if (result && result.sessionType === "window") {
+        return "Recently Closed Window";
+      }
+      return "Recently Closed Tab";
     default:
       return type || "";
   }
@@ -3705,6 +3742,7 @@ function getResultTimestamp(result) {
     return null;
   }
   const candidates = [
+    result.closedAt,
     result.lastVisitTime,
     result.lastAccessed,
     result.dateAdded,
@@ -3753,6 +3791,59 @@ function formatVisitCount(count) {
   } catch (err) {
     return `${visits} visits`;
   }
+}
+
+function formatSessionTabCount(count) {
+  if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
+    return "";
+  }
+  return count === 1 ? "1 tab" : `${count} tabs`;
+}
+
+function describeSessionTab(tab) {
+  if (!tab || typeof tab !== "object") {
+    return "";
+  }
+  const title = typeof tab.title === "string" ? tab.title.trim() : "";
+  if (title) {
+    return title;
+  }
+  const url = typeof tab.url === "string" ? tab.url.trim() : "";
+  if (!url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname) {
+      return parsed.hostname;
+    }
+  } catch (err) {
+    // ignore parsing errors and fall back to raw URL
+  }
+  return url;
+}
+
+function formatSessionPreview(tabs, hasAdditionalTabs, totalCount) {
+  if (!Array.isArray(tabs) || !tabs.length) {
+    return "";
+  }
+  const described = tabs.map((tab) => describeSessionTab(tab)).filter(Boolean);
+  if (!described.length) {
+    return "";
+  }
+  const shown = described.slice(0, 3);
+  const preview = shown.join(" · ");
+  const shownCount = shown.length;
+  let remaining = 0;
+  if (typeof totalCount === "number" && Number.isFinite(totalCount)) {
+    remaining = Math.max(totalCount - shownCount, 0);
+  } else if (hasAdditionalTabs) {
+    remaining = Math.max(tabs.length - shownCount, 1);
+  }
+  if (remaining > 0) {
+    return `${preview} · +${remaining} more`;
+  }
+  return preview;
 }
 
 function scheduleIdleWork(callback) {
@@ -3971,6 +4062,11 @@ function createIconElement(result) {
   if (result && result.iconHint === "download") {
     wrapper.classList.add("spotlight-result-icon-download");
     wrapper.appendChild(createIconImage(DOWNLOAD_ICON_DATA_URL));
+    return wrapper;
+  }
+  if (result && result.iconHint === "recent-window") {
+    wrapper.classList.add("spotlight-result-icon-session");
+    wrapper.appendChild(createIconImage(RECENT_WINDOW_ICON_URL));
     return wrapper;
   }
   const origin = getResultOrigin(result);
