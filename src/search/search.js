@@ -480,6 +480,10 @@ const BREATHE_COMMAND_PHRASES = [
   "focus breathe",
   "calm breathe",
   "energy breathe",
+  "breath calm",
+  "breath focus",
+  "breath energy",
+  "take a breath",
 ];
 
 const STATIC_COMMANDS = [

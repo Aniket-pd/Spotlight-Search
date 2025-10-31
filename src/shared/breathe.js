@@ -1,5 +1,6 @@
 const MODE_REGEX = /\b(calm|focus|energy)\b/i;
 const DURATION_REGEX = /\b(30s|1m|2m)\b/i;
+const KEYWORD_REGEX = /\bbreath(?:e)?\b/i;
 
 export const BREATHE_DEFAULT_MODE = "calm";
 export const BREATHE_DEFAULT_DURATION = "1m";
@@ -51,7 +52,7 @@ export function extractBreatheMatchPhrase(query = "") {
   if (typeof query !== "string") {
     return "";
   }
-  const match = query.match(/\bbreathe\b/i);
+  const match = query.match(KEYWORD_REGEX);
   if (!match) {
     return "";
   }
@@ -70,7 +71,7 @@ export function extractBreatheArgsString(query = "") {
   if (!tokens.length) {
     return "";
   }
-  const breatheIndex = tokens.findIndex((token) => /^(?:breathe)$/i.test(token));
+  const breatheIndex = tokens.findIndex((token) => /^(?:breathe|breath)$/i.test(token));
   if (breatheIndex === -1) {
     return "";
   }
