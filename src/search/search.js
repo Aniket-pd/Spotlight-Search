@@ -490,6 +490,45 @@ function parseBreatheCommandArgs(query = "") {
   };
 }
 
+function buildBreatheGhostSuggestion(query = "") {
+  if (typeof query !== "string") {
+    return "Breathe";
+  }
+
+  const trimmed = query.trim();
+  const keywordMatch = trimmed.match(/^\s*(breathe)\b/i);
+  if (!keywordMatch) {
+    return "Breathe";
+  }
+
+  const keywordText = keywordMatch[0].trim();
+  const remainder = trimmed.slice(keywordMatch[0].length).trim();
+  const suggestionParts = [keywordText || "breathe"];
+  const seenTokens = new Set();
+
+  if (remainder) {
+    const normalizedRemainder = remainder.replace(/\s+/g, " ").trim();
+    if (normalizedRemainder) {
+      suggestionParts.push(normalizedRemainder);
+      normalizedRemainder
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach((token) => seenTokens.add(token.toLowerCase()));
+    }
+  }
+
+  const args = parseBreatheCommandArgs(query);
+  if (args.mode && !seenTokens.has(args.mode)) {
+    suggestionParts.push(args.mode);
+    seenTokens.add(args.mode);
+  }
+  if (args.duration && !seenTokens.has(args.duration)) {
+    suggestionParts.push(args.duration);
+  }
+
+  return suggestionParts.filter(Boolean).join(" ").trim() || "Breathe";
+}
+
 function formatBreatheAnswer(args) {
   const modeLabel = (args?.mode || "calm").replace(/^(\w)/, (match) => match.toUpperCase());
   const duration = args?.duration || "1m";
@@ -521,6 +560,9 @@ const STATIC_COMMANDS = [
       const modeLabel = (args.mode || "calm").replace(/^(\w)/, (match) => match.toUpperCase());
       const durationLabel = args.duration === "30s" ? "30 seconds" : args.duration === "2m" ? "2 minutes" : "1 minute";
       return `Take a short mindful break · ${modeLabel} · ${durationLabel}`;
+    },
+    ghost(context, query) {
+      return buildBreatheGhostSuggestion(query || "");
     },
     buildArgs(query) {
       const args = parseBreatheCommandArgs(query || "");
@@ -1022,8 +1064,10 @@ function findBestStaticCommand(query, context) {
     const args = typeof command.buildArgs === "function" ? command.buildArgs(query) : null;
     const answer = command.answer ? command.answer(context, query) : "";
     const description = command.description ? command.description(context, query) : answer;
+    const ghostText =
+      (typeof command.ghost === "function" ? command.ghost(context, query) : null) || command.title;
     return {
-      ghostText: command.title,
+      ghostText,
       answer,
       result: {
         id: command.id,
@@ -2043,7 +2087,7 @@ export function runSearch(query, data, options = {}) {
     const topIsCommand = Boolean(topResult && (topResult.type === "command" || topResult.score === COMMAND_SCORE));
 
     if (topIsCommand) {
-      const commandGhostText = topResult.title || commandSuggestions.ghost || "";
+      const commandGhostText = commandSuggestions.ghost || topResult.title || "";
       ghostPayload = commandGhostText ? { text: commandGhostText } : null;
       answer = commandSuggestions.answer || "";
     } else if (topResult) {
