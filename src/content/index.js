@@ -1458,12 +1458,8 @@ function ensureHistoryAssistantElements(parent) {
   container.className = "spotlight-history-assistant";
   container.setAttribute("aria-hidden", "true");
 
-  const header = document.createElement("div");
-  header.className = "spotlight-history-assistant-header";
-
-  const headerMain = document.createElement("div");
-  headerMain.className = "spotlight-history-assistant-header-main";
-
+  const form = document.createElement("form");
+  form.className = "spotlight-history-assistant-form";
   historyAssistantBackEl = document.createElement("button");
   historyAssistantBackEl.type = "button";
   historyAssistantBackEl.className = "spotlight-history-assistant-back";
@@ -1479,30 +1475,7 @@ function ensureHistoryAssistantElements(parent) {
     deactivateHistoryAssistantAiMode();
   });
   historyAssistantBackEl.setAttribute("aria-hidden", "true");
-  headerMain.appendChild(historyAssistantBackEl);
-
-  const label = document.createElement("span");
-  label.className = "spotlight-history-assistant-label";
-  label.textContent = "Smart history assistant";
-  headerMain.appendChild(label);
-
-  header.appendChild(headerMain);
-
-  historyAssistantClearEl = document.createElement("button");
-  historyAssistantClearEl.type = "button";
-  historyAssistantClearEl.className = "spotlight-history-assistant-clear";
-  historyAssistantClearEl.textContent = "Clear";
-  historyAssistantClearEl.addEventListener("click", () => {
-    resetHistoryAssistantState({ keepInput: false });
-    if (historyAssistantInputEl) {
-      historyAssistantInputEl.focus({ preventScroll: true });
-    }
-  });
-  header.appendChild(historyAssistantClearEl);
-  container.appendChild(header);
-
-  const form = document.createElement("form");
-  form.className = "spotlight-history-assistant-form";
+  form.appendChild(historyAssistantBackEl);
   historyAssistantInputEl = document.createElement("input");
   historyAssistantInputEl.type = "text";
   historyAssistantInputEl.className = "spotlight-history-assistant-input";
@@ -1521,6 +1494,18 @@ function ensureHistoryAssistantElements(parent) {
   historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
   historyAssistantSubmitEl.textContent = "Ask";
   form.appendChild(historyAssistantSubmitEl);
+
+  historyAssistantClearEl = document.createElement("button");
+  historyAssistantClearEl.type = "button";
+  historyAssistantClearEl.className = "spotlight-history-assistant-clear";
+  historyAssistantClearEl.textContent = "Clear";
+  historyAssistantClearEl.addEventListener("click", () => {
+    resetHistoryAssistantState({ keepInput: false });
+    if (historyAssistantInputEl) {
+      historyAssistantInputEl.focus({ preventScroll: true });
+    }
+  });
+  form.appendChild(historyAssistantClearEl);
 
   form.addEventListener("submit", handleHistoryAssistantSubmit);
   container.appendChild(form);
