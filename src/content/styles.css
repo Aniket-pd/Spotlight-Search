@@ -46,8 +46,15 @@
   --spotlight-input-shadow: none;
   --spotlight-input-focus-ring: none;
 
+  --spotlight-active-glass-bg: linear-gradient(
+    135deg,
+    rgba(43, 221, 154, 0.24),
+    rgba(255, 255, 255, 0.18)
+  );
+  --spotlight-active-glass-border: rgba(255, 255, 255, 0.6);
+  --spotlight-active-glass-shadow: 0 16px 36px rgba(31, 186, 131, 0.22);
   --spotlight-result-hover: rgba(43, 221, 154, 0.06);
-  --spotlight-result-active: rgba(22, 182, 126, 0.08);
+  --spotlight-result-active: var(--spotlight-active-glass-bg);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.78);
   --spotlight-chip-border: rgba(222, 222, 226, 0.52);
   --spotlight-chip-hover: rgba(43, 221, 154, 0.16);
@@ -82,8 +89,15 @@
   --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
   --spotlight-input-shadow: none;
   --spotlight-input-focus-ring: none;
+  --spotlight-active-glass-bg: linear-gradient(
+    135deg,
+    rgba(43, 221, 154, 0.32),
+    rgba(14, 32, 24, 0.6)
+  );
+  --spotlight-active-glass-border: rgba(123, 240, 192, 0.35);
+  --spotlight-active-glass-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
   --spotlight-result-hover: rgba(43, 221, 154, 0.1);
-  --spotlight-result-active: rgba(22, 182, 126, 0.16);
+  --spotlight-result-active: var(--spotlight-active-glass-bg);
   --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
   --spotlight-chip-border: rgba(96, 100, 116, 0.5);
   --spotlight-chip-hover: rgba(43, 221, 154, 0.28);
@@ -115,8 +129,15 @@
   --spotlight-input-placeholder: rgba(24, 26, 32, 0.42);
   --spotlight-input-shadow: none;
   --spotlight-input-focus-ring: none;
+  --spotlight-active-glass-bg: linear-gradient(
+    135deg,
+    rgba(43, 221, 154, 0.24),
+    rgba(255, 255, 255, 0.18)
+  );
+  --spotlight-active-glass-border: rgba(255, 255, 255, 0.6);
+  --spotlight-active-glass-shadow: 0 16px 36px rgba(31, 186, 131, 0.22);
   --spotlight-result-hover: rgba(43, 221, 154, 0.06);
-  --spotlight-result-active: rgba(22, 182, 126, 0.08);
+  --spotlight-result-active: var(--spotlight-active-glass-bg);
   --spotlight-chip-bg: rgba(255, 255, 255, 0.78);
   --spotlight-chip-border: rgba(222, 222, 226, 0.52);
   --spotlight-chip-hover: rgba(43, 221, 154, 0.16);
@@ -149,8 +170,15 @@
     --spotlight-input-placeholder: rgba(172, 174, 188, 0.5);
     --spotlight-input-shadow: none;
     --spotlight-input-focus-ring: none;
+    --spotlight-active-glass-bg: linear-gradient(
+      135deg,
+      rgba(43, 221, 154, 0.32),
+      rgba(14, 32, 24, 0.6)
+    );
+    --spotlight-active-glass-border: rgba(123, 240, 192, 0.35);
+    --spotlight-active-glass-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
     --spotlight-result-hover: rgba(43, 221, 154, 0.1);
-    --spotlight-result-active: rgba(22, 182, 126, 0.16);
+    --spotlight-result-active: var(--spotlight-active-glass-bg);
     --spotlight-chip-bg: rgba(30, 30, 38, 0.78);
     --spotlight-chip-border: rgba(96, 100, 116, 0.5);
     --spotlight-chip-hover: rgba(43, 221, 154, 0.28);
@@ -260,7 +288,7 @@
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease, box-shadow 0.2s ease;
 }
 
 .spotlight-filter-chip:hover,
@@ -271,9 +299,11 @@
 }
 
 .spotlight-filter-chip.active {
-  background: var(--spotlight-color-accent-soft-strong);
+  background: var(--spotlight-active-glass-bg);
   color: var(--spotlight-color-text-primary);
-  border-color: var(--spotlight-color-accent-strong);
+  border-color: var(--spotlight-active-glass-border);
+  box-shadow: var(--spotlight-active-glass-shadow);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-input-container {
@@ -366,7 +396,7 @@
   gap: 4px;
   cursor: pointer;
   color: var(--spotlight-color-text-secondary);
-  transition: background 0.18s ease, color 0.18s ease;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .spotlight-slash-option:hover,
@@ -376,8 +406,10 @@
 }
 
 .spotlight-slash-option.active {
-  background: var(--spotlight-color-accent-soft-strong);
+  background: var(--spotlight-active-glass-bg);
   color: var(--spotlight-color-text-primary);
+  box-shadow: var(--spotlight-active-glass-shadow), 0 0 0 1px var(--spotlight-active-glass-border);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-slash-option + .spotlight-slash-option {
@@ -403,7 +435,7 @@
   gap: 12px;
   cursor: pointer;
   color: var(--spotlight-color-text-secondary);
-  transition: background 0.18s ease, color 0.18s ease;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .spotlight-engine-option:hover,
@@ -413,8 +445,10 @@
 }
 
 .spotlight-engine-option.active {
-  background: var(--spotlight-color-accent-soft-strong);
+  background: var(--spotlight-active-glass-bg);
   color: var(--spotlight-color-text-primary);
+  box-shadow: var(--spotlight-active-glass-shadow), 0 0 0 1px var(--spotlight-active-glass-border);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-engine-option + .spotlight-engine-option {
@@ -798,9 +832,14 @@
   background: var(--spotlight-color-accent-soft);
 }
 
-.spotlight-result-history-assistant:hover,
-.spotlight-result-history-assistant.active {
+.spotlight-result-history-assistant:hover {
   background: var(--spotlight-color-accent-soft-strong);
+}
+
+.spotlight-result-history-assistant.active {
+  background: var(--spotlight-active-glass-bg);
+  box-shadow: var(--spotlight-active-glass-shadow), 0 0 0 1px var(--spotlight-active-glass-border);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-subfilter {
@@ -832,10 +871,11 @@
 }
 
 .spotlight-subfilter.active {
-  background: var(--spotlight-color-accent-strong);
-  color: var(--spotlight-color-text-inverse);
-  border-color: transparent;
-  box-shadow: none;
+  background: var(--spotlight-active-glass-bg);
+  color: var(--spotlight-color-text-primary);
+  border-color: var(--spotlight-active-glass-border);
+  box-shadow: var(--spotlight-active-glass-shadow);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-subfilter-label {
@@ -1027,14 +1067,11 @@
   background: var(--spotlight-result-hover);
 }
 
-.spotlight-result:focus-visible {
-  background: var(--spotlight-result-active);
-  box-shadow: 0 0 0 1px rgba(43, 221, 154, 0.4);
-}
-
+.spotlight-result:focus-visible,
 .spotlight-result.active {
   background: var(--spotlight-result-active);
-  box-shadow: 0 0 0 1px rgba(43, 221, 154, 0.4);
+  box-shadow: var(--spotlight-active-glass-shadow), 0 0 0 1px var(--spotlight-active-glass-border);
+  backdrop-filter: var(--spotlight-backdrop-filter);
 }
 
 .spotlight-result-title {
