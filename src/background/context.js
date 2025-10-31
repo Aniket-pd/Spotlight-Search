@@ -1,5 +1,5 @@
 const DEFAULT_REBUILD_DELAY = 600;
-const FALLBACK_PAGE_URL = chrome.runtime.getURL("fallback/launcher.html");
+const FALLBACK_PAGE_URL = chrome.runtime.getURL("src/fallback/launcher.html");
 const FALLBACK_SEND_ATTEMPTS = 5;
 const FALLBACK_SEND_DELAY_MS = 200;
 
