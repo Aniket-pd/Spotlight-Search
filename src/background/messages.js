@@ -146,13 +146,19 @@ export function registerMessageHandlers({
     }
 
     if (message.type === "SPOTLIGHT_COMMAND") {
-      executeCommand(message.command, message.args)
+      const tabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      executeCommand(message.command, message.args, { sender, tabId })
         .then(() => sendResponse({ success: true }))
         .catch((err) => {
           console.error("Spotlight: command failed", err);
           sendResponse({ success: false, error: err?.message });
         });
       return true;
+    }
+
+    if (message.type === "SPOTLIGHT_BREATHE_STOP") {
+      sendResponse({ success: true });
+      return false;
     }
 
     if (message.type === "SPOTLIGHT_FOCUS_STATUS_REQUEST") {

@@ -164,6 +164,809 @@ const PLACEHOLDER_COLORS = [
   "#FBBF24",
 ];
 
+const BREATHE_DEFAULT_MODE = "calm";
+const BREATHE_DEFAULT_DURATION = "1m";
+const BREATHE_DURATION_OPTIONS = {
+  "30s": { seconds: 30, label: "0:30" },
+  "1m": { seconds: 60, label: "1:00" },
+  "2m": { seconds: 120, label: "2:00" },
+};
+const BREATHE_MODE_CONFIG = {
+  calm: {
+    label: "Calm",
+    shape: "circle",
+    gradient: ["#3A63FF", "#A68CFF"],
+    pattern: [
+      { phase: "inhale", label: "Breathe in…", duration: 4 },
+      { phase: "hold", label: "Hold…", duration: 2 },
+      { phase: "exhale", label: "Breathe out…", duration: 6 },
+      { phase: "hold", label: "Hold…", duration: 2 },
+    ],
+  },
+  focus: {
+    label: "Focus",
+    shape: "square",
+    gradient: ["#2EC4B6", "#1982C4"],
+    pattern: [
+      { phase: "inhale", label: "Breathe in…", duration: 4 },
+      { phase: "hold", label: "Hold…", duration: 4 },
+      { phase: "exhale", label: "Breathe out…", duration: 4 },
+      { phase: "hold", label: "Hold…", duration: 4 },
+    ],
+  },
+  energy: {
+    label: "Energy",
+    shape: "circle",
+    gradient: ["#FF6A3D", "#FFB703"],
+    pattern: [
+      { phase: "inhale", label: "Breathe in…", duration: 3 },
+      { phase: "exhale", label: "Breathe out…", duration: 3 },
+    ],
+  },
+};
+const BREATHE_IDLE_MESSAGE = "pick a mode and duration, then press start.";
+const BREATHE_COMPLETE_MESSAGE = "nice reset — ready to continue.";
+const BREATHE_STORAGE_KEY = "spotlight-breathe-muted";
+
+let breatheContainerEl = null;
+let breatheTitleEl = null;
+let breathePromptEl = null;
+let breatheTimerEl = null;
+let breatheProgressEl = null;
+let breatheProgressBarEl = null;
+let breathePrimaryButtonEl = null;
+let breatheModeButtons = new Map();
+let breatheDurationButtons = new Map();
+let breatheMuteButtonEl = null;
+let breatheFooterEl = null;
+let breatheOrbEl = null;
+let breatheOverlayEl = null;
+let breathePhaseEl = null;
+
+let breatheMuted = false;
+let breatheReduceMotion = false;
+let breatheReduceMotionQuery = null;
+let breatheKeydownHandlerInstalled = false;
+
+const breatheSession = {
+  active: false,
+  status: "idle",
+  mode: BREATHE_DEFAULT_MODE,
+  duration: BREATHE_DEFAULT_DURATION,
+  argsString: "",
+  startTimestamp: 0,
+  elapsedBeforePause: 0,
+  rafId: null,
+  autoExitTimer: null,
+  phaseIndex: 0,
+  lastPhase: null,
+  previousFocus: null,
+  previousQuery: "",
+  previousActiveIndex: -1,
+};
+
+function getBreatheModeConfig(mode) {
+  if (mode && BREATHE_MODE_CONFIG[mode]) {
+    return BREATHE_MODE_CONFIG[mode];
+  }
+  return BREATHE_MODE_CONFIG[BREATHE_DEFAULT_MODE];
+}
+
+function getBreatheDurationInfo(duration) {
+  if (duration && BREATHE_DURATION_OPTIONS[duration]) {
+    return BREATHE_DURATION_OPTIONS[duration];
+  }
+  return BREATHE_DURATION_OPTIONS[BREATHE_DEFAULT_DURATION];
+}
+
+function normalizeBreatheMode(mode) {
+  const lower = typeof mode === "string" ? mode.toLowerCase() : "";
+  return BREATHE_MODE_CONFIG[lower] ? lower : BREATHE_DEFAULT_MODE;
+}
+
+function normalizeBreatheDuration(duration) {
+  const lower = typeof duration === "string" ? duration.toLowerCase() : "";
+  return BREATHE_DURATION_OPTIONS[lower] ? lower : BREATHE_DEFAULT_DURATION;
+}
+
+function loadBreathePreferences() {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+    return;
+  }
+  try {
+    const stored = window.localStorage.getItem(BREATHE_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      breatheMuted = stored === "true";
+    }
+  } catch (err) {
+    // Ignore storage errors.
+  }
+}
+
+function saveBreathePreferences() {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(BREATHE_STORAGE_KEY, breatheMuted ? "true" : "false");
+  } catch (err) {
+    // Ignore storage errors.
+  }
+}
+
+function ensureBreatheReduceMotion() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    breatheReduceMotion = false;
+    return;
+  }
+  if (!breatheReduceMotionQuery) {
+    breatheReduceMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => {
+      breatheReduceMotion = Boolean(breatheReduceMotionQuery?.matches);
+      if (breatheContainerEl) {
+        breatheContainerEl.classList.toggle("reduce-motion", breatheReduceMotion);
+      }
+    };
+    if (typeof breatheReduceMotionQuery.addEventListener === "function") {
+      breatheReduceMotionQuery.addEventListener("change", update);
+    } else if (typeof breatheReduceMotionQuery.addListener === "function") {
+      breatheReduceMotionQuery.addListener(update);
+    }
+    update();
+  } else {
+    breatheReduceMotion = Boolean(breatheReduceMotionQuery.matches);
+    if (breatheContainerEl) {
+      breatheContainerEl.classList.toggle("reduce-motion", breatheReduceMotion);
+    }
+  }
+}
+
+function applyBreatheMuteState() {
+  if (!breatheMuteButtonEl) {
+    return;
+  }
+  breatheMuteButtonEl.classList.toggle("active", breatheMuted);
+  breatheMuteButtonEl.setAttribute("aria-pressed", breatheMuted ? "true" : "false");
+}
+
+function setBreatheMuted(value) {
+  breatheMuted = Boolean(value);
+  applyBreatheMuteState();
+  saveBreathePreferences();
+}
+
+function formatBreatheTimerLabel(remainingMs) {
+  const clamped = Math.max(0, remainingMs);
+  const minutes = Math.floor(clamped / 60000);
+  const seconds = Math.floor((clamped % 60000) / 1000);
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function updateBreatheTimerDisplay(elapsedMs) {
+  if (!breatheTimerEl || !breatheProgressBarEl) {
+    return;
+  }
+  const durationInfo = getBreatheDurationInfo(breatheSession.duration);
+  const totalMs = durationInfo.seconds * 1000;
+  const remaining = Math.max(0, totalMs - elapsedMs);
+  breatheTimerEl.textContent = formatBreatheTimerLabel(remaining);
+  const ratio = totalMs > 0 ? Math.min(1, Math.max(0, elapsedMs / totalMs)) : 0;
+  breatheProgressBarEl.style.transform = `scaleX(${ratio})`;
+}
+
+function getBreatheCycleDuration(mode) {
+  const pattern = getBreatheModeConfig(mode).pattern;
+  return pattern.reduce((sum, step) => sum + Math.max(0, Number(step.duration) || 0), 0);
+}
+
+function getBreathePhaseForElapsed(mode, elapsedMs) {
+  const pattern = getBreatheModeConfig(mode).pattern;
+  if (!pattern.length) {
+    return { step: null, index: 0 };
+  }
+  const cycleSeconds = getBreatheCycleDuration(mode) || 1;
+  const elapsedSeconds = Math.max(0, elapsedMs / 1000);
+  let cyclePosition = elapsedSeconds % cycleSeconds;
+  let accumulated = 0;
+  for (let index = 0; index < pattern.length; index += 1) {
+    const step = pattern[index];
+    const stepDuration = Math.max(0, Number(step.duration) || 0);
+    if (stepDuration <= 0) {
+      continue;
+    }
+    if (cyclePosition < accumulated + stepDuration || index === pattern.length - 1) {
+      const withinStep = cyclePosition - accumulated;
+      const progress = stepDuration > 0 ? Math.min(1, Math.max(0, withinStep / stepDuration)) : 0;
+      return { step, index, progress };
+    }
+    accumulated += stepDuration;
+  }
+  const lastIndex = pattern.length - 1;
+  return { step: pattern[lastIndex], index: lastIndex, progress: 0 };
+}
+
+function updateBreathePhaseDisplay(phaseInfo) {
+  if (!breatheContainerEl || !breathePromptEl || !breatheOrbEl) {
+    return;
+  }
+  const phase = phaseInfo?.step?.phase || "";
+  const label = phaseInfo?.step?.label || BREATHE_IDLE_MESSAGE;
+  if (breatheSession.lastPhase !== phase) {
+    breatheSession.lastPhase = phase;
+    breatheContainerEl.dataset.phase = phase || "idle";
+  }
+  breathePromptEl.textContent = label;
+}
+
+function updateBreatheTitle() {
+  if (!breatheTitleEl) {
+    return;
+  }
+  const config = getBreatheModeConfig(breatheSession.mode);
+  breatheTitleEl.textContent = `Breathe — ${config.label}`;
+}
+
+function updateBreatheFooter(visible) {
+  if (!breatheFooterEl) {
+    return;
+  }
+  if (visible) {
+    breatheFooterEl.textContent = BREATHE_COMPLETE_MESSAGE;
+    breatheFooterEl.removeAttribute("hidden");
+  } else {
+    breatheFooterEl.setAttribute("hidden", "true");
+  }
+}
+
+function updateBreathePrimaryButton() {
+  if (!breathePrimaryButtonEl) {
+    return;
+  }
+  switch (breatheSession.status) {
+    case "running":
+      breathePrimaryButtonEl.textContent = "Pause";
+      break;
+    case "paused":
+      breathePrimaryButtonEl.textContent = "Resume";
+      break;
+    case "completed":
+      breathePrimaryButtonEl.textContent = "Restart";
+      break;
+    default:
+      breathePrimaryButtonEl.textContent = "Start";
+      break;
+  }
+}
+
+function updateBreatheModeButtons() {
+  breatheModeButtons.forEach((button, key) => {
+    const active = key === breatheSession.mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.disabled = breatheSession.status === "running";
+  });
+}
+
+function updateBreatheDurationButtons() {
+  breatheDurationButtons.forEach((button, key) => {
+    const active = key === breatheSession.duration;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.disabled = breatheSession.status === "running";
+  });
+}
+
+function applyBreatheVisualMode() {
+  if (!breatheContainerEl || !breatheOrbEl) {
+    return;
+  }
+  const config = getBreatheModeConfig(breatheSession.mode);
+  breatheContainerEl.dataset.mode = breatheSession.mode;
+  breatheOrbEl.style.setProperty("--spotlight-breathe-color-start", config.gradient[0]);
+  breatheOrbEl.style.setProperty("--spotlight-breathe-color-end", config.gradient[1]);
+  breatheOrbEl.classList.toggle("square", config.shape === "square");
+}
+
+function clearBreatheAnimationFrame() {
+  if (breatheSession.rafId) {
+    cancelAnimationFrame(breatheSession.rafId);
+    breatheSession.rafId = null;
+  }
+}
+
+function clearBreatheAutoExitTimer() {
+  if (breatheSession.autoExitTimer) {
+    clearTimeout(breatheSession.autoExitTimer);
+    breatheSession.autoExitTimer = null;
+  }
+}
+
+function handleBreathePrimaryAction() {
+  if (!breatheSession.active) {
+    return;
+  }
+  if (breatheSession.status === "running") {
+    pauseBreatheSession();
+    return;
+  }
+  if (breatheSession.status === "paused") {
+    resumeBreatheSession();
+    return;
+  }
+  if (breatheSession.status === "completed") {
+    restartBreatheSession();
+    return;
+  }
+  startBreatheSession();
+}
+
+function startBreatheSession() {
+  clearBreatheAnimationFrame();
+  clearBreatheAutoExitTimer();
+  breatheSession.status = "running";
+  breatheSession.startTimestamp = performance.now();
+  breatheSession.elapsedBeforePause = 0;
+  breatheSession.phaseIndex = 0;
+  breatheSession.lastPhase = null;
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  updateBreatheFooter(false);
+  tickBreatheSession();
+}
+
+function restartBreatheSession() {
+  breatheSession.status = "idle";
+  breatheSession.elapsedBeforePause = 0;
+  breatheSession.startTimestamp = performance.now();
+  breatheSession.phaseIndex = 0;
+  breatheSession.lastPhase = null;
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  updateBreatheFooter(false);
+  updateBreatheTimerDisplay(0);
+  updateBreathePhaseDisplay(null);
+  startBreatheSession();
+}
+
+function pauseBreatheSession() {
+  if (breatheSession.status !== "running") {
+    return;
+  }
+  const elapsed = getBreatheElapsed();
+  breatheSession.elapsedBeforePause = elapsed;
+  breatheSession.status = "paused";
+  clearBreatheAnimationFrame();
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+}
+
+function resumeBreatheSession() {
+  if (breatheSession.status !== "paused") {
+    return;
+  }
+  breatheSession.status = "running";
+  breatheSession.startTimestamp = performance.now();
+  clearBreatheAnimationFrame();
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  tickBreatheSession();
+}
+
+function completeBreatheSession() {
+  breatheSession.status = "completed";
+  clearBreatheAnimationFrame();
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  updateBreatheTimerDisplay(getBreatheDurationInfo(breatheSession.duration).seconds * 1000);
+  updateBreathePhaseDisplay({ step: { phase: "complete", label: BREATHE_COMPLETE_MESSAGE } });
+  updateBreatheFooter(true);
+  clearBreatheAutoExitTimer();
+  breatheSession.autoExitTimer = setTimeout(() => {
+    exitBreatheMode("completed");
+  }, 1600);
+}
+
+function getBreatheElapsed() {
+  if (!breatheSession.active) {
+    return 0;
+  }
+  const now = performance.now();
+  const base = breatheSession.elapsedBeforePause || 0;
+  if (breatheSession.status !== "running") {
+    return base;
+  }
+  return base + Math.max(0, now - breatheSession.startTimestamp);
+}
+
+function tickBreatheSession() {
+  clearBreatheAnimationFrame();
+  if (!breatheSession.active || breatheSession.status !== "running") {
+    return;
+  }
+  const elapsed = getBreatheElapsed();
+  const durationInfo = getBreatheDurationInfo(breatheSession.duration);
+  updateBreatheTimerDisplay(elapsed);
+  const phaseInfo = getBreathePhaseForElapsed(breatheSession.mode, elapsed);
+  updateBreathePhaseDisplay(phaseInfo);
+  const totalMs = durationInfo.seconds * 1000;
+  if (elapsed >= totalMs - 100) {
+    completeBreatheSession();
+    return;
+  }
+  breatheSession.rafId = requestAnimationFrame(tickBreatheSession);
+}
+
+function handleBreatheModeSelection(mode) {
+  const normalized = normalizeBreatheMode(mode);
+  if (normalized === breatheSession.mode) {
+    return;
+  }
+  if (breatheSession.status === "running") {
+    return;
+  }
+  breatheSession.mode = normalized;
+  breatheSession.lastPhase = null;
+  applyBreatheVisualMode();
+  updateBreatheModeButtons();
+  updateBreatheTitle();
+  if (breatheSession.status !== "idle") {
+    breatheSession.status = "idle";
+    breatheSession.elapsedBeforePause = 0;
+    updateBreathePrimaryButton();
+  }
+  updateBreatheFooter(false);
+  updateBreatheTimerDisplay(0);
+  updateBreathePhaseDisplay(null);
+}
+
+function handleBreatheDurationSelection(duration) {
+  const normalized = normalizeBreatheDuration(duration);
+  if (normalized === breatheSession.duration) {
+    return;
+  }
+  if (breatheSession.status === "running") {
+    return;
+  }
+  breatheSession.duration = normalized;
+  updateBreatheDurationButtons();
+  updateBreatheTimerDisplay(0);
+  if (breatheSession.status !== "idle") {
+    breatheSession.status = "idle";
+    breatheSession.elapsedBeforePause = 0;
+    updateBreathePrimaryButton();
+  }
+  updateBreatheFooter(false);
+  updateBreathePhaseDisplay(null);
+}
+
+function installBreatheKeydownHandler() {
+  if (breatheKeydownHandlerInstalled) {
+    return;
+  }
+  const handler = (event) => {
+    if (!breatheSession.active) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      exitBreatheMode("cancelled");
+      return;
+    }
+    if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      handleBreathePrimaryAction();
+      return;
+    }
+    if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+      const key = event.key.toLowerCase();
+      if (key === "1") {
+        event.preventDefault();
+        handleBreatheDurationSelection("30s");
+        return;
+      }
+      if (key === "2") {
+        event.preventDefault();
+        handleBreatheDurationSelection("1m");
+        return;
+      }
+      if (key === "3") {
+        event.preventDefault();
+        handleBreatheDurationSelection("2m");
+        return;
+      }
+      if (key === "c") {
+        event.preventDefault();
+        handleBreatheModeSelection("calm");
+        return;
+      }
+      if (key === "f") {
+        event.preventDefault();
+        handleBreatheModeSelection("focus");
+        return;
+      }
+      if (key === "e") {
+        event.preventDefault();
+        handleBreatheModeSelection("energy");
+        return;
+      }
+    }
+  };
+  document.addEventListener("keydown", handler, true);
+  breatheKeydownHandlerInstalled = true;
+  installBreatheKeydownHandler.detach = () => {
+    document.removeEventListener("keydown", handler, true);
+    breatheKeydownHandlerInstalled = false;
+  };
+}
+
+function detachBreatheKeydownHandler() {
+  if (typeof installBreatheKeydownHandler.detach === "function") {
+    installBreatheKeydownHandler.detach();
+    installBreatheKeydownHandler.detach = null;
+  }
+}
+
+function ensureBreatheElements() {
+  if (breatheContainerEl || !containerEl) {
+    return;
+  }
+
+  loadBreathePreferences();
+  ensureBreatheReduceMotion();
+
+  breatheContainerEl = document.createElement("div");
+  breatheContainerEl.className = "spotlight-breathe";
+  breatheContainerEl.setAttribute("hidden", "true");
+  breatheContainerEl.dataset.phase = "idle";
+
+  const headerEl = document.createElement("div");
+  headerEl.className = "spotlight-breathe-header";
+
+  breatheTitleEl = document.createElement("h2");
+  breatheTitleEl.className = "spotlight-breathe-title";
+  breatheTitleEl.textContent = "Breathe";
+  headerEl.appendChild(breatheTitleEl);
+
+  const headerControlsEl = document.createElement("div");
+  headerControlsEl.className = "spotlight-breathe-header-controls";
+
+  breatheMuteButtonEl = document.createElement("button");
+  breatheMuteButtonEl.type = "button";
+  breatheMuteButtonEl.className = "spotlight-breathe-mute";
+  breatheMuteButtonEl.textContent = "Mute";
+  breatheMuteButtonEl.setAttribute("aria-pressed", "false");
+  breatheMuteButtonEl.addEventListener("click", () => {
+    setBreatheMuted(!breatheMuted);
+  });
+  headerControlsEl.appendChild(breatheMuteButtonEl);
+
+  const backButtonEl = document.createElement("button");
+  backButtonEl.type = "button";
+  backButtonEl.className = "spotlight-breathe-close";
+  backButtonEl.setAttribute("aria-label", "Back to results");
+  backButtonEl.title = "Back (Esc)";
+  backButtonEl.textContent = "Back ✕";
+  backButtonEl.addEventListener("click", () => {
+    exitBreatheMode("cancelled");
+  });
+  headerControlsEl.appendChild(backButtonEl);
+
+  headerEl.appendChild(headerControlsEl);
+  breatheContainerEl.appendChild(headerEl);
+
+  const stageEl = document.createElement("div");
+  stageEl.className = "spotlight-breathe-stage";
+
+  const orbWrapperEl = document.createElement("div");
+  orbWrapperEl.className = "spotlight-breathe-orb-wrapper";
+
+  breatheOrbEl = document.createElement("div");
+  breatheOrbEl.className = "spotlight-breathe-orb";
+  breathePhaseEl = document.createElement("div");
+  breathePhaseEl.className = "spotlight-breathe-orb-inner";
+  breatheOrbEl.appendChild(breathePhaseEl);
+  orbWrapperEl.appendChild(breatheOrbEl);
+  stageEl.appendChild(orbWrapperEl);
+
+  breathePromptEl = document.createElement("div");
+  breathePromptEl.className = "spotlight-breathe-prompt";
+  breathePromptEl.textContent = BREATHE_IDLE_MESSAGE;
+  stageEl.appendChild(breathePromptEl);
+
+  const timerWrapperEl = document.createElement("div");
+  timerWrapperEl.className = "spotlight-breathe-timer";
+  breatheTimerEl = document.createElement("span");
+  breatheTimerEl.className = "spotlight-breathe-timer-text";
+  breatheTimerEl.textContent = formatBreatheTimerLabel(getBreatheDurationInfo(BREATHE_DEFAULT_DURATION).seconds * 1000);
+  timerWrapperEl.appendChild(breatheTimerEl);
+  breatheProgressEl = document.createElement("div");
+  breatheProgressEl.className = "spotlight-breathe-progress";
+  breatheProgressBarEl = document.createElement("div");
+  breatheProgressBarEl.className = "spotlight-breathe-progress-bar";
+  breatheProgressEl.appendChild(breatheProgressBarEl);
+  timerWrapperEl.appendChild(breatheProgressEl);
+  stageEl.appendChild(timerWrapperEl);
+
+  breatheContainerEl.appendChild(stageEl);
+
+  const controlsRowEl = document.createElement("div");
+  controlsRowEl.className = "spotlight-breathe-controls";
+
+  const modeGroupEl = document.createElement("div");
+  modeGroupEl.className = "spotlight-breathe-modes";
+  modeGroupEl.setAttribute("role", "group");
+  modeGroupEl.setAttribute("aria-label", "Modes");
+  Object.entries(BREATHE_MODE_CONFIG).forEach(([key, config]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-breathe-mode";
+    button.textContent = config.label;
+    button.setAttribute("data-mode", key);
+    button.setAttribute("aria-pressed", key === breatheSession.mode ? "true" : "false");
+    button.addEventListener("click", () => {
+      handleBreatheModeSelection(key);
+    });
+    breatheModeButtons.set(key, button);
+    modeGroupEl.appendChild(button);
+  });
+  controlsRowEl.appendChild(modeGroupEl);
+
+  const durationGroupEl = document.createElement("div");
+  durationGroupEl.className = "spotlight-breathe-durations";
+  durationGroupEl.setAttribute("role", "group");
+  durationGroupEl.setAttribute("aria-label", "Durations");
+  Object.entries(BREATHE_DURATION_OPTIONS).forEach(([key, info]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spotlight-breathe-duration";
+    button.textContent = info.label;
+    button.setAttribute("data-duration", key);
+    button.setAttribute("aria-pressed", key === breatheSession.duration ? "true" : "false");
+    button.addEventListener("click", () => {
+      handleBreatheDurationSelection(key);
+    });
+    breatheDurationButtons.set(key, button);
+    durationGroupEl.appendChild(button);
+  });
+  controlsRowEl.appendChild(durationGroupEl);
+
+  breathePrimaryButtonEl = document.createElement("button");
+  breathePrimaryButtonEl.type = "button";
+  breathePrimaryButtonEl.className = "spotlight-breathe-primary";
+  breathePrimaryButtonEl.textContent = "Start";
+  breathePrimaryButtonEl.addEventListener("click", () => {
+    handleBreathePrimaryAction();
+  });
+  controlsRowEl.appendChild(breathePrimaryButtonEl);
+
+  breatheContainerEl.appendChild(controlsRowEl);
+
+  breatheFooterEl = document.createElement("div");
+  breatheFooterEl.className = "spotlight-breathe-footer";
+  breatheFooterEl.setAttribute("hidden", "true");
+  breatheContainerEl.appendChild(breatheFooterEl);
+
+  containerEl.appendChild(breatheContainerEl);
+
+  applyBreatheVisualMode();
+  updateBreatheTitle();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  applyBreatheMuteState();
+  updateBreatheTimerDisplay(0);
+}
+
+function isBreatheActive() {
+  return Boolean(breatheSession.active);
+}
+
+function enterBreatheMode({ mode, duration, argsString } = {}) {
+  if (!containerEl) {
+    return;
+  }
+  ensureBreatheElements();
+  ensureBreatheReduceMotion();
+  installBreatheKeydownHandler();
+  clearBreatheAnimationFrame();
+  clearBreatheAutoExitTimer();
+
+  const normalizedMode = normalizeBreatheMode(mode);
+  const normalizedDuration = normalizeBreatheDuration(duration);
+
+  breatheSession.active = true;
+  breatheSession.status = "idle";
+  breatheSession.mode = normalizedMode;
+  breatheSession.duration = normalizedDuration;
+  breatheSession.argsString = typeof argsString === "string" ? argsString : "";
+  breatheSession.elapsedBeforePause = 0;
+  breatheSession.phaseIndex = 0;
+  breatheSession.lastPhase = null;
+  breatheSession.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  breatheSession.previousQuery = inputEl ? inputEl.value : "";
+  breatheSession.previousActiveIndex = activeIndex;
+
+  containerEl.classList.add("spotlight-shell-breathe-active");
+  if (breatheContainerEl) {
+    breatheContainerEl.removeAttribute("hidden");
+  }
+  if (inputEl) {
+    inputEl.setAttribute("disabled", "true");
+    inputEl.blur();
+  }
+
+  applyBreatheVisualMode();
+  updateBreatheTitle();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  updateBreathePrimaryButton();
+  updateBreatheFooter(false);
+  updateBreatheTimerDisplay(0);
+  updateBreathePhaseDisplay(null);
+  applyBreatheMuteState();
+
+  requestAnimationFrame(() => {
+    if (breathePrimaryButtonEl) {
+      breathePrimaryButtonEl.focus({ preventScroll: true });
+    }
+  });
+}
+
+function exitBreatheMode(reason = "cancelled") {
+  if (!breatheSession.active) {
+    return;
+  }
+  clearBreatheAnimationFrame();
+  clearBreatheAutoExitTimer();
+  breatheSession.active = false;
+  breatheSession.status = "idle";
+  breatheSession.elapsedBeforePause = 0;
+  breatheSession.phaseIndex = 0;
+  breatheSession.lastPhase = null;
+  updateBreathePrimaryButton();
+  updateBreatheModeButtons();
+  updateBreatheDurationButtons();
+  updateBreatheFooter(false);
+  updateBreathePhaseDisplay(null);
+  updateBreatheTimerDisplay(0);
+
+  if (containerEl) {
+    containerEl.classList.remove("spotlight-shell-breathe-active");
+  }
+  if (breatheContainerEl) {
+    breatheContainerEl.setAttribute("hidden", "true");
+  }
+  if (inputEl) {
+    inputEl.removeAttribute("disabled");
+  }
+  detachBreatheKeydownHandler();
+
+  if (breatheSession.previousFocus && typeof breatheSession.previousFocus.focus === "function") {
+    try {
+      breatheSession.previousFocus.focus({ preventScroll: true });
+    } catch (err) {
+      // Ignore focus errors.
+    }
+  } else if (inputEl) {
+    inputEl.focus({ preventScroll: true });
+    inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  }
+  breatheSession.previousFocus = null;
+
+  activeIndex = breatheSession.previousActiveIndex;
+  breatheSession.previousActiveIndex = -1;
+  updateActiveResult();
+  renderResults();
+
+  chrome.runtime.sendMessage({ type: "SPOTLIGHT_BREATHE_STOP", reason }, () => {
+    // Ignore errors; background may not respond synchronously.
+  });
+}
+
 const SLASH_OPTION_ID_PREFIX = "spotlight-slash-option-";
 const SLASH_COMMAND_DEFINITIONS = [
   {
@@ -495,6 +1298,7 @@ function createOverlay() {
 
   containerEl.appendChild(inputWrapper);
   containerEl.appendChild(resultsEl);
+  ensureBreatheElements();
   overlayEl.appendChild(containerEl);
 
   if (shadowContentEl && !shadowContentEl.contains(overlayEl)) {
@@ -1869,6 +2673,9 @@ async function openOverlay() {
 
 function closeOverlay() {
   if (!isOpen) return;
+  if (isBreatheActive()) {
+    exitBreatheMode("cancelled");
+  }
 
   isOpen = false;
   if (shadowHostEl) {
@@ -1902,6 +2709,9 @@ function closeOverlay() {
 
 function handleGlobalKeydown(event) {
   if (!isOpen) return;
+  if (isBreatheActive()) {
+    return;
+  }
   if (slashMenuVisible && slashMenuOptions.length) {
     return;
   }
@@ -1920,6 +2730,10 @@ function handleGlobalKeydown(event) {
 }
 
 function handleInputKeydown(event) {
+  if (isBreatheActive()) {
+    event.preventDefault();
+    return;
+  }
   const wantsDefaultWebSearch =
     event.key === "Enter" &&
     !event.altKey &&
@@ -2403,12 +3217,29 @@ function triggerWebSearch(engineIdOverride = null) {
 function openResult(result) {
   if (!result) return;
   if (result.type === "command") {
+    const isBreatheCommand = result.command === "breathe";
     const payload = { type: "SPOTLIGHT_COMMAND", command: result.command };
     if (result.args) {
       payload.args = result.args;
     }
-    chrome.runtime.sendMessage(payload);
-    closeOverlay();
+    chrome.runtime.sendMessage(payload, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn("Spotlight command error", chrome.runtime.lastError);
+        if (isBreatheCommand) {
+          setStatus("Unable to start breathing session", { force: true });
+        }
+        return;
+      }
+      if (!response || !response.success) {
+        if (isBreatheCommand) {
+          const message = (response && response.error) || "Unable to start breathing session";
+          setStatus(message, { force: true });
+        }
+      }
+    });
+    if (!isBreatheCommand) {
+      closeOverlay();
+    }
     return;
   }
   if (result.type === "navigation") {
@@ -3311,6 +4142,9 @@ function requestSummaryForResult(result, options = {}) {
 
 function renderResults() {
   if (!resultsEl) {
+    return;
+  }
+  if (isBreatheActive()) {
     return;
   }
 
@@ -4315,6 +5149,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       closeOverlay();
     } else {
       void openOverlay();
+    }
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_BREATHE_START") {
+    enterBreatheMode({ mode: message.mode, duration: message.duration, argsString: message.argsString });
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_BREATHE_STOP") {
+    if (isBreatheActive()) {
+      exitBreatheMode(message.reason || "cancelled");
     }
     return undefined;
   }

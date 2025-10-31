@@ -9,6 +9,25 @@ const REBUILD_DELAYS = {
   "tab-unfocus": 300,
 };
 
+const BREATHE_MODES = new Set(["calm", "focus", "energy"]);
+const BREATHE_DURATIONS = new Set(["30s", "1m", "2m"]);
+
+function normalizeBreatheMode(mode) {
+  if (typeof mode !== "string") {
+    return "calm";
+  }
+  const value = mode.toLowerCase();
+  return BREATHE_MODES.has(value) ? value : "calm";
+}
+
+function normalizeBreatheDuration(duration) {
+  if (typeof duration !== "string") {
+    return "1m";
+  }
+  const value = duration.toLowerCase();
+  return BREATHE_DURATIONS.has(value) ? value : "1m";
+}
+
 export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrganizer, focus }) {
   const {
     sortAllTabsByDomainAndTitle,
@@ -19,7 +38,7 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
     closeAudibleTabs,
   } = tabActions;
 
-  return async function executeCommand(commandId, args = {}) {
+  return async function executeCommand(commandId, args = {}, options = {}) {
     switch (commandId) {
       case "tab-sort":
         await sortAllTabsByDomainAndTitle();
@@ -71,6 +90,31 @@ export function createCommandExecutor({ tabActions, scheduleRebuild, bookmarkOrg
         }
         await bookmarkOrganizer.organizeBookmarks();
         return;
+      case "breathe": {
+        const tabId =
+          typeof options?.tabId === "number"
+            ? options.tabId
+            : typeof options?.sender?.tab?.id === "number"
+            ? options.sender.tab.id
+            : null;
+        if (!Number.isInteger(tabId)) {
+          throw new Error("Unable to start breathe session");
+        }
+        const payload = {
+          type: "SPOTLIGHT_BREATHE_START",
+          mode: normalizeBreatheMode(args?.mode),
+          duration: normalizeBreatheDuration(args?.duration),
+        };
+        if (typeof args?.argsString === "string" && args.argsString) {
+          payload.argsString = args.argsString;
+        }
+        try {
+          await chrome.tabs.sendMessage(tabId, payload);
+        } catch (err) {
+          throw new Error("Unable to start breathing session");
+        }
+        return;
+      }
       default:
         throw new Error(`Unknown command: ${commandId}`);
     }

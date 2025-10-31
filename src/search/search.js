@@ -469,7 +469,68 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
   return true;
 }
 
+const BREATHE_MODES = new Set(["calm", "focus", "energy"]);
+const BREATHE_DURATIONS = new Set(["30s", "1m", "2m"]);
+
+function parseBreatheCommandArgs(query = "") {
+  const defaults = { mode: "calm", duration: "1m" };
+  if (typeof query !== "string" || !query.trim()) {
+    return { ...defaults };
+  }
+
+  const modeMatch = query.match(/\b(calm|focus|energy)\b/i);
+  const durationMatch = query.match(/\b(30s|1m|2m)\b/i);
+
+  const mode = modeMatch ? modeMatch[1].toLowerCase() : defaults.mode;
+  const duration = durationMatch ? durationMatch[1].toLowerCase() : defaults.duration;
+
+  return {
+    mode: BREATHE_MODES.has(mode) ? mode : defaults.mode,
+    duration: BREATHE_DURATIONS.has(duration) ? duration : defaults.duration,
+  };
+}
+
+function formatBreatheAnswer(args) {
+  const modeLabel = (args?.mode || "calm").replace(/^(\w)/, (match) => match.toUpperCase());
+  const duration = args?.duration || "1m";
+  const durationLabel = duration === "30s" ? "30 seconds" : duration === "2m" ? "2 minutes" : "1 minute";
+  return `${modeLabel} breathing for ${durationLabel}`;
+}
+
 const STATIC_COMMANDS = [
+  {
+    id: "command:breathe",
+    title: "Breathe",
+    aliases: [
+      "breathe",
+      "breathing",
+      "relax",
+      "focus",
+      "energy",
+      "calm",
+      "break",
+      "mindful break",
+    ],
+    action: "breathe",
+    answer(context, query) {
+      const args = parseBreatheCommandArgs(query || "");
+      return formatBreatheAnswer(args);
+    },
+    description(context, query) {
+      const args = parseBreatheCommandArgs(query || "");
+      const modeLabel = (args.mode || "calm").replace(/^(\w)/, (match) => match.toUpperCase());
+      const durationLabel = args.duration === "30s" ? "30 seconds" : args.duration === "2m" ? "2 minutes" : "1 minute";
+      return `Take a short mindful break · ${modeLabel} · ${durationLabel}`;
+    },
+    buildArgs(query) {
+      const args = parseBreatheCommandArgs(query || "");
+      const argsString = typeof query === "string" ? query.replace(/^\s*breathe\b/i, "").trim() : "";
+      return { ...args, argsString };
+    },
+    isAvailable() {
+      return true;
+    },
+  },
   {
     id: "command:tab-sort",
     title: "Tab sort",
@@ -949,8 +1010,9 @@ function findBestStaticCommand(query, context) {
     if (!matched) {
       continue;
     }
-    const answer = command.answer ? command.answer(context) : "";
-    const description = command.description ? command.description(context) : answer;
+    const args = typeof command.buildArgs === "function" ? command.buildArgs(query) : null;
+    const answer = command.answer ? command.answer(context, query) : "";
+    const description = command.description ? command.description(context, query) : answer;
     return {
       ghostText: command.title,
       answer,
@@ -961,6 +1023,7 @@ function findBestStaticCommand(query, context) {
         description,
         type: "command",
         command: command.action,
+        args: args && typeof args === "object" ? args : {},
         label: "Command",
         score: COMMAND_SCORE,
         faviconUrl: COMMAND_ICON_DATA_URL,
