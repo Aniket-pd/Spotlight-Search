@@ -236,6 +236,49 @@ const FILTER_SHORTCUT_DEFINITIONS = [
 
 const filterShortcutButtons = new Map();
 
+const FILTER_QUERY_PREFIXES = [
+  "tab:",
+  "tabs:",
+  "t:",
+  "summarize:",
+  "bookmark:",
+  "bookmarks:",
+  "bm:",
+  "b:",
+  "history:",
+  "hist:",
+  "h:",
+  "download:",
+  "downloads:",
+  "dl:",
+  "d:",
+  "recent:",
+  "recently:",
+  "recentlyclosed:",
+  "closed:",
+  "recent-session:",
+  "recentwindow:",
+  "recenttab:",
+  "closedtab:",
+  "closedwindow:",
+  "session:",
+  "topsite:",
+  "topsites:",
+  "top-site:",
+  "top-sites:",
+  "ts:",
+  "back:",
+  "forward:",
+];
+
+function hasFilterQueryPrefix(query) {
+  const normalized = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (!normalized) {
+    return false;
+  }
+  return FILTER_QUERY_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
 const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
   ...definition,
   searchTokens: [definition.label, ...(definition.keywords || [])]
@@ -2038,6 +2081,7 @@ function handleInputChange() {
   updateSlashMenu();
   updateEngineMenu();
   const trimmed = query.trim();
+  const scopedFilterActive = hasFilterQueryPrefix(query);
   if (trimmed === "> reindex") {
     lastRequestId = ++requestCounter;
     setStatus("Press Enter to rebuild index", { sticky: true, force: true });
@@ -2075,8 +2119,14 @@ function handleInputChange() {
       }
       return;
     }
-    if (applyWebSearchPreview(trimmed, userSelectedWebSearchEngineId)) {
+    if (!scopedFilterActive && applyWebSearchPreview(trimmed, userSelectedWebSearchEngineId)) {
       return;
+    }
+    if (scopedFilterActive && webSearchPreviewResult) {
+      webSearchPreviewResult = null;
+      resultsState = [];
+      lazyList.setItems(resultsState);
+      renderResults();
     }
   } else {
     webSearchPreviewResult = null;
