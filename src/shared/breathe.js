@@ -47,6 +47,17 @@ export function parseBreatheArgs(argsString = "") {
   };
 }
 
+export function extractBreatheMatchPhrase(query = "") {
+  if (typeof query !== "string") {
+    return "";
+  }
+  const match = query.match(/\bbreathe\b/i);
+  if (!match) {
+    return "";
+  }
+  return query.slice(0, match.index + match[0].length).trim();
+}
+
 export function extractBreatheArgsString(query = "") {
   if (typeof query !== "string") {
     return "";
@@ -63,6 +74,10 @@ export function extractBreatheArgsString(query = "") {
   if (breatheIndex === -1) {
     return "";
   }
-  const argsTokens = tokens.slice(0, breatheIndex).concat(tokens.slice(breatheIndex + 1));
-  return argsTokens.join(" ").trim();
+  const trailing = tokens.slice(breatheIndex + 1);
+  if (trailing.length) {
+    return trailing.join(" ").trim();
+  }
+  const leading = tokens.slice(0, breatheIndex);
+  return leading.join(" ").trim();
 }
