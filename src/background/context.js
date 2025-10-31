@@ -1,16 +1,118 @@
 const DEFAULT_REBUILD_DELAY = 600;
+const PREFERENCES_STORAGE_KEY = "spotlightPreferences";
+
+const DEFAULT_PREFERENCES = Object.freeze({
+  dataSources: {
+    tabs: true,
+    bookmarks: true,
+    history: true,
+    downloads: true,
+    topSites: true,
+  },
+  defaultWebSearchEngineId: null,
+});
+
+function getDefaultPreferences() {
+  return {
+    dataSources: { ...DEFAULT_PREFERENCES.dataSources },
+    defaultWebSearchEngineId: DEFAULT_PREFERENCES.defaultWebSearchEngineId,
+  };
+}
+
+function normalizeDataSourcePreferences(raw) {
+  const defaults = getDefaultPreferences().dataSources;
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  for (const key of Object.keys(defaults)) {
+    defaults[key] = raw[key] !== false;
+  }
+  return defaults;
+}
+
+function normalizePreferences(raw) {
+  const normalized = getDefaultPreferences();
+  if (raw && typeof raw === "object") {
+    normalized.dataSources = normalizeDataSourcePreferences(raw.dataSources);
+    if (typeof raw.defaultWebSearchEngineId === "string" && raw.defaultWebSearchEngineId.trim()) {
+      normalized.defaultWebSearchEngineId = raw.defaultWebSearchEngineId.trim();
+    }
+  }
+  return normalized;
+}
+
+async function readStoredPreferences() {
+  if (!chrome?.storage?.sync?.get) {
+    return getDefaultPreferences();
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.sync.get(PREFERENCES_STORAGE_KEY, (result) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Spotlight: failed to read preferences", chrome.runtime.lastError);
+          resolve(getDefaultPreferences());
+          return;
+        }
+        resolve(normalizePreferences(result?.[PREFERENCES_STORAGE_KEY]));
+      });
+    } catch (err) {
+      console.warn("Spotlight: unable to read preferences", err);
+      resolve(getDefaultPreferences());
+    }
+  });
+}
 
 export function createBackgroundContext({ buildIndex }) {
   const state = {
     indexData: null,
     buildingPromise: null,
     rebuildTimer: null,
+    preferences: null,
+    preferencesPromise: null,
   };
   const faviconCache = new Map();
 
+  function applyPreferences(preferences) {
+    state.preferences = normalizePreferences(preferences);
+    state.preferencesPromise = null;
+  }
+
+  async function ensurePreferences() {
+    if (state.preferences) {
+      return state.preferences;
+    }
+    if (!state.preferencesPromise) {
+      state.preferencesPromise = readStoredPreferences()
+        .then((preferences) => {
+          applyPreferences(preferences);
+          return state.preferences;
+        })
+        .catch((err) => {
+          console.warn("Spotlight: failed to ensure preferences", err);
+          applyPreferences(getDefaultPreferences());
+          return state.preferences;
+        });
+    }
+    return state.preferencesPromise;
+  }
+
+  function handlePreferenceChange(changes, areaName) {
+    if (areaName !== "sync" || !changes || !changes[PREFERENCES_STORAGE_KEY]) {
+      return;
+    }
+    applyPreferences(changes[PREFERENCES_STORAGE_KEY].newValue || getDefaultPreferences());
+    state.indexData = null;
+    scheduleRebuild(100);
+  }
+
+  if (chrome?.storage?.onChanged?.addListener) {
+    chrome.storage.onChanged.addListener(handlePreferenceChange);
+  }
+
   async function rebuildIndex() {
     if (!state.buildingPromise) {
-      state.buildingPromise = buildIndex()
+      state.buildingPromise = ensurePreferences()
+        .then((preferences) => buildIndex({ preferences }))
         .then((data) => {
           state.indexData = data;
           state.buildingPromise = null;
@@ -118,5 +220,6 @@ export function createBackgroundContext({ buildIndex }) {
     openItem,
     getItemById,
     faviconCache,
+    getPreferences: ensurePreferences,
   };
 }

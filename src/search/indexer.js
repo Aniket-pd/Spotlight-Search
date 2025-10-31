@@ -5,6 +5,25 @@ const DOWNLOAD_SEARCH_LIMIT = 200;
 
 const TOP_SITE_TITLE_WEIGHT = TAB_TITLE_WEIGHT;
 
+const DEFAULT_DATA_SOURCES = Object.freeze({
+  tabs: true,
+  bookmarks: true,
+  history: true,
+  downloads: true,
+  topSites: true,
+});
+
+function normalizeDataSourcePreferences(raw) {
+  const defaults = { ...DEFAULT_DATA_SOURCES };
+  if (!raw || typeof raw !== "object") {
+    return defaults;
+  }
+  for (const key of Object.keys(defaults)) {
+    defaults[key] = raw[key] !== false;
+  }
+  return defaults;
+}
+
 function extractHostname(url) {
   if (!url) {
     return "";
@@ -340,18 +359,31 @@ async function indexDownloads(indexMap, termBuckets, items) {
   }
 }
 
-export async function buildIndex() {
+export async function buildIndex(options = {}) {
+  const preferences = options?.preferences || {};
+  const dataSources = normalizeDataSourcePreferences(preferences.dataSources);
   const items = [];
   const indexMap = new Map();
   const termBuckets = new Map();
 
-  await Promise.all([
-    indexTabs(indexMap, termBuckets, items),
-    indexBookmarks(indexMap, termBuckets, items),
-    indexHistory(indexMap, termBuckets, items),
-    indexDownloads(indexMap, termBuckets, items),
-    indexTopSites(indexMap, termBuckets, items),
-  ]);
+  const tasks = [];
+  if (dataSources.tabs) {
+    tasks.push(indexTabs(indexMap, termBuckets, items));
+  }
+  if (dataSources.bookmarks) {
+    tasks.push(indexBookmarks(indexMap, termBuckets, items));
+  }
+  if (dataSources.history) {
+    tasks.push(indexHistory(indexMap, termBuckets, items));
+  }
+  if (dataSources.downloads) {
+    tasks.push(indexDownloads(indexMap, termBuckets, items));
+  }
+  if (dataSources.topSites) {
+    tasks.push(indexTopSites(indexMap, termBuckets, items));
+  }
+
+  await Promise.all(tasks);
 
   const buckets = {};
   const allTerms = new Set();

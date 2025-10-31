@@ -19,8 +19,8 @@ import {
 
 let focus = null;
 const context = createBackgroundContext({
-  buildIndex: async () => {
-    const data = await buildIndex();
+  buildIndex: async ({ preferences } = {}) => {
+    const data = await buildIndex({ preferences });
     if (focus && typeof focus.decorateIndex === "function") {
       return focus.decorateIndex(data);
     }

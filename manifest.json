@@ -14,7 +14,9 @@
     "downloads",
     "topSites"
   ],
-  "host_permissions": ["file:///*"],
+  "host_permissions": [
+    "file:///*"
+  ],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"
@@ -36,7 +38,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "src/shared/web-search.js",
         "src/content/bookmark-organizer-ui.js",
@@ -47,11 +51,20 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/styles.css", "icons/*.svg"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "src/content/styles.css",
+        "icons/*.svg"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "action": {
     "default_title": "Spotlight for Chrome"
+  },
+  "options_ui": {
+    "page": "src/options/index.html",
+    "open_in_tab": false
   }
 }

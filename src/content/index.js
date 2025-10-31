@@ -91,6 +91,28 @@ let focusActive = false;
 let colorSchemeMediaQuery = null;
 let colorSchemeChangeHandler = null;
 
+const PREFERENCES_STORAGE_KEY = "spotlightPreferences";
+const DEFAULT_DATA_SOURCE_SETTINGS = Object.freeze({
+  tabs: true,
+  bookmarks: true,
+  history: true,
+  downloads: true,
+  topSites: true,
+});
+
+const DATA_SOURCE_ID_MAP = Object.freeze({
+  tab: "tabs",
+  bookmark: "bookmarks",
+  history: "history",
+  download: "downloads",
+  topSite: "topSites",
+});
+
+let dataSourcePreferences = { ...DEFAULT_DATA_SOURCE_SETTINGS };
+let configuredDefaultWebSearchEngineId = null;
+let activeFilterShortcuts = null;
+let slashCommandEntries = [];
+
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
   if (!api || typeof api !== "object") {
@@ -102,9 +124,19 @@ function getWebSearchApi() {
 function resetWebSearchSelection() {
   const api = getWebSearchApi();
   userSelectedWebSearchEngineId = null;
-  activeWebSearchEngine = api && typeof api.getDefaultSearchEngine === "function"
-    ? api.getDefaultSearchEngine()
-    : null;
+  activeWebSearchEngine = null;
+  const preferredId = configuredDefaultWebSearchEngineId || getDefaultWebSearchEngineId();
+  if (api && typeof api.findSearchEngine === "function" && preferredId) {
+    const preferred = api.findSearchEngine(preferredId);
+    if (preferred) {
+      activeWebSearchEngine = preferred;
+    }
+  }
+  if (!activeWebSearchEngine) {
+    activeWebSearchEngine = api && typeof api.getDefaultSearchEngine === "function"
+      ? api.getDefaultSearchEngine()
+      : null;
+  }
   webSearchPreviewResult = null;
 }
 
@@ -125,6 +157,154 @@ function getDefaultWebSearchEngineId() {
     return null;
   }
   return engine.id;
+}
+
+function getDefaultPreferenceState() {
+  return {
+    dataSources: { ...DEFAULT_DATA_SOURCE_SETTINGS },
+    defaultWebSearchEngineId: null,
+  };
+}
+
+function normalizePreferencePayload(raw) {
+  const normalized = getDefaultPreferenceState();
+  if (raw && typeof raw === "object") {
+    const sources = { ...DEFAULT_DATA_SOURCE_SETTINGS };
+    if (raw.dataSources && typeof raw.dataSources === "object") {
+      for (const key of Object.keys(sources)) {
+        sources[key] = raw.dataSources[key] !== false;
+      }
+    }
+    normalized.dataSources = sources;
+    if (typeof raw.defaultWebSearchEngineId === "string" && raw.defaultWebSearchEngineId.trim()) {
+      normalized.defaultWebSearchEngineId = raw.defaultWebSearchEngineId.trim();
+    }
+  }
+  return normalized;
+}
+
+function formatList(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "";
+  }
+  if (items.length === 1) {
+    return items[0];
+  }
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+  const head = items.slice(0, -1).join(", ");
+  return `${head}, and ${items[items.length - 1]}`;
+}
+
+function updateInputPlaceholder() {
+  if (!inputEl) {
+    return;
+  }
+  const enabledLabels = [];
+  if (isDataSourceEnabled("tab")) {
+    enabledLabels.push("tabs");
+  }
+  if (isDataSourceEnabled("bookmark")) {
+    enabledLabels.push("bookmarks");
+  }
+  if (isDataSourceEnabled("history")) {
+    enabledLabels.push("history");
+  }
+  if (isDataSourceEnabled("download")) {
+    enabledLabels.push("downloads");
+  }
+  if (isDataSourceEnabled("topSite")) {
+    enabledLabels.push("top sites");
+  }
+
+  let placeholder = "Search";
+  if (enabledLabels.length) {
+    placeholder = `${placeholder} ${formatList(enabledLabels)}`;
+  } else {
+    placeholder = `${placeholder} Spotlight`;
+  }
+  placeholder = `${placeholder}…`;
+
+  const hintSource = activeFilterShortcuts && activeFilterShortcuts.length ? activeFilterShortcuts[0] : null;
+  if (hintSource && hintSource.prefix) {
+    const hint = hintSource.prefix.trim();
+    if (hint) {
+      placeholder = `${placeholder} (try "${hint}")`;
+    }
+  }
+
+  inputEl.setAttribute("placeholder", placeholder);
+}
+
+function applyPreferenceState(rawPreferences) {
+  const normalized = normalizePreferencePayload(rawPreferences);
+  dataSourcePreferences = { ...normalized.dataSources };
+  configuredDefaultWebSearchEngineId = normalized.defaultWebSearchEngineId;
+  recomputePreferenceControlledOptions();
+
+  if (filterShortcutsEl) {
+    renderFilterShortcuts();
+    updateFilterShortcutsActiveState(inputEl ? inputEl.value : "");
+  }
+  updateInputPlaceholder();
+
+  if (slashMenuEl && slashMenuVisible && inputEl) {
+    const caret = typeof inputEl.selectionStart === "number" ? inputEl.selectionStart : inputEl.value.length;
+    const slashQuery = extractSlashQuery(inputEl.value, caret) || inputEl.value;
+    slashMenuOptions = computeSlashCandidates(slashQuery);
+    slashMenuActiveIndex = slashMenuOptions.length ? Math.min(Math.max(slashMenuActiveIndex, 0), slashMenuOptions.length - 1) : -1;
+    if (slashMenuActiveIndex === -1 && slashMenuOptions.length) {
+      slashMenuActiveIndex = 0;
+    }
+    renderSlashMenu();
+  }
+
+  if (!userSelectedWebSearchEngineId) {
+    const api = getWebSearchApi();
+    const preferredId = configuredDefaultWebSearchEngineId || getDefaultWebSearchEngineId();
+    if (api && typeof api.findSearchEngine === "function" && preferredId) {
+      const preferred = api.findSearchEngine(preferredId);
+      if (preferred) {
+        activeWebSearchEngine = preferred;
+      }
+    }
+    if (!activeWebSearchEngine) {
+      activeWebSearchEngine = api && typeof api.getDefaultSearchEngine === "function" ? api.getDefaultSearchEngine() : null;
+    }
+  }
+}
+
+async function loadPreferenceState() {
+  if (!chrome?.storage?.sync?.get) {
+    applyPreferenceState(getDefaultPreferenceState());
+    return;
+  }
+  try {
+    const result = await new Promise((resolve) => {
+      chrome.storage.sync.get(PREFERENCES_STORAGE_KEY, (data) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Spotlight: failed to load preferences", chrome.runtime.lastError);
+          resolve(getDefaultPreferenceState());
+          return;
+        }
+        resolve(data?.[PREFERENCES_STORAGE_KEY] || getDefaultPreferenceState());
+      });
+    });
+    applyPreferenceState(result);
+  } catch (err) {
+    console.warn("Spotlight: unable to load preferences", err);
+    applyPreferenceState(getDefaultPreferenceState());
+  }
+}
+
+if (chrome?.storage?.onChanged?.addListener) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync" || !changes || !changes[PREFERENCES_STORAGE_KEY]) {
+      return;
+    }
+    applyPreferenceState(changes[PREFERENCES_STORAGE_KEY].newValue);
+  });
 }
 
 const lazyList = createLazyList(
@@ -227,12 +407,53 @@ const FILTER_SHORTCUT_DEFINITIONS = [
 
 const filterShortcutButtons = new Map();
 
-const SLASH_COMMANDS = SLASH_COMMAND_DEFINITIONS.map((definition) => ({
-  ...definition,
-  searchTokens: [definition.label, ...(definition.keywords || [])]
-    .map((token) => (token || "").toLowerCase())
-    .filter(Boolean),
-}));
+function buildSlashCommandEntries(definitions) {
+  return definitions.map((definition) => ({
+    ...definition,
+    searchTokens: [definition.label, ...(definition.keywords || [])]
+      .map((token) => (token || "").toLowerCase())
+      .filter(Boolean),
+  }));
+}
+
+function isDataSourceEnabled(id) {
+  if (!id) {
+    return true;
+  }
+  const key = DATA_SOURCE_ID_MAP[id] || id;
+  if (!(key in dataSourcePreferences)) {
+    return true;
+  }
+  return dataSourcePreferences[key] !== false;
+}
+
+function shouldIncludeSlashCommand(definition) {
+  if (!definition || !definition.id) {
+    return true;
+  }
+  switch (definition.id) {
+    case "slash-tab":
+      return isDataSourceEnabled("tab");
+    case "slash-bookmark":
+      return isDataSourceEnabled("bookmark");
+    case "slash-history":
+      return isDataSourceEnabled("history");
+    case "slash-download":
+      return isDataSourceEnabled("download");
+    default:
+      return true;
+  }
+}
+
+function recomputePreferenceControlledOptions() {
+  activeFilterShortcuts = FILTER_SHORTCUT_DEFINITIONS.filter((shortcut) =>
+    shortcut && shortcut.id ? isDataSourceEnabled(shortcut.id) : true
+  );
+  const allowedSlashDefinitions = SLASH_COMMAND_DEFINITIONS.filter(shouldIncludeSlashCommand);
+  slashCommandEntries = buildSlashCommandEntries(allowedSlashDefinitions);
+}
+
+recomputePreferenceControlledOptions();
 
 function ensureShadowRoot() {
   if (!document.body) {
@@ -502,6 +723,7 @@ function createOverlay() {
   }
 
   renderFilterShortcuts();
+  updateInputPlaceholder();
   renderSubfilters();
 
   overlayEl.addEventListener("click", (event) => {
@@ -939,7 +1161,11 @@ function extractSlashQuery(value, caretIndex) {
 
 function computeSlashCandidates(query) {
   const normalized = (query || "").trim().toLowerCase();
-  const scored = SLASH_COMMANDS.map((option) => {
+  const options = slashCommandEntries && slashCommandEntries.length
+    ? slashCommandEntries
+    : buildSlashCommandEntries(SLASH_COMMAND_DEFINITIONS);
+
+  const scored = options.map((option) => {
     if (!normalized) {
       return { option, score: 1 };
     }
@@ -1089,7 +1315,11 @@ function renderFilterShortcuts() {
   filterShortcutsEl.innerHTML = "";
   filterShortcutButtons.clear();
 
-  FILTER_SHORTCUT_DEFINITIONS.forEach((shortcut) => {
+  const shortcuts = activeFilterShortcuts && activeFilterShortcuts.length
+    ? activeFilterShortcuts
+    : FILTER_SHORTCUT_DEFINITIONS;
+
+  shortcuts.forEach((shortcut) => {
     if (!shortcut || !shortcut.id || !shortcut.prefix || !shortcut.label) {
       return;
     }
@@ -1131,7 +1361,11 @@ function resolveFilterShortcutFromQuery(query) {
     return null;
   }
 
-  const match = FILTER_SHORTCUT_DEFINITIONS.find((shortcut) => {
+  const shortcuts = activeFilterShortcuts && activeFilterShortcuts.length
+    ? activeFilterShortcuts
+    : FILTER_SHORTCUT_DEFINITIONS;
+
+  const match = shortcuts.find((shortcut) => {
     if (!shortcut || !shortcut.prefix) {
       return false;
     }
@@ -1149,6 +1383,9 @@ function updateFilterShortcutsActiveState(query) {
   }
 
   if (!filterShortcutButtons.size) {
+    if (filterShortcutsEl) {
+      filterShortcutsEl.setAttribute("aria-hidden", "true");
+    }
     return;
   }
 
@@ -4344,6 +4581,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function initializeSpotlightContent() {
+  void loadPreferenceState();
   ensureShadowRoot();
   requestFocusStatus();
 }

@@ -10,6 +10,7 @@ A Spotlight-style universal search and launcher for Chrome that runs entirely lo
 - Optional `Alt+Space` shortcut.
 - Command suggestions with inline ghost completions and contextual answers (e.g., tab count for "Tab sort").
 - Command `> reindex` to rebuild the local search index on demand.
+- Extension options page to toggle indexed data sources and choose your default web search provider.
 - All processing performed locally—no network calls.
 - Domain-first tab sort command to organize each window's tabs while keeping pinned tabs in place.
 - Tab shuffle command to randomize unpinned tabs when you want a fresh perspective.
@@ -39,6 +40,15 @@ Spotlight keeps web search only one keystroke away when local data comes up empt
 5. Press `Enter` to open the previewed engine in a new tab, or press `Esc` to return to the full local results list.
 
 The shared web search utilities live in `src/shared/web-search.js` if you want to add or customize engines.
+
+## Preferences
+
+Open **chrome://extensions/**, locate Spotlight for Chrome, and click **Extension options** (or right-click the toolbar icon and choose **Options**) to tailor the experience:
+
+- **Indexed data sources** – Toggle open tabs, bookmarks, browsing history, downloads, and Chrome's top sites. Disabled sources are skipped entirely during indexing, reducing the size of the in-memory dataset and hiding the related quick filters and slash commands in the UI.
+- **Default web search** – Pick your preferred engine for `Cmd+Enter`/`Ctrl+Enter` web lookups and the web-search preview result. Spotlight falls back to the built-in default if you leave the selector on "Use Spotlight default".
+
+Changes are stored in `chrome.storage.sync`, so they follow you wherever you sign in with the same Chrome profile. Preferences apply automatically—there's no save button required.
 
 ## Loading the Extension
 1. Clone or download this repository.
