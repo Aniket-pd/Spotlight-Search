@@ -861,13 +861,11 @@
 
 .spotlight-ghost {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--spotlight-input-padding-inline-start);
-  right: var(--spotlight-input-padding-inline-end);
+  inset: 0;
   display: flex;
   align-items: center;
-  padding: 10px 0;
+  padding: 10px var(--spotlight-input-padding-inline-end)
+    10px var(--spotlight-input-padding-inline-start);
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
   font-size: var(--spotlight-input-font-size, 20px);
