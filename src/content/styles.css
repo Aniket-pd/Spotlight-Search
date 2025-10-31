@@ -281,7 +281,7 @@
   background: var(--spotlight-input-bg);
   transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: var(--spotlight-input-shadow);
-  padding: 0 12px 0 52px;
+  padding: 0 12px 0 60px;
   font-family: var(--spotlight-font-family);
   font-size: 20px;
   font-weight: inherit;
@@ -868,7 +868,7 @@
   inset: 0;
   display: flex;
   align-items: center;
-  padding: 10px 0;
+  padding: 10px 0 10px 60px;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
   font-family: inherit;
