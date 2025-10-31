@@ -27,6 +27,7 @@ let ghostEl = null;
 let ghostPrefixEl = null;
 let ghostSuffixEl = null;
 let inputContainerEl = null;
+let inputRowEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
 let activeFilter = null;
@@ -54,14 +55,18 @@ let userSelectedWebSearchEngineId = null;
 let activeWebSearchEngine = null;
 let webSearchPreviewResult = null;
 let historyAssistantContainerEl = null;
+let historyAssistantFieldEl = null;
 let historyAssistantInputEl = null;
 let historyAssistantSubmitEl = null;
 let historyAssistantStatusEl = null;
 let historyAssistantActionEl = null;
 let historyAssistantClearEl = null;
 let historyAssistantRangeEl = null;
+let historyAssistantTriggerEl = null;
+let historyAssistantBackEl = null;
 let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
+let historyAssistantAiModeActive = false;
 let filterShortcutsEl = null;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
@@ -407,8 +412,14 @@ function createOverlay() {
 
   const inputWrapper = document.createElement("div");
   inputWrapper.className = "spotlight-input-wrapper";
+
+  inputRowEl = document.createElement("div");
+  inputRowEl.className = "spotlight-input-row";
+  inputWrapper.appendChild(inputRowEl);
+
   inputContainerEl = document.createElement("div");
   inputContainerEl.className = "spotlight-input-container";
+  inputRowEl.appendChild(inputContainerEl);
 
   const inputIconEl = document.createElement("span");
   inputIconEl.className = "spotlight-input-icon";
@@ -455,7 +466,28 @@ function createOverlay() {
   engineMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(engineMenuEl);
 
-  inputWrapper.appendChild(inputContainerEl);
+  historyAssistantTriggerEl = document.createElement("button");
+  historyAssistantTriggerEl.type = "button";
+  historyAssistantTriggerEl.className = "spotlight-history-assistant-trigger";
+  historyAssistantTriggerEl.setAttribute("aria-hidden", "true");
+  historyAssistantTriggerEl.setAttribute("aria-label", "Open Smart history assistant");
+  historyAssistantTriggerEl.innerHTML = `
+    <span class="spotlight-history-assistant-trigger-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+          d="M8 1.33334L9.74667 5.84668L14.6667 6.25334L10.92 9.56668L12.08 14.5333L8 11.9333L3.92 14.5333L5.08 9.56668L1.33334 6.25334L6.25334 5.84668L8 1.33334Z"
+          fill="currentColor"
+        />
+      </svg>
+    </span>
+    <span class="spotlight-history-assistant-trigger-label">AI</span>
+  `;
+  historyAssistantTriggerEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activateHistoryAssistantAiMode();
+  });
+  inputRowEl.appendChild(historyAssistantTriggerEl);
 
   const inputDividerEl = document.createElement("div");
   inputDividerEl.className = "spotlight-input-divider";
@@ -1143,7 +1175,7 @@ function resolveFilterShortcutFromQuery(query) {
 
 function updateFilterShortcutsActiveState(query) {
   const normalizedQuery = typeof query === "string" ? query.trim() : "";
-  const shouldShow = !normalizedQuery;
+  const shouldShow = !normalizedQuery && activeFilter !== "history";
   if (filterShortcutsEl) {
     filterShortcutsEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   }
@@ -1161,6 +1193,72 @@ function updateFilterShortcutsActiveState(query) {
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
+
+  updateHistoryAssistantTriggerState();
+}
+
+function updateHistoryAssistantTriggerState() {
+  if (!historyAssistantTriggerEl) {
+    return;
+  }
+  const aiActive = historyAssistantAiModeActive && activeFilter === "history";
+  const shouldShow = activeFilter === "history" && !aiActive;
+  historyAssistantTriggerEl.classList.toggle("visible", shouldShow);
+  historyAssistantTriggerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  historyAssistantTriggerEl.disabled = !shouldShow;
+}
+
+function updateHistoryAssistantLayout() {
+  if (historyAssistantAiModeActive && activeFilter !== "history") {
+    historyAssistantAiModeActive = false;
+  }
+  const aiActive = historyAssistantAiModeActive && activeFilter === "history";
+  if (containerEl) {
+    containerEl.classList.toggle("spotlight-ai-mode", aiActive);
+  }
+  if (historyAssistantBackEl) {
+    historyAssistantBackEl.setAttribute("aria-hidden", aiActive ? "false" : "true");
+  }
+  updateHistoryAssistantTriggerState();
+}
+
+function activateHistoryAssistantAiMode() {
+  if (activeFilter !== "history") {
+    return;
+  }
+  if (historyAssistantAiModeActive) {
+    if (historyAssistantInputEl) {
+      historyAssistantInputEl.focus({ preventScroll: true });
+    }
+    return;
+  }
+  historyAssistantAiModeActive = true;
+  updateHistoryAssistantLayout();
+  updateHistoryAssistantVisibility();
+  updateHistoryAssistantUI();
+  if (historyAssistantInputEl) {
+    setTimeout(() => {
+      historyAssistantInputEl?.focus({ preventScroll: true });
+    }, 0);
+  }
+}
+
+function deactivateHistoryAssistantAiMode() {
+  if (!historyAssistantAiModeActive) {
+    if (inputEl) {
+      inputEl.focus({ preventScroll: true });
+    }
+    return;
+  }
+  historyAssistantAiModeActive = false;
+  updateHistoryAssistantLayout();
+  updateHistoryAssistantVisibility();
+  updateHistoryAssistantUI();
+  if (inputEl) {
+    setTimeout(() => {
+      inputEl?.focus({ preventScroll: true });
+    }, 0);
+  }
 }
 
 function resetSubfilterState() {
@@ -1361,28 +1459,30 @@ function ensureHistoryAssistantElements(parent) {
   container.className = "spotlight-history-assistant";
   container.setAttribute("aria-hidden", "true");
 
-  const header = document.createElement("div");
-  header.className = "spotlight-history-assistant-header";
-  const label = document.createElement("span");
-  label.className = "spotlight-history-assistant-label";
-  label.textContent = "Smart history assistant";
-  header.appendChild(label);
-
-  historyAssistantClearEl = document.createElement("button");
-  historyAssistantClearEl.type = "button";
-  historyAssistantClearEl.className = "spotlight-history-assistant-clear";
-  historyAssistantClearEl.textContent = "Clear";
-  historyAssistantClearEl.addEventListener("click", () => {
-    resetHistoryAssistantState({ keepInput: false });
-    if (historyAssistantInputEl) {
-      historyAssistantInputEl.focus({ preventScroll: true });
-    }
-  });
-  header.appendChild(historyAssistantClearEl);
-  container.appendChild(header);
-
   const form = document.createElement("form");
   form.className = "spotlight-history-assistant-form";
+
+  historyAssistantBackEl = document.createElement("button");
+  historyAssistantBackEl.type = "button";
+  historyAssistantBackEl.className = "spotlight-history-assistant-back";
+  historyAssistantBackEl.setAttribute("aria-label", "Back to history filter");
+  historyAssistantBackEl.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M9.99984 3.33331L6.33317 7.99998L9.99984 12.6666" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `;
+  historyAssistantBackEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    deactivateHistoryAssistantAiMode();
+  });
+  historyAssistantBackEl.setAttribute("aria-hidden", "true");
+  form.appendChild(historyAssistantBackEl);
+
+  historyAssistantFieldEl = document.createElement("div");
+  historyAssistantFieldEl.className = "spotlight-history-assistant-field";
+  form.appendChild(historyAssistantFieldEl);
+
   historyAssistantInputEl = document.createElement("input");
   historyAssistantInputEl.type = "text";
   historyAssistantInputEl.className = "spotlight-history-assistant-input";
@@ -1394,13 +1494,25 @@ function ensureHistoryAssistantElements(parent) {
   historyAssistantInputEl.addEventListener("keydown", (event) => {
     event.stopPropagation();
   });
-  form.appendChild(historyAssistantInputEl);
+  historyAssistantFieldEl.appendChild(historyAssistantInputEl);
 
   historyAssistantSubmitEl = document.createElement("button");
   historyAssistantSubmitEl.type = "submit";
   historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
   historyAssistantSubmitEl.textContent = "Ask";
-  form.appendChild(historyAssistantSubmitEl);
+  historyAssistantFieldEl.appendChild(historyAssistantSubmitEl);
+
+  historyAssistantClearEl = document.createElement("button");
+  historyAssistantClearEl.type = "button";
+  historyAssistantClearEl.className = "spotlight-history-assistant-clear";
+  historyAssistantClearEl.textContent = "Clear";
+  historyAssistantClearEl.addEventListener("click", () => {
+    resetHistoryAssistantState({ keepInput: false });
+    if (historyAssistantInputEl) {
+      historyAssistantInputEl.focus({ preventScroll: true });
+    }
+  });
+  form.appendChild(historyAssistantClearEl);
 
   form.addEventListener("submit", handleHistoryAssistantSubmit);
   container.appendChild(form);
@@ -1434,7 +1546,7 @@ function updateHistoryAssistantVisibility() {
   if (!historyAssistantContainerEl) {
     return;
   }
-  const shouldShow = activeFilter === "history";
+  const shouldShow = activeFilter === "history" && historyAssistantAiModeActive;
   historyAssistantContainerEl.classList.toggle("visible", shouldShow);
   historyAssistantContainerEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
   if (!shouldShow) {
@@ -1504,6 +1616,9 @@ function updateHistoryAssistantUI() {
       historyAssistantInputEl.setAttribute("disabled", "true");
     } else {
       historyAssistantInputEl.removeAttribute("disabled");
+    }
+    if (historyAssistantFieldEl) {
+      historyAssistantFieldEl.classList.toggle("loading", loading);
     }
   }
   if (historyAssistantSubmitEl) {
@@ -1834,6 +1949,10 @@ async function openOverlay() {
     return;
   }
 
+  historyAssistantAiModeActive = false;
+  updateHistoryAssistantLayout();
+  updateHistoryAssistantVisibility();
+
   isOpen = true;
   activeIndex = -1;
   resultsState = [];
@@ -1883,6 +2002,9 @@ function closeOverlay() {
   statusSticky = false;
   activeFilter = null;
   updateFilterShortcutsActiveState("");
+  historyAssistantAiModeActive = false;
+  updateHistoryAssistantLayout();
+  updateHistoryAssistantVisibility();
   resetSubfilterState();
   setGhostText("");
   resetSlashMenuState();
@@ -2110,6 +2232,7 @@ function requestResults(query) {
       activeFilter = typeof response.filter === "string" && response.filter ? response.filter : null;
       updateFilterShortcutsActiveState(inputEl ? inputEl.value : "");
       deactivateHistoryAssistantResults();
+      updateHistoryAssistantLayout();
       updateHistoryAssistantVisibility();
       updateHistoryAssistantUI();
       pointerNavigationSuspended = true;
