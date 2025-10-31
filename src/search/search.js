@@ -2004,6 +2004,7 @@ export function runSearch(query, data, options = {}) {
 
   const shouldOfferFallback =
     trimmed &&
+    !filterType &&
     webSearchApi &&
     typeof webSearchApi.createWebSearchResult === "function" &&
     (!finalResults.length || !hasMeaningfulLocalResults);
