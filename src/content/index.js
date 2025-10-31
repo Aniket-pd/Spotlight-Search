@@ -24,6 +24,8 @@ let lastRequestId = 0;
 let bodyOverflowBackup = "";
 let statusEl = null;
 let ghostEl = null;
+let ghostPrefixEl = null;
+let ghostSuffixEl = null;
 let inputContainerEl = null;
 let ghostSuggestionText = "";
 let statusSticky = false;
@@ -423,7 +425,12 @@ function createOverlay() {
 
   ghostEl = document.createElement("div");
   ghostEl.className = "spotlight-ghost";
-  ghostEl.textContent = "";
+  ghostPrefixEl = document.createElement("span");
+  ghostPrefixEl.className = "spotlight-ghost-prefix";
+  ghostSuffixEl = document.createElement("span");
+  ghostSuffixEl.className = "spotlight-ghost-suffix";
+  ghostEl.appendChild(ghostPrefixEl);
+  ghostEl.appendChild(ghostSuffixEl);
   inputContainerEl.appendChild(ghostEl);
 
   inputEl = document.createElement("input");
@@ -2188,6 +2195,52 @@ function matchesGhostPrefix(value, suggestion) {
   return compactSuggestion.startsWith(compactValue);
 }
 
+function isWhitespaceCharacter(char) {
+  return /\s/.test(char);
+}
+
+function computeGhostRemainder(value, suggestion) {
+  if (!value) {
+    return suggestion;
+  }
+
+  let valueIndex = 0;
+  let suggestionIndex = 0;
+  const valueLength = value.length;
+  const suggestionLength = suggestion.length;
+
+  while (valueIndex < valueLength && suggestionIndex < suggestionLength) {
+    const valueChar = value[valueIndex];
+    const suggestionChar = suggestion[suggestionIndex];
+
+    if (isWhitespaceCharacter(valueChar)) {
+      valueIndex += 1;
+      continue;
+    }
+
+    if (isWhitespaceCharacter(suggestionChar)) {
+      suggestionIndex += 1;
+      continue;
+    }
+
+    if (valueChar.toLowerCase() !== suggestionChar.toLowerCase()) {
+      return "";
+    }
+
+    valueIndex += 1;
+    suggestionIndex += 1;
+  }
+
+  while (valueIndex < valueLength) {
+    if (!isWhitespaceCharacter(value[valueIndex])) {
+      return "";
+    }
+    valueIndex += 1;
+  }
+
+  return suggestion.slice(suggestionIndex);
+}
+
 function setGhostText(text) {
   if (!ghostEl || !inputEl) {
     ghostSuggestionText = "";
@@ -2195,17 +2248,31 @@ function setGhostText(text) {
   }
 
   const value = inputEl.value;
-  let suggestion = text && matchesGhostPrefix(value, text) ? text : "";
-  if (suggestion) {
+  const matches = Boolean(text && matchesGhostPrefix(value, text));
+  let remainder = matches ? computeGhostRemainder(value, text) : "";
+  let suggestion = "";
+
+  if (remainder) {
+    suggestion = text;
+  } else if (matches) {
     const compactValue = value.toLowerCase().replace(/\s+/g, "");
-    const compactSuggestion = suggestion.toLowerCase().replace(/\s+/g, "");
-    if (compactValue === compactSuggestion) {
-      suggestion = "";
+    const compactSuggestion = text.toLowerCase().replace(/\s+/g, "");
+    if (compactValue !== compactSuggestion) {
+      remainder = computeGhostRemainder(value.trimEnd(), text);
+      if (remainder) {
+        suggestion = text;
+      }
     }
   }
+
   ghostSuggestionText = suggestion;
-  ghostEl.textContent = suggestion;
-  ghostEl.classList.toggle("visible", Boolean(suggestion));
+  if (ghostPrefixEl) {
+    ghostPrefixEl.textContent = value;
+  }
+  if (ghostSuffixEl) {
+    ghostSuffixEl.textContent = remainder;
+  }
+  ghostEl.classList.toggle("visible", Boolean(remainder));
 }
 
 function applyGhostSuggestion() {

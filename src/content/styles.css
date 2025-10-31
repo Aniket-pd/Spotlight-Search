@@ -861,13 +861,30 @@
   padding: 10px 0;
   color: var(--spotlight-color-text-tertiary);
   pointer-events: none;
+  font-family: inherit;
   font-size: 20px;
+  font-weight: inherit;
+  letter-spacing: normal;
+  line-height: normal;
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
+  overflow: hidden;
   z-index: 1;
   opacity: 0;
   transition: opacity 0.15s ease;
+}
+
+.spotlight-ghost-prefix,
+.spotlight-ghost-suffix {
+  white-space: pre;
+}
+
+.spotlight-ghost-prefix {
+  visibility: hidden;
+}
+
+.spotlight-ghost-suffix {
+  color: inherit;
 }
 
 .spotlight-ghost.visible {
