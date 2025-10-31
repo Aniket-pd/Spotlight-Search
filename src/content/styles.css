@@ -19,158 +19,158 @@
   --spotlight-gap-lg: 16px;
   --spotlight-gap-xl: 20px;
 
-  --spotlight-shell-max-width: 700px;
+  --spotlight-shell-max-width: 720px;
 
-  --spotlight-color-overlay: rgba(10, 12, 20, 0.28);
-  --spotlight-surface-gradient: linear-gradient(160deg, rgba(255, 255, 255, 0.88), rgba(238, 240, 248, 0.65));
-  --spotlight-surface-border: rgba(255, 255, 255, 0.6);
-  --spotlight-surface-border-subtle: rgba(210, 212, 224, 0.42);
-  --spotlight-surface-muted: rgba(248, 250, 255, 0.68);
-  --spotlight-surface-panel: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(240, 242, 252, 0.65));
-  --spotlight-surface-panel-border: rgba(208, 210, 224, 0.5);
-  --spotlight-color-text-primary: rgba(18, 20, 30, 0.9);
-  --spotlight-color-text-secondary: rgba(18, 20, 30, 0.64);
-  --spotlight-color-text-tertiary: rgba(18, 20, 30, 0.48);
-  --spotlight-color-text-quiet: rgba(18, 20, 30, 0.36);
-  --spotlight-color-text-inverse: rgba(252, 253, 255, 0.98);
-  --spotlight-color-accent: #7a89ff;
-  --spotlight-color-accent-strong: #5c6ef5;
-  --spotlight-color-accent-soft: rgba(122, 137, 255, 0.16);
-  --spotlight-color-accent-soft-strong: rgba(122, 137, 255, 0.26);
-  --spotlight-color-positive: #59d4a1;
-  --spotlight-color-critical: #ff7a85;
+  --spotlight-color-overlay: rgba(66, 32, 18, 0.55);
+  --spotlight-surface-gradient: linear-gradient(155deg, rgba(104, 54, 30, 0.78), rgba(32, 16, 8, 0.88));
+  --spotlight-surface-border: rgba(255, 214, 174, 0.32);
+  --spotlight-surface-border-subtle: rgba(255, 214, 174, 0.14);
+  --spotlight-surface-muted: rgba(255, 214, 174, 0.1);
+  --spotlight-surface-panel: linear-gradient(155deg, rgba(82, 40, 22, 0.86), rgba(28, 14, 8, 0.92));
+  --spotlight-surface-panel-border: rgba(255, 214, 174, 0.22);
+  --spotlight-color-text-primary: rgba(255, 247, 236, 0.94);
+  --spotlight-color-text-secondary: rgba(255, 247, 236, 0.72);
+  --spotlight-color-text-tertiary: rgba(255, 247, 236, 0.56);
+  --spotlight-color-text-quiet: rgba(255, 247, 236, 0.4);
+  --spotlight-color-text-inverse: rgba(32, 18, 10, 0.92);
+  --spotlight-color-accent: #f6ba7a;
+  --spotlight-color-accent-strong: #f0a65c;
+  --spotlight-color-accent-soft: rgba(246, 186, 122, 0.18);
+  --spotlight-color-accent-soft-strong: rgba(246, 186, 122, 0.28);
+  --spotlight-color-positive: #7bdba5;
+  --spotlight-color-critical: #ff8a8f;
 
-  --spotlight-input-bg: rgba(255, 255, 255, 0.58);
-  --spotlight-input-border: rgba(210, 212, 224, 0.52);
-  --spotlight-input-placeholder: rgba(18, 20, 30, 0.38);
-  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  --spotlight-input-focus-ring: 0 0 0 1px rgba(122, 137, 255, 0.35), 0 12px 28px rgba(35, 42, 72, 0.18);
+  --spotlight-input-bg: rgba(255, 255, 255, 0.07);
+  --spotlight-input-border: rgba(255, 214, 174, 0.28);
+  --spotlight-input-placeholder: rgba(255, 247, 236, 0.52);
+  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(255, 214, 174, 0.6), 0 18px 42px rgba(20, 8, 2, 0.55);
 
-  --spotlight-result-hover: rgba(122, 137, 255, 0.12);
-  --spotlight-active-bg: rgba(122, 137, 255, 0.2);
-  --spotlight-result-active: rgba(122, 137, 255, 0.24);
-  --spotlight-chip-bg: rgba(255, 255, 255, 0.62);
-  --spotlight-chip-border: rgba(210, 212, 224, 0.5);
-  --spotlight-chip-hover: rgba(122, 137, 255, 0.2);
-  --spotlight-chip-active-border: rgba(122, 137, 255, 0.35);
-
-  --spotlight-menu-surface: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(235, 238, 246, 0.82));
-  --spotlight-menu-border: rgba(210, 212, 224, 0.45);
-
-  --spotlight-shadow-elevated: 0 32px 64px rgba(18, 22, 40, 0.22), 0 10px 24px rgba(18, 22, 40, 0.18);
-  --spotlight-shadow-floating: 0 24px 44px rgba(18, 22, 40, 0.18), 0 8px 18px rgba(18, 22, 40, 0.16);
-  --spotlight-backdrop-filter: saturate(160%) blur(32px);
-  --spotlight-button-hover: rgba(122, 137, 255, 0.2);
-  --spotlight-button-text-inactive: rgba(18, 20, 30, 0.55);
-  --spotlight-button-text-active: rgba(18, 20, 30, 0.9);
-}
-
- :host([data-theme="dark"]) {
-  --spotlight-color-overlay: rgba(2, 4, 12, 0.64);
-  --spotlight-surface-gradient: linear-gradient(160deg, rgba(34, 36, 46, 0.88), rgba(12, 14, 22, 0.92));
-  --spotlight-surface-border: rgba(255, 255, 255, 0.08);
-  --spotlight-surface-border-subtle: rgba(255, 255, 255, 0.05);
-  --spotlight-surface-muted: rgba(34, 36, 48, 0.5);
-  --spotlight-surface-panel: linear-gradient(160deg, rgba(40, 42, 54, 0.82), rgba(16, 18, 28, 0.9));
-  --spotlight-surface-panel-border: rgba(255, 255, 255, 0.08);
-  --spotlight-color-text-primary: rgba(246, 247, 255, 0.95);
-  --spotlight-color-text-secondary: rgba(216, 218, 238, 0.68);
-  --spotlight-color-text-tertiary: rgba(180, 184, 214, 0.5);
-  --spotlight-color-text-quiet: rgba(144, 150, 188, 0.36);
-  --spotlight-color-text-inverse: rgba(8, 10, 18, 0.92);
-  --spotlight-color-accent: #7a89ff;
-  --spotlight-color-accent-strong: #5c6ef5;
-  --spotlight-color-accent-soft: rgba(122, 137, 255, 0.18);
-  --spotlight-color-accent-soft-strong: rgba(122, 137, 255, 0.26);
-  --spotlight-input-bg: rgba(28, 30, 42, 0.64);
-  --spotlight-input-border: rgba(255, 255, 255, 0.08);
-  --spotlight-input-placeholder: rgba(180, 184, 214, 0.46);
-  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --spotlight-input-focus-ring: 0 0 0 1px rgba(122, 137, 255, 0.45), 0 16px 38px rgba(4, 6, 18, 0.48);
   --spotlight-result-hover: rgba(255, 255, 255, 0.06);
-  --spotlight-active-bg: rgba(122, 137, 255, 0.24);
-  --spotlight-result-active: rgba(122, 137, 255, 0.24);
-  --spotlight-chip-bg: rgba(28, 30, 42, 0.6);
-  --spotlight-chip-border: rgba(255, 255, 255, 0.1);
-  --spotlight-chip-hover: rgba(122, 137, 255, 0.24);
-  --spotlight-chip-active-border: rgba(122, 137, 255, 0.32);
-  --spotlight-menu-surface: linear-gradient(160deg, rgba(30, 32, 46, 0.92), rgba(12, 14, 22, 0.94));
-  --spotlight-menu-border: rgba(255, 255, 255, 0.08);
-  --spotlight-shadow-elevated: 0 38px 88px rgba(0, 0, 0, 0.55), 0 16px 32px rgba(0, 0, 0, 0.4);
-  --spotlight-shadow-floating: 0 26px 52px rgba(0, 0, 0, 0.45), 0 10px 22px rgba(0, 0, 0, 0.35);
-  --spotlight-button-hover: rgba(122, 137, 255, 0.18);
-  --spotlight-button-text-inactive: rgba(216, 218, 238, 0.58);
-  --spotlight-button-text-active: rgba(246, 247, 255, 0.95);
+  --spotlight-active-bg: rgba(255, 255, 255, 0.12);
+  --spotlight-result-active: rgba(255, 255, 255, 0.16);
+  --spotlight-chip-bg: rgba(255, 255, 255, 0.08);
+  --spotlight-chip-border: rgba(255, 214, 174, 0.26);
+  --spotlight-chip-hover: rgba(255, 255, 255, 0.12);
+  --spotlight-chip-active-border: rgba(246, 186, 122, 0.38);
+
+  --spotlight-menu-surface: linear-gradient(155deg, rgba(70, 34, 18, 0.92), rgba(30, 14, 8, 0.94));
+  --spotlight-menu-border: rgba(255, 214, 174, 0.24);
+
+  --spotlight-shadow-elevated: 0 42px 88px rgba(12, 4, 0, 0.65), 0 18px 36px rgba(12, 4, 0, 0.45);
+  --spotlight-shadow-floating: 0 28px 52px rgba(12, 4, 0, 0.48), 0 12px 28px rgba(12, 4, 0, 0.38);
+  --spotlight-backdrop-filter: saturate(180%) blur(40px);
+  --spotlight-button-hover: rgba(255, 255, 255, 0.12);
+  --spotlight-button-text-inactive: rgba(255, 247, 236, 0.64);
+  --spotlight-button-text-active: rgba(255, 247, 236, 0.94);
 }
 
- :host([data-theme="light"]) {
-  --spotlight-color-overlay: rgba(10, 12, 20, 0.28);
-  --spotlight-surface-gradient: linear-gradient(160deg, rgba(255, 255, 255, 0.88), rgba(238, 240, 248, 0.65));
-  --spotlight-surface-border: rgba(255, 255, 255, 0.6);
-  --spotlight-surface-border-subtle: rgba(210, 212, 224, 0.42);
-  --spotlight-surface-muted: rgba(248, 250, 255, 0.68);
-  --spotlight-surface-panel: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(240, 242, 252, 0.65));
-  --spotlight-surface-panel-border: rgba(208, 210, 224, 0.5);
-  --spotlight-color-text-primary: rgba(18, 20, 30, 0.9);
-  --spotlight-color-text-secondary: rgba(18, 20, 30, 0.64);
-  --spotlight-color-text-tertiary: rgba(18, 20, 30, 0.48);
-  --spotlight-color-text-quiet: rgba(18, 20, 30, 0.36);
-  --spotlight-color-text-inverse: rgba(252, 253, 255, 0.98);
-  --spotlight-color-accent: #7a89ff;
-  --spotlight-color-accent-strong: #5c6ef5;
-  --spotlight-color-accent-soft: rgba(122, 137, 255, 0.16);
-  --spotlight-color-accent-soft-strong: rgba(122, 137, 255, 0.26);
-  --spotlight-input-bg: rgba(255, 255, 255, 0.58);
-  --spotlight-input-border: rgba(210, 212, 224, 0.52);
-  --spotlight-input-placeholder: rgba(18, 20, 30, 0.38);
-  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  --spotlight-input-focus-ring: 0 0 0 1px rgba(122, 137, 255, 0.35), 0 12px 28px rgba(35, 42, 72, 0.18);
-  --spotlight-result-hover: rgba(122, 137, 255, 0.12);
-  --spotlight-result-active: rgba(122, 137, 255, 0.24);
-  --spotlight-chip-bg: rgba(255, 255, 255, 0.62);
-  --spotlight-chip-border: rgba(210, 212, 224, 0.5);
-  --spotlight-chip-hover: rgba(122, 137, 255, 0.2);
-  --spotlight-menu-surface: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(235, 238, 246, 0.82));
-  --spotlight-menu-border: rgba(210, 212, 224, 0.45);
-  --spotlight-shadow-elevated: 0 32px 64px rgba(18, 22, 40, 0.22), 0 10px 24px rgba(18, 22, 40, 0.18);
-  --spotlight-shadow-floating: 0 24px 44px rgba(18, 22, 40, 0.18), 0 8px 18px rgba(18, 22, 40, 0.16);
+:host([data-theme="dark"]) {
+  --spotlight-color-overlay: rgba(6, 8, 12, 0.58);
+  --spotlight-surface-gradient: linear-gradient(155deg, rgba(44, 46, 56, 0.82), rgba(10, 12, 18, 0.9));
+  --spotlight-surface-border: rgba(136, 144, 168, 0.28);
+  --spotlight-surface-border-subtle: rgba(136, 144, 168, 0.14);
+  --spotlight-surface-muted: rgba(136, 144, 168, 0.18);
+  --spotlight-surface-panel: linear-gradient(155deg, rgba(38, 40, 54, 0.9), rgba(12, 14, 22, 0.94));
+  --spotlight-surface-panel-border: rgba(136, 144, 168, 0.22);
+  --spotlight-color-text-primary: rgba(245, 247, 255, 0.95);
+  --spotlight-color-text-secondary: rgba(204, 210, 224, 0.72);
+  --spotlight-color-text-tertiary: rgba(170, 176, 196, 0.56);
+  --spotlight-color-text-quiet: rgba(138, 144, 168, 0.42);
+  --spotlight-color-text-inverse: rgba(12, 14, 20, 0.94);
+  --spotlight-color-accent: #8ea8ff;
+  --spotlight-color-accent-strong: #6f8cff;
+  --spotlight-color-accent-soft: rgba(142, 168, 255, 0.18);
+  --spotlight-color-accent-soft-strong: rgba(142, 168, 255, 0.28);
+  --spotlight-input-bg: rgba(30, 32, 44, 0.72);
+  --spotlight-input-border: rgba(136, 144, 168, 0.26);
+  --spotlight-input-placeholder: rgba(188, 194, 214, 0.48);
+  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(142, 168, 255, 0.45), 0 20px 44px rgba(4, 6, 14, 0.55);
+  --spotlight-result-hover: rgba(255, 255, 255, 0.05);
+  --spotlight-active-bg: rgba(255, 255, 255, 0.12);
+  --spotlight-result-active: rgba(255, 255, 255, 0.1);
+  --spotlight-chip-bg: rgba(36, 38, 52, 0.65);
+  --spotlight-chip-border: rgba(136, 144, 168, 0.22);
+  --spotlight-chip-hover: rgba(255, 255, 255, 0.08);
+  --spotlight-chip-active-border: rgba(142, 168, 255, 0.32);
+  --spotlight-menu-surface: linear-gradient(155deg, rgba(34, 36, 48, 0.92), rgba(10, 12, 18, 0.94));
+  --spotlight-menu-border: rgba(136, 144, 168, 0.22);
+  --spotlight-shadow-elevated: 0 46px 96px rgba(0, 0, 0, 0.6), 0 18px 40px rgba(0, 0, 0, 0.42);
+  --spotlight-shadow-floating: 0 30px 58px rgba(0, 0, 0, 0.48), 0 12px 28px rgba(0, 0, 0, 0.38);
+  --spotlight-button-hover: rgba(255, 255, 255, 0.1);
+  --spotlight-button-text-inactive: rgba(204, 210, 224, 0.62);
+  --spotlight-button-text-active: rgba(245, 247, 255, 0.95);
+}
+
+:host([data-theme="light"]) {
+  --spotlight-color-overlay: rgba(66, 32, 18, 0.55);
+  --spotlight-surface-gradient: linear-gradient(155deg, rgba(118, 62, 36, 0.78), rgba(36, 18, 10, 0.86));
+  --spotlight-surface-border: rgba(255, 220, 186, 0.32);
+  --spotlight-surface-border-subtle: rgba(255, 220, 186, 0.14);
+  --spotlight-surface-muted: rgba(255, 220, 186, 0.1);
+  --spotlight-surface-panel: linear-gradient(155deg, rgba(92, 48, 26, 0.86), rgba(30, 16, 8, 0.92));
+  --spotlight-surface-panel-border: rgba(255, 220, 186, 0.22);
+  --spotlight-color-text-primary: rgba(255, 247, 236, 0.94);
+  --spotlight-color-text-secondary: rgba(255, 247, 236, 0.72);
+  --spotlight-color-text-tertiary: rgba(255, 247, 236, 0.56);
+  --spotlight-color-text-quiet: rgba(255, 247, 236, 0.4);
+  --spotlight-color-text-inverse: rgba(32, 18, 10, 0.92);
+  --spotlight-color-accent: #f6ba7a;
+  --spotlight-color-accent-strong: #f0a65c;
+  --spotlight-color-accent-soft: rgba(246, 186, 122, 0.18);
+  --spotlight-color-accent-soft-strong: rgba(246, 186, 122, 0.28);
+  --spotlight-input-bg: rgba(255, 255, 255, 0.07);
+  --spotlight-input-border: rgba(255, 220, 186, 0.28);
+  --spotlight-input-placeholder: rgba(255, 247, 236, 0.52);
+  --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --spotlight-input-focus-ring: 0 0 0 1px rgba(255, 220, 186, 0.6), 0 18px 42px rgba(20, 8, 2, 0.55);
+  --spotlight-result-hover: rgba(255, 255, 255, 0.06);
+  --spotlight-result-active: rgba(255, 255, 255, 0.16);
+  --spotlight-chip-bg: rgba(255, 255, 255, 0.08);
+  --spotlight-chip-border: rgba(255, 220, 186, 0.26);
+  --spotlight-chip-hover: rgba(255, 255, 255, 0.12);
+  --spotlight-menu-surface: linear-gradient(155deg, rgba(74, 36, 20, 0.92), rgba(30, 16, 8, 0.94));
+  --spotlight-menu-border: rgba(255, 220, 186, 0.24);
+  --spotlight-shadow-elevated: 0 42px 88px rgba(12, 4, 0, 0.65), 0 18px 36px rgba(12, 4, 0, 0.45);
+  --spotlight-shadow-floating: 0 28px 52px rgba(12, 4, 0, 0.48), 0 12px 28px rgba(12, 4, 0, 0.38);
 }
 
 @media (prefers-color-scheme: dark) {
   :host(:not([data-theme="light"])) {
-    --spotlight-color-overlay: rgba(2, 4, 12, 0.64);
-    --spotlight-surface-gradient: linear-gradient(160deg, rgba(34, 36, 46, 0.88), rgba(12, 14, 22, 0.92));
-    --spotlight-surface-border: rgba(255, 255, 255, 0.08);
-    --spotlight-surface-border-subtle: rgba(255, 255, 255, 0.05);
-    --spotlight-surface-muted: rgba(34, 36, 48, 0.5);
-    --spotlight-surface-panel: linear-gradient(160deg, rgba(40, 42, 54, 0.82), rgba(16, 18, 28, 0.9));
-    --spotlight-surface-panel-border: rgba(255, 255, 255, 0.08);
-    --spotlight-color-text-primary: rgba(246, 247, 255, 0.95);
-    --spotlight-color-text-secondary: rgba(216, 218, 238, 0.68);
-    --spotlight-color-text-tertiary: rgba(180, 184, 214, 0.5);
-    --spotlight-color-text-quiet: rgba(144, 150, 188, 0.36);
-    --spotlight-color-text-inverse: rgba(8, 10, 18, 0.92);
-    --spotlight-color-accent: #7a89ff;
-    --spotlight-color-accent-strong: #5c6ef5;
-    --spotlight-color-accent-soft: rgba(122, 137, 255, 0.18);
-    --spotlight-color-accent-soft-strong: rgba(122, 137, 255, 0.26);
-    --spotlight-input-bg: rgba(28, 30, 42, 0.64);
-    --spotlight-input-border: rgba(255, 255, 255, 0.08);
-    --spotlight-input-placeholder: rgba(180, 184, 214, 0.46);
-    --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    --spotlight-input-focus-ring: 0 0 0 1px rgba(122, 137, 255, 0.45), 0 16px 38px rgba(4, 6, 18, 0.48);
-    --spotlight-result-hover: rgba(255, 255, 255, 0.06);
-    --spotlight-result-active: rgba(122, 137, 255, 0.24);
-    --spotlight-chip-bg: rgba(28, 30, 42, 0.6);
-    --spotlight-chip-border: rgba(255, 255, 255, 0.1);
-    --spotlight-chip-hover: rgba(122, 137, 255, 0.24);
-    --spotlight-menu-surface: linear-gradient(160deg, rgba(30, 32, 46, 0.92), rgba(12, 14, 22, 0.94));
-    --spotlight-menu-border: rgba(255, 255, 255, 0.08);
-    --spotlight-shadow-elevated: 0 38px 88px rgba(0, 0, 0, 0.55), 0 16px 32px rgba(0, 0, 0, 0.4);
-    --spotlight-shadow-floating: 0 26px 52px rgba(0, 0, 0, 0.45), 0 10px 22px rgba(0, 0, 0, 0.35);
-    --spotlight-button-hover: rgba(122, 137, 255, 0.18);
-    --spotlight-button-text-inactive: rgba(216, 218, 238, 0.58);
-    --spotlight-button-text-active: rgba(246, 247, 255, 0.95);
+    --spotlight-color-overlay: rgba(6, 8, 12, 0.58);
+    --spotlight-surface-gradient: linear-gradient(155deg, rgba(44, 46, 56, 0.82), rgba(10, 12, 18, 0.9));
+    --spotlight-surface-border: rgba(136, 144, 168, 0.28);
+    --spotlight-surface-border-subtle: rgba(136, 144, 168, 0.14);
+    --spotlight-surface-muted: rgba(136, 144, 168, 0.18);
+    --spotlight-surface-panel: linear-gradient(155deg, rgba(38, 40, 54, 0.9), rgba(12, 14, 22, 0.94));
+    --spotlight-surface-panel-border: rgba(136, 144, 168, 0.22);
+    --spotlight-color-text-primary: rgba(245, 247, 255, 0.95);
+    --spotlight-color-text-secondary: rgba(204, 210, 224, 0.72);
+    --spotlight-color-text-tertiary: rgba(170, 176, 196, 0.56);
+    --spotlight-color-text-quiet: rgba(138, 144, 168, 0.42);
+    --spotlight-color-text-inverse: rgba(12, 14, 20, 0.94);
+    --spotlight-color-accent: #8ea8ff;
+    --spotlight-color-accent-strong: #6f8cff;
+    --spotlight-color-accent-soft: rgba(142, 168, 255, 0.18);
+    --spotlight-color-accent-soft-strong: rgba(142, 168, 255, 0.28);
+    --spotlight-input-bg: rgba(30, 32, 44, 0.72);
+    --spotlight-input-border: rgba(136, 144, 168, 0.26);
+    --spotlight-input-placeholder: rgba(188, 194, 214, 0.48);
+    --spotlight-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --spotlight-input-focus-ring: 0 0 0 1px rgba(142, 168, 255, 0.45), 0 20px 44px rgba(4, 6, 14, 0.55);
+    --spotlight-result-hover: rgba(255, 255, 255, 0.05);
+    --spotlight-result-active: rgba(255, 255, 255, 0.1);
+    --spotlight-chip-bg: rgba(36, 38, 52, 0.65);
+    --spotlight-chip-border: rgba(136, 144, 168, 0.22);
+    --spotlight-chip-hover: rgba(255, 255, 255, 0.08);
+    --spotlight-menu-surface: linear-gradient(155deg, rgba(34, 36, 48, 0.92), rgba(10, 12, 18, 0.94));
+    --spotlight-menu-border: rgba(136, 144, 168, 0.22);
+    --spotlight-shadow-elevated: 0 46px 96px rgba(0, 0, 0, 0.6), 0 18px 40px rgba(0, 0, 0, 0.42);
+    --spotlight-shadow-floating: 0 30px 58px rgba(0, 0, 0, 0.48), 0 12px 28px rgba(0, 0, 0, 0.38);
+    --spotlight-button-hover: rgba(255, 255, 255, 0.1);
+    --spotlight-button-text-inactive: rgba(204, 210, 224, 0.62);
+    --spotlight-button-text-active: rgba(245, 247, 255, 0.95);
   }
 }
 
@@ -228,14 +228,26 @@
   max-height: min(80vh, 640px);
   border-radius: var(--spotlight-radius-large);
   background: var(--spotlight-surface-gradient);
-  box-shadow: var(--spotlight-shadow-elevated);
-  overflow: hidden;
   border: 1px solid var(--spotlight-surface-border);
+  box-shadow: var(--spotlight-shadow-elevated);
   backdrop-filter: var(--spotlight-backdrop-filter);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
-  gap: 16px;
+  padding: 20px 18px 18px;
+  gap: 14px;
+  position: relative;
+}
+
+.spotlight-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+  mix-blend-mode: screen;
+  opacity: 0.45;
 }
 
 .spotlight-input-wrapper {
@@ -244,7 +256,7 @@
   padding: 0;
   background: transparent;
   flex: 0 0 auto;
-  gap: 0;
+  gap: 12px;
 }
 
 .spotlight-filter-shortcuts {
@@ -262,36 +274,39 @@
 .spotlight-filter-chip {
   border-radius: var(--spotlight-radius-pill);
   border: 1px solid var(--spotlight-chip-border);
-  background: var(--spotlight-chip-bg);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--spotlight-button-text-inactive, var(--spotlight-color-text-secondary));
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.01em;
-  padding: 0 14px;
+  padding: 0 16px;
   min-height: 32px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+  transition: background 0.22s ease, color 0.22s ease, border 0.22s ease, box-shadow 0.22s ease;
 }
 
 .spotlight-filter-chip:not(.active) {
   color: var(--spotlight-button-text-inactive, var(--spotlight-color-text-secondary));
   background: transparent;
+  border-color: transparent;
 }
 
 .spotlight-filter-chip:hover,
 .spotlight-filter-chip:focus-visible {
-  background: var(--spotlight-button-hover, var(--spotlight-chip-hover));
+  background: var(--spotlight-button-hover, rgba(255, 255, 255, 0.12));
   color: var(--spotlight-color-text-primary);
   outline: none;
+  border-color: var(--spotlight-surface-border);
 }
 
 .spotlight-filter-chip.active {
   background: var(--spotlight-active-bg);
   color: var(--spotlight-button-text-active, var(--spotlight-color-text-primary));
   border-color: var(--spotlight-chip-active-border, rgba(255, 255, 255, 0.24));
+  box-shadow: 0 10px 24px rgba(10, 6, 2, 0.22);
 }
 
 .spotlight-input-container {
@@ -299,21 +314,23 @@
   display: flex;
   align-items: center;
   border-radius: var(--spotlight-radius-medium);
-  border: none;
+  border: 1px solid var(--spotlight-input-border);
   background: var(--spotlight-input-bg);
-  transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  backdrop-filter: var(--spotlight-backdrop-filter);
+  transition: border 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
   box-shadow: var(--spotlight-input-shadow);
-  padding: 0 16px 0 48px;
+  padding: 0 18px 0 52px;
   font-family: var(--spotlight-font-family);
   font-size: 16px;
   font-weight: 500;
-  letter-spacing: normal;
+  letter-spacing: -0.01em;
   line-height: 24px;
-  height: 48px;
-  margin: 0 0 12px;
+  height: 52px;
+  margin: 0;
 }
 
 .spotlight-input-container.focused {
+  background: rgba(255, 255, 255, 0.08);
   box-shadow: var(--spotlight-input-focus-ring);
 }
 
@@ -321,8 +338,8 @@
   align-self: stretch;
   height: 1px;
   background: var(--spotlight-surface-border-subtle);
-  opacity: 0.6;
-  margin: 0 16px 12px;
+  opacity: 0.55;
+  margin: 0;
 }
 
 .spotlight-input-icon {
@@ -560,17 +577,17 @@
   backdrop-filter: var(--spotlight-backdrop-filter);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.28);
+  box-shadow: 0 12px 26px rgba(246, 186, 122, 0.28);
 }
 
 .spotlight-subfilters-action-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.32);
+  box-shadow: 0 16px 32px rgba(246, 186, 122, 0.32);
 }
 
 .spotlight-subfilters-action-button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(49, 200, 155, 0.45), 0 14px 30px rgba(49, 200, 155, 0.3);
+  box-shadow: 0 0 0 2px rgba(246, 186, 122, 0.55), 0 14px 30px rgba(246, 186, 122, 0.32);
 }
 
 .spotlight-subfilters-action-button:disabled {
@@ -585,8 +602,8 @@
 }
 
 .spotlight-subfilters-action-button.success {
-  background: linear-gradient(135deg, rgba(56, 206, 160, 0.92), rgba(34, 169, 129, 0.88));
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.32);
+  background: linear-gradient(135deg, rgba(128, 224, 180, 0.88), rgba(78, 186, 138, 0.82));
+  box-shadow: 0 16px 32px rgba(123, 219, 165, 0.32);
 }
 
 .spotlight-subfilters-action-button.error {
@@ -711,12 +728,12 @@
   color: var(--spotlight-color-text-inverse);
   cursor: pointer;
   transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
-  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.24);
+  box-shadow: 0 12px 26px rgba(246, 186, 122, 0.26);
 }
 
 .spotlight-history-assistant-submit:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.3);
+  box-shadow: 0 16px 32px rgba(246, 186, 122, 0.32);
 }
 
 .spotlight-history-assistant-submit:disabled {
@@ -853,7 +870,7 @@
 
 .spotlight-subfilter:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(49, 200, 155, 0.35);
+  box-shadow: 0 0 0 2px rgba(246, 186, 122, 0.4);
 }
 
 .spotlight-subfilter.active {
@@ -955,7 +972,7 @@
 .spotlight-results {
   list-style: none;
   margin: 0;
-  padding: 0 0 8px;
+  padding: 4px 2px 10px;
   max-height: 420px;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -963,7 +980,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .spotlight-results::-webkit-scrollbar {
@@ -971,8 +988,9 @@
 }
 
 .spotlight-results::-webkit-scrollbar-thumb {
-  background: var(--spotlight-color-accent-soft);
+  background: var(--spotlight-surface-muted);
   border-radius: 10px;
+  border: 2px solid transparent;
 }
 
 .spotlight-result {
@@ -982,12 +1000,14 @@
     var(--spotlight-result-icon-size) + var(--spotlight-result-icon-gap)
   );
   border-radius: var(--spotlight-radius-medium);
-  padding: 12px 16px 12px 12px;
+  padding: 14px 18px;
   display: flex;
   align-items: flex-start;
   gap: var(--spotlight-result-icon-gap, 12px);
   cursor: pointer;
-  transition: background 0.16s ease, box-shadow 0.16s ease;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   outline: none;
 }
 
@@ -1002,19 +1022,20 @@
 .spotlight-result-icon {
   width: var(--spotlight-result-icon-size, 28px);
   height: var(--spotlight-result-icon-size, 28px);
-  border-radius: 8px;
+  border-radius: 10px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: var(--spotlight-chip-bg);
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--spotlight-chip-border);
-  padding: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: 5px;
 }
 
 .spotlight-result-icon-download {
-  background: linear-gradient(135deg, rgba(49, 200, 155, 0.35), rgba(26, 173, 130, 0.35));
+  background: linear-gradient(135deg, rgba(246, 186, 122, 0.4), rgba(240, 166, 92, 0.4));
 }
 
 .spotlight-result-icon-img {
@@ -1050,24 +1071,23 @@
 
 .spotlight-result:hover {
   background: var(--spotlight-result-hover);
+  border-color: var(--spotlight-surface-border-subtle);
 }
 
-.spotlight-result:focus-visible {
-  background: var(--spotlight-result-active);
-  outline: none;
-  box-shadow: none;
-}
-
+.spotlight-result:focus-visible,
 .spotlight-result.active {
   background: var(--spotlight-result-active);
+  border-color: var(--spotlight-surface-border);
   outline: none;
-  box-shadow: none;
+  transform: translate3d(0, -1px, 0);
+  box-shadow: 0 16px 34px rgba(10, 6, 2, 0.32);
 }
 
 .spotlight-result-title {
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--spotlight-color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1080,9 +1100,9 @@
 
 .spotlight-result-meta {
   display: flex;
-  align-items: baseline;
-  column-gap: 12px;
-  row-gap: 4px;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
   font-size: 13px;
   line-height: 18px;
   flex-wrap: wrap;
@@ -1109,7 +1129,7 @@
   background: var(--spotlight-color-accent-soft-strong);
   border-color: var(--spotlight-color-accent-strong);
   color: var(--spotlight-color-text-primary);
-  box-shadow: 0 10px 20px rgba(49, 200, 155, 0.24);
+  box-shadow: 0 10px 20px rgba(246, 186, 122, 0.26);
 }
 
 .spotlight-result-summary-button:disabled {
@@ -1393,8 +1413,8 @@
 }
 
 .spotlight-result-tag.download-state-in_progress {
-  background: rgba(49, 200, 155, 0.26);
-  color: #c7f3e3;
+  background: rgba(246, 186, 122, 0.28);
+  color: #fde7cf;
 }
 
 .spotlight-result-tag.download-state-interrupted,
