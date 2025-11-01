@@ -66,6 +66,7 @@ let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
 let historyAssistantAiModeActive = false;
 let filterShortcutsEl = null;
+let historyAssistantLoadingMessage = "";
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
@@ -93,6 +94,7 @@ let focusTitlePrefix = "";
 let focusActive = false;
 let colorSchemeMediaQuery = null;
 let colorSchemeChangeHandler = null;
+const HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE = "Working on your answer…";
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -1441,6 +1443,23 @@ function createInitialHistoryAssistantState() {
   };
 }
 
+function setHistoryAssistantLoadingMessage(message, options = {}) {
+  const { sync = true } = options || {};
+  const normalized = typeof message === "string" ? message : "";
+  if (historyAssistantLoadingMessage === normalized) {
+    return;
+  }
+  historyAssistantLoadingMessage = normalized;
+  if (sync && historyAssistantState.status === "loading") {
+    updateHistoryAssistantUI();
+  }
+}
+
+function clearHistoryAssistantLoadingMessage(options = {}) {
+  const { sync = false } = options || {};
+  setHistoryAssistantLoadingMessage("", { sync });
+}
+
 function ensureHistoryAssistantElements(parent) {
   if (!parent) {
     return null;
@@ -1538,6 +1557,7 @@ function updateHistoryAssistantVisibility() {
 function resetHistoryAssistantState(options = {}) {
   const { keepInput = false, skipRefresh = false } = options || {};
   const wasActive = historyAssistantState.resultsActive;
+  clearHistoryAssistantLoadingMessage();
   historyAssistantState = createInitialHistoryAssistantState();
   if (keepInput && historyAssistantInputEl) {
     historyAssistantState.lastPrompt = historyAssistantInputEl.value.trim();
@@ -1633,7 +1653,8 @@ function updateHistoryAssistantUI() {
   if (historyAssistantStatusEl) {
     let statusMessage = "";
     if (historyAssistantState.status === "loading") {
-      statusMessage = "Understanding your request…";
+      const fallbackMessage = HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE;
+      statusMessage = historyAssistantLoadingMessage || fallbackMessage;
     } else if (historyAssistantState.status === "error") {
       statusMessage = historyAssistantState.error || "History assistant unavailable.";
     } else if (historyAssistantState.status === "ready") {
@@ -1645,6 +1666,13 @@ function updateHistoryAssistantUI() {
       }
     } else {
       statusMessage = "Ask something like “List my YouTube visits from the past week.”";
+    }
+    const loading = historyAssistantState.status === "loading";
+    historyAssistantStatusEl.classList.toggle("loading", loading);
+    if (statusMessage) {
+      historyAssistantStatusEl.setAttribute("data-text", statusMessage);
+    } else {
+      historyAssistantStatusEl.removeAttribute("data-text");
     }
     historyAssistantStatusEl.textContent = statusMessage;
   }
@@ -1664,6 +1692,7 @@ function deactivateHistoryAssistantResults() {
 }
 
 function applyHistoryAssistantResults(response) {
+  clearHistoryAssistantLoadingMessage();
   const results = Array.isArray(response?.results) ? response.results.filter(Boolean) : [];
   historyAssistantState = {
     ...historyAssistantState,
@@ -1691,6 +1720,7 @@ function handleHistoryAssistantResponse(response) {
     return;
   }
   if (!response.success) {
+    clearHistoryAssistantLoadingMessage();
     historyAssistantState = {
       ...historyAssistantState,
       status: "error",
@@ -1718,11 +1748,13 @@ function runHistoryAssistantQuery(prompt) {
     actionPending: false,
     error: "",
   };
+  setHistoryAssistantLoadingMessage(HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE, { sync: false });
   updateHistoryAssistantUI();
   chrome.runtime.sendMessage(
     { type: "SPOTLIGHT_HISTORY_ASSISTANT", prompt, requestId },
     (response) => {
       if (chrome.runtime.lastError) {
+        clearHistoryAssistantLoadingMessage();
         historyAssistantState = {
           ...historyAssistantState,
           status: "error",
@@ -3001,6 +3033,27 @@ function handleSummaryProgress(message) {
   tabSummaryState.set(url, entry);
   pruneSummaryState();
   updateSummaryUIForUrl(url);
+}
+
+function handleHistoryAssistantProgress(message) {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  if (historyAssistantState.status !== "loading") {
+    return;
+  }
+  const requestId = typeof message.requestId === "number" ? message.requestId : null;
+  if (!requestId || requestId !== historyAssistantState.requestId) {
+    return;
+  }
+  if (message.complete) {
+    clearHistoryAssistantLoadingMessage({ sync: true });
+    return;
+  }
+  const text = typeof message.message === "string" ? message.message.trim() : "";
+  if (text) {
+    setHistoryAssistantLoadingMessage(text);
+  }
 }
 
 const summaryStreamControllers = new WeakMap();
@@ -4417,6 +4470,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "SPOTLIGHT_SUMMARY_PROGRESS") {
     handleSummaryProgress(message);
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS") {
+    handleHistoryAssistantProgress(message);
     return undefined;
   }
   if (message.type === "SPOTLIGHT_FOCUS_APPLY") {

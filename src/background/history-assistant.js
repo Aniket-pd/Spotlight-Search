@@ -1998,7 +1998,32 @@ export function createHistoryAssistantService(options = {}) {
   };
   const { scheduleRebuild } = options;
 
-  async function analyzeHistoryRequest({ prompt, items, now = Date.now() }) {
+  async function analyzeHistoryRequest({ prompt, items, now = Date.now(), progress }) {
+    const progressCallback = typeof progress === "function" ? progress : null;
+    let progressFailed = false;
+    const reportProgress = (stage, info = {}) => {
+      if (!progressCallback || progressFailed) {
+        return;
+      }
+      if (typeof stage !== "string" || !stage) {
+        return;
+      }
+      const payload = { stage };
+      if (typeof info.message === "string" && info.message) {
+        payload.message = info.message;
+      }
+      if (info.details && typeof info.details === "object") {
+        payload.details = info.details;
+      }
+      try {
+        progressCallback(payload);
+      } catch (err) {
+        progressFailed = true;
+        console.warn("Spotlight: history assistant progress callback failed", err);
+      }
+    };
+
+    reportProgress("understanding-request", { message: "Understanding your request…" });
     const trimmed = typeof prompt === "string" ? prompt.trim() : "";
     if (!trimmed) {
       throw new Error("Enter a history request to analyze");
@@ -2009,6 +2034,7 @@ export function createHistoryAssistantService(options = {}) {
     const isFollowup = followupCandidate && Boolean(lastHistoryTurn);
 
     if (isGeneralInquiryPrompt(trimmed)) {
+      reportProgress("general-inquiry", { message: "Gathering browsing insights…" });
       const generalInquiry = await buildGeneralInquiryResponse(state, trimmed, conversationContext);
       recordConversationTurn(state, {
         type: "general",
@@ -2026,6 +2052,7 @@ export function createHistoryAssistantService(options = {}) {
           : 0,
         contextTurns: Array.isArray(state.conversation) ? state.conversation.length : 0,
       });
+      reportProgress("preparing-response", { message: "Preparing response…" });
       return generalInquiry.response;
     }
     const nowIso = new Date(now).toISOString();
@@ -2048,6 +2075,8 @@ export function createHistoryAssistantService(options = {}) {
     let detectedRangeInfo = deriveTimeRangeFromPrompt(trimmed, now);
     let detectedRange = detectedRangeInfo?.range || null;
     let confidence = typeof detectedRangeInfo?.confidence === "number" ? detectedRangeInfo.confidence : null;
+
+    reportProgress("detecting-range", { message: "Determining relevant time range…" });
 
     if (!detectedRange && isFollowup && lastHistoryTurn?.rangeMs) {
       detectedRange = { ...lastHistoryTurn.rangeMs };
@@ -2083,9 +2112,17 @@ export function createHistoryAssistantService(options = {}) {
       end: formatIso(detectedRange.end),
     };
 
+    if (detectedRange) {
+      reportProgress("range-determined", {
+        message: "Identified the most relevant time range.",
+        details: { start: heuristicRangeIso.start, end: heuristicRangeIso.end },
+      });
+    }
+
     let planResponse = null;
     let plan = null;
     try {
+      reportProgress("planning-search", { message: "Planning how to explore your history…" });
       if (!session) {
         session = await ensureSessionInstance(state);
       }
@@ -2147,7 +2184,17 @@ export function createHistoryAssistantService(options = {}) {
 
     const rangeItems = dedupeByUrl(selectHistoryItems(items, detectedRange));
     const totalRangeCount = rangeItems.length;
+    reportProgress("gathering-data", {
+      message:
+        totalRangeCount === 0
+          ? "Scanning your history for matching entries…"
+          : totalRangeCount === 1
+          ? "Gathered 1 history entry in the selected range."
+          : `Gathered ${totalRangeCount} history entries in the selected range.`,
+      details: { totalRangeCount },
+    });
     if (!totalRangeCount) {
+      reportProgress("no-results", { message: "No history entries were found in that time range." });
       const responsePayload = {
         action: "show",
         message: "No history entries were found in that time range.",
@@ -2189,6 +2236,13 @@ export function createHistoryAssistantService(options = {}) {
       }));
     }
     const planMatchCount = annotatedItems.length;
+    reportProgress("filtering-data", {
+      message:
+        planMatchCount === 1
+          ? "Found 1 entry that matches your request."
+          : `Found ${planMatchCount} entries that match your request.`,
+      details: { matchCount: planMatchCount },
+    });
 
     const datasetAnnotated = annotatedItems.slice(0, MAX_DATASET_ENTRIES);
     const dataset = datasetAnnotated
@@ -2217,6 +2271,7 @@ export function createHistoryAssistantService(options = {}) {
     const summaryAnalytics = buildSummaryAnalytics(dataset, planKeywordsForRecord, planDomainsForRecord);
 
     if (!dataset.length) {
+      reportProgress("no-results", { message: "No matching history entries were found for that request." });
       const responsePayload = {
         action: "show",
         message: "No matching history entries were found for that request.",
@@ -2281,6 +2336,7 @@ export function createHistoryAssistantService(options = {}) {
     });
 
     if (localResponse) {
+      reportProgress("drafting-response", { message: "Drafting a response from locally matched entries…" });
       const responseConfidence =
         typeof localResponse.confidence === "number" ? localResponse.confidence : confidence;
       const responsePayload = {
@@ -2304,6 +2360,7 @@ export function createHistoryAssistantService(options = {}) {
         confidence: responseConfidence,
         source: "local",
       });
+      reportProgress("preparing-response", { message: "Preparing final response…" });
       return responsePayload;
     }
 
@@ -2320,6 +2377,7 @@ export function createHistoryAssistantService(options = {}) {
       }
     }
 
+    reportProgress("analyzing-results", { message: "Analyzing matched history entries…" });
     const interpretation = await runPrompt(
       stage2Session,
       buildInterpretationPrompt({
@@ -2367,6 +2425,16 @@ export function createHistoryAssistantService(options = {}) {
       }
     }
 
+    reportProgress("building-response", {
+      message:
+        results.length === 0
+          ? "Summarizing what we found…"
+          : results.length === 1
+          ? "Preparing 1 highlighted history entry…"
+          : `Preparing ${results.length} highlighted history entries…`,
+      details: { resultCount: results.length, requestedCount: requestedIds.length },
+    });
+
     let message = typeof interpretation?.outputMessage === "string" && interpretation.outputMessage
       ? interpretation.outputMessage.trim()
       : buildFallbackMessage(detectedRange);
@@ -2393,6 +2461,7 @@ export function createHistoryAssistantService(options = {}) {
           summarySession = stage2Session;
         }
       }
+      reportProgress("summarizing-history", { message: "Summarizing insights from your history…" });
       const summaryResult = await generateSummaryNarrative(summarySession, {
         prompt: trimmed,
         nowIso,
@@ -2429,24 +2498,25 @@ export function createHistoryAssistantService(options = {}) {
       confidence,
     };
 
-      recordConversationTurn(state, {
-        type: "history",
-        prompt: trimmed,
-        response: responsePayload,
-        plan,
-        planSummary,
-        rangeMs: finalRangeMs,
-        timeRangeIso,
-        datasetSize: planMatchCount,
-        totalAvailable: totalRangeCount,
-        keywords: planKeywordsForRecord,
-        domains: planDomainsForRecord,
-        followup: isFollowup,
-        confidence,
-        source: "promptApi",
-        summarySource,
-      });
+    recordConversationTurn(state, {
+      type: "history",
+      prompt: trimmed,
+      response: responsePayload,
+      plan,
+      planSummary,
+      rangeMs: finalRangeMs,
+      timeRangeIso,
+      datasetSize: planMatchCount,
+      totalAvailable: totalRangeCount,
+      keywords: planKeywordsForRecord,
+      domains: planDomainsForRecord,
+      followup: isFollowup,
+      confidence,
+      source: "promptApi",
+      summarySource,
+    });
 
+    reportProgress("preparing-response", { message: "Preparing final response…" });
     return responsePayload;
   }
 

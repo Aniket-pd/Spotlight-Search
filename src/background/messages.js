@@ -60,17 +60,49 @@ export function registerMessageHandlers({
         });
         return true;
       }
+      const senderTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
+      const progressReporter =
+        senderTabId !== null && chrome?.tabs?.sendMessage
+          ? (payload) => {
+              if (!payload || typeof payload !== "object") {
+                return;
+              }
+              try {
+                chrome.tabs.sendMessage(senderTabId, {
+                  type: "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS",
+                  requestId: message.requestId,
+                  ...payload,
+                });
+              } catch (err) {
+                console.warn("Spotlight: history assistant progress dispatch failed", err);
+              }
+            }
+          : null;
+      if (progressReporter) {
+        progressReporter({ stage: "started", message: "Understanding your request…" });
+      }
       context
         .ensureIndex()
         .then((data) =>
-          historyAssistant.analyzeHistoryRequest({ prompt, items: data?.items || [], now: Date.now() })
+          historyAssistant.analyzeHistoryRequest({
+            prompt,
+            items: data?.items || [],
+            now: Date.now(),
+            progress: progressReporter,
+          })
         )
         .then((result) => {
+          if (progressReporter) {
+            progressReporter({ stage: "complete", complete: true });
+          }
           sendResponse({ success: true, ...result, requestId: message.requestId });
         })
         .catch((err) => {
           const errorMessage = err?.message || "History assistant unavailable";
           console.warn("Spotlight: history assistant request failed", err);
+          if (progressReporter) {
+            progressReporter({ stage: "error", message: errorMessage });
+          }
           sendResponse({ success: false, error: errorMessage, requestId: message.requestId });
         });
       return true;
