@@ -57,10 +57,8 @@ let webSearchPreviewResult = null;
 let historyAssistantContainerEl = null;
 let historyAssistantFieldEl = null;
 let historyAssistantInputEl = null;
-let historyAssistantSubmitEl = null;
 let historyAssistantStatusEl = null;
 let historyAssistantActionEl = null;
-let historyAssistantClearEl = null;
 let historyAssistantRangeEl = null;
 let historyAssistantTriggerEl = null;
 let historyAssistantBackEl = null;
@@ -1496,24 +1494,6 @@ function ensureHistoryAssistantElements(parent) {
   });
   historyAssistantFieldEl.appendChild(historyAssistantInputEl);
 
-  historyAssistantSubmitEl = document.createElement("button");
-  historyAssistantSubmitEl.type = "submit";
-  historyAssistantSubmitEl.className = "spotlight-history-assistant-submit";
-  historyAssistantSubmitEl.textContent = "Ask";
-  historyAssistantFieldEl.appendChild(historyAssistantSubmitEl);
-
-  historyAssistantClearEl = document.createElement("button");
-  historyAssistantClearEl.type = "button";
-  historyAssistantClearEl.className = "spotlight-history-assistant-clear";
-  historyAssistantClearEl.textContent = "Clear";
-  historyAssistantClearEl.addEventListener("click", () => {
-    resetHistoryAssistantState({ keepInput: false });
-    if (historyAssistantInputEl) {
-      historyAssistantInputEl.focus({ preventScroll: true });
-    }
-  });
-  form.appendChild(historyAssistantClearEl);
-
   form.addEventListener("submit", handleHistoryAssistantSubmit);
   container.appendChild(form);
 
@@ -1620,15 +1600,6 @@ function updateHistoryAssistantUI() {
     if (historyAssistantFieldEl) {
       historyAssistantFieldEl.classList.toggle("loading", loading);
     }
-  }
-  if (historyAssistantSubmitEl) {
-    const hasValue = Boolean(historyAssistantInputEl && historyAssistantInputEl.value.trim());
-    historyAssistantSubmitEl.disabled = !hasValue || historyAssistantState.status === "loading";
-  }
-  if (historyAssistantClearEl) {
-    const showClear = Boolean(historyAssistantInputEl && historyAssistantInputEl.value) || historyAssistantState.status !== "idle";
-    historyAssistantClearEl.disabled = historyAssistantState.status === "loading";
-    historyAssistantClearEl.classList.toggle("visible", showClear);
   }
   if (historyAssistantRangeEl) {
     const rangeText = formatHistoryAssistantRange(historyAssistantState.timeRange);

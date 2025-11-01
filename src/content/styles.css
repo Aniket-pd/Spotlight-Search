@@ -751,35 +751,6 @@
   background: var(--spotlight-color-accent-soft);
 }
 
-.spotlight-history-assistant-clear {
-  display: none;
-  border: none;
-  background: none;
-  color: var(--spotlight-color-text-tertiary);
-  font-size: 12px;
-  padding: 6px 10px;
-  border-radius: var(--spotlight-radius-pill);
-  cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease;
-  justify-self: end;
-  flex-shrink: 0;
-}
-
-.spotlight-history-assistant-clear.visible {
-  display: inline-flex;
-  align-items: center;
-}
-
-.spotlight-history-assistant-clear:hover:not(:disabled) {
-  color: var(--spotlight-color-text-primary);
-  background: var(--spotlight-color-accent-soft);
-}
-
-.spotlight-history-assistant-clear:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .spotlight-history-assistant-form {
   display: flex;
   align-items: center;
@@ -807,7 +778,7 @@
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   align-items: stretch;
   border-radius: var(--spotlight-radius-medium);
   border: none;
@@ -849,36 +820,6 @@
 .spotlight-history-assistant-input:disabled {
   opacity: 0.65;
   cursor: wait;
-}
-
-.spotlight-history-assistant-submit {
-  border: none;
-  border-radius: var(--spotlight-radius-pill);
-  padding: 0 18px;
-  margin: 6px;
-  min-height: 36px;
-  font-size: 14px;
-  font-weight: 600;
-  background: linear-gradient(135deg, var(--spotlight-color-accent), var(--spotlight-color-accent-strong));
-  color: var(--spotlight-color-text-inverse);
-  cursor: pointer;
-  transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
-  box-shadow: 0 12px 26px rgba(49, 200, 155, 0.24);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-}
-
-.spotlight-history-assistant-submit:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 32px rgba(49, 200, 155, 0.3);
-}
-
-.spotlight-history-assistant-submit:disabled {
-  opacity: 0.55;
-  cursor: default;
-  box-shadow: none;
 }
 
 .spotlight-history-assistant-meta {
