@@ -1269,7 +1269,7 @@
   margin-top: 12px;
   padding: 14px 16px;
   border-radius: var(--spotlight-radius-medium);
-  background: var(--spotlight-surface-panel);
+  background: transparent;
   border: 1px solid var(--spotlight-surface-panel-border);
   display: flex;
   flex-direction: column;
