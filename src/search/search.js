@@ -470,76 +470,104 @@ function matchesSubfilter(item, filterType, subfilterId, context) {
   return true;
 }
 
-const BREATHE_COMMAND_PHRASES = [
-  "Breathe",
-  "breathing break",
-  "relax",
-  "breathe calm",
-  "breathe focus",
-  "breathe energy",
-  "focus breathe",
-  "calm breathe",
-  "energy breathe",
-  "breath calm",
-  "breath focus",
-  "breath energy",
-  "take a breath",
-];
+const BREATHE_COMMAND_DESCRIPTION = "Take a short mindful breathing break (30s–2m).";
+const BREATHE_COMMAND_ANSWER = "Opens a guided calm, focus, or energy breathing timer.";
+const BREATHE_COMMAND_KEYWORDS = ["breathe", "relax", "focus", "energy", "break", "calm"];
+const BREATHE_KEYWORD_REGEX = /\bbreath(?:e|ing)?\b/i;
+
+function buildBreatheArgsString(query) {
+  const fromQuery = extractBreatheArgsString(query);
+  const fromPrefix = extractBreatheArgsString(extractBreatheMatchPhrase(query));
+  return [fromPrefix, fromQuery].filter(Boolean).join(" ").trim();
+}
+
+function findBreatheCommandSuggestion(query) {
+  const text = typeof query === "string" ? query : "";
+  const normalized = normalizeCommandToken(text);
+  if (!text.trim()) {
+    if (!normalized || (!"breathe".startsWith(normalized) && !normalized.startsWith("breathe"))) {
+      return null;
+    }
+  }
+
+  const hasKeyword =
+    BREATHE_KEYWORD_REGEX.test(text) ||
+    (normalized
+      ? "breathe".startsWith(normalized) ||
+        normalized.startsWith("breathe") ||
+        "breath".startsWith(normalized)
+      : false);
+
+  if (!hasKeyword) {
+    return null;
+  }
+
+  const argsString = buildBreatheArgsString(text);
+  return {
+    result: {
+      id: "command:breathe",
+      title: "Breathe",
+      url: BREATHE_COMMAND_DESCRIPTION,
+      description: BREATHE_COMMAND_DESCRIPTION,
+      type: "command",
+      command: "breathe",
+      args: { argsString },
+      label: "Command",
+      score: COMMAND_SCORE,
+      faviconUrl: COMMAND_ICON_DATA_URL,
+      category: "Action",
+      keywords: BREATHE_COMMAND_KEYWORDS,
+    },
+    ghost: "Breathe",
+    answer: BREATHE_COMMAND_ANSWER,
+  };
+}
 
 const STATIC_COMMANDS = [
   {
     id: "command:breathe",
     title: "Breathe",
-    aliases: ["breathe", ...BREATHE_COMMAND_PHRASES.slice(1)],
-    keywords: ["breathe", "relax", "focus", "energy", "break", "calm"],
+    aliases: [
+      "breathe",
+      "breathing break",
+      "relax",
+      "breathe calm",
+      "breathe focus",
+      "breathe energy",
+      "focus breathe",
+      "calm breathe",
+      "energy breathe",
+      "breath calm",
+      "breath focus",
+      "breath energy",
+      "take a breath",
+    ],
+    keywords: BREATHE_COMMAND_KEYWORDS,
     category: "Action",
     action: "breathe",
     match({ query, compactQuery }) {
-      const normalizedQuery = compactQuery;
-      if (!normalizedQuery) {
-        return null;
+      const detection = findBreatheCommandSuggestion(query);
+      if (detection) {
+        return { phrase: detection.ghost };
       }
-
-      for (const phrase of BREATHE_COMMAND_PHRASES) {
-        const normalizedPhrase = normalizeCommandToken(phrase);
-        if (
-          normalizedPhrase &&
-          (normalizedPhrase.startsWith(normalizedQuery) || normalizedQuery.startsWith(normalizedPhrase))
-        ) {
-          return { phrase };
-        }
-      }
-
-      const matchedPhrase = extractBreatheMatchPhrase(query);
-      if (!matchedPhrase) {
-        return null;
-      }
-      const normalizedMatched = normalizeCommandToken(matchedPhrase);
-      if (normalizedMatched && normalizedQuery.startsWith(normalizedMatched)) {
-        return { phrase: matchedPhrase };
-      }
-
       const normalizedTitle = normalizeCommandToken("breathe");
       if (
         normalizedTitle &&
-        (normalizedTitle.startsWith(normalizedQuery) || normalizedQuery.startsWith(normalizedTitle))
+        compactQuery &&
+        (normalizedTitle.startsWith(compactQuery) || compactQuery.startsWith(normalizedTitle))
       ) {
         return { phrase: "Breathe" };
       }
-
       return null;
     },
     answer() {
-      return "Opens a guided calm, focus, or energy breathing timer.";
+      return BREATHE_COMMAND_ANSWER;
     },
     description() {
-      return "Take a short mindful breathing break (30s–2m).";
+      return BREATHE_COMMAND_DESCRIPTION;
     },
     buildArgs({ query }) {
-      const fromQuery = extractBreatheArgsString(query);
-      const fromPrefix = extractBreatheArgsString(extractBreatheMatchPhrase(query));
-      const combined = [fromPrefix, fromQuery].filter(Boolean).join(" ").trim();
-      return { argsString: combined };
+      return { argsString: buildBreatheArgsString(query) };
     },
     isAvailable() {
       return true;
@@ -1614,6 +1642,19 @@ function collectCommandSuggestions(query, context) {
     pushSuggestion(staticMatch.result);
     ghost = ghost || staticMatch.ghostText;
     answer = answer || staticMatch.answer;
+  }
+
+  if (!suggestions.some((item) => item?.command === "breathe")) {
+    const breatheSuggestion = findBreatheCommandSuggestion(query);
+    if (breatheSuggestion) {
+      pushSuggestion(breatheSuggestion.result);
+      if (!ghost && breatheSuggestion.ghost) {
+        ghost = breatheSuggestion.ghost;
+      }
+      if (!answer && breatheSuggestion.answer) {
+        answer = breatheSuggestion.answer;
+      }
+    }
   }
 
   const focusSuggestions = collectFocusCommandSuggestions(query, context);
