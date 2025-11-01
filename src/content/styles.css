@@ -956,15 +956,18 @@
 }
 
 .spotlight-result-history-assistant {
-  background: var(--spotlight-color-accent-soft);
+  background: transparent;
+  box-shadow: none;
 }
 
 .spotlight-result-history-assistant:hover {
-  background: var(--spotlight-color-accent-soft-strong);
+  background: transparent;
+  box-shadow: none;
 }
 
 .spotlight-result-history-assistant.active {
-  background: var(--spotlight-active-bg);
+  background: transparent;
+  box-shadow: none;
 }
 
 .spotlight-subfilter {
