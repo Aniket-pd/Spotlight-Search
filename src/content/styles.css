@@ -972,17 +972,17 @@
 
 .spotlight-result-history-assistant {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-soft);
+  box-shadow: none;
 }
 
 .spotlight-result-history-assistant:hover {
-  background: var(--spotlight-color-accent-soft);
-  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-strong);
+  background: transparent;
+  box-shadow: none;
 }
 
 .spotlight-result-history-assistant.active {
-  background: var(--spotlight-result-active);
-  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-strong);
+  background: transparent;
+  box-shadow: none;
 }
 
 .spotlight-subfilter {
