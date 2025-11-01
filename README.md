@@ -40,12 +40,22 @@ Spotlight keeps web search only one keystroke away when local data comes up empt
 
 The shared web search utilities live in `src/shared/web-search.js` if you want to add or customize engines.
 
-## Loading the Extension
-1. Clone or download this repository.
-2. Open `chrome://extensions/` in Chrome.
-3. Enable **Developer mode** in the top right.
-4. Click **Load unpacked** and select the repository directory.
-5. Use the keyboard shortcut (`Cmd+K`/`Ctrl+K`) on any page to open Spotlight.
+## Installing the Extension in Chrome
+You can run Spotlight directly from source or side-load a packaged zip. Both approaches require Chrome 114 or later.
+
+### Option 1: Load the source folder (recommended for development)
+1. Clone or download this repository and make sure the directory is available on your machine.
+2. Open a new tab in Chrome and navigate to `chrome://extensions/`.
+3. Toggle on **Developer mode** using the switch in the top-right corner of the page.
+4. Click **Load unpacked**, then browse to the folder that contains `manifest.json` (the root of this repository) and select it.
+5. Spotlight will appear in your extensions list immediately. Use `Cmd+K` (macOS) or `Ctrl+K` (Windows/Linux) on any page to open the launcher.
+
+### Option 2: Install from a zipped build (handy for testers)
+1. Run `npm install` (if you haven't already) and `npm run build` to produce the `dist` directory.
+2. Compress the contents of the `dist` folder into a `.zip` archive (ensure the archive root contains `manifest.json`).
+3. Visit `chrome://extensions/`, enable **Developer mode**, and click **Load unpacked**.
+4. Select the extracted archive folder (or drag the folder onto the Extensions page) to install Spotlight.
+5. Trigger Spotlight with `Cmd+K`/`Ctrl+K` to confirm the installation worked.
 
 ## Development Notes
 - Background indexing runs on startup and whenever tabs/bookmarks/history change.
