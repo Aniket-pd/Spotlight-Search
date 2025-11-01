@@ -1602,6 +1602,114 @@ function formatHistoryAssistantRange(range) {
   return "";
 }
 
+function createHistoryAssistantInlineFragment(text) {
+  const fragment = document.createDocumentFragment();
+  if (!text) {
+    return fragment;
+  }
+  const boldPattern = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match = boldPattern.exec(text);
+  while (match) {
+    if (match.index > lastIndex) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+    }
+    const strong = document.createElement("strong");
+    strong.textContent = match[1];
+    fragment.appendChild(strong);
+    lastIndex = match.index + match[0].length;
+    match = boldPattern.exec(text);
+  }
+  if (lastIndex < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+  return fragment;
+}
+
+function createHistoryAssistantRichTextElement(text, baseClass) {
+  const container = document.createElement("div");
+  const classNames = ["spotlight-history-assistant-rich-text"];
+  if (baseClass) {
+    classNames.push(baseClass);
+  }
+  container.className = classNames.join(" ");
+  if (!text || !text.trim()) {
+    return container;
+  }
+
+  const normalized = text.replace(/\r\n/g, "\n");
+  const blocks = normalized.split(/\n{2,}/);
+
+  let pendingParagraph = [];
+  let pendingList = null;
+
+  function flushParagraph() {
+    if (!pendingParagraph.length) {
+      return;
+    }
+    const paragraph = document.createElement("p");
+    paragraph.className = "spotlight-history-assistant-rich-text-paragraph";
+    paragraph.appendChild(createHistoryAssistantInlineFragment(pendingParagraph.join(" ").trim()));
+    container.appendChild(paragraph);
+    pendingParagraph = [];
+  }
+
+  function flushList() {
+    if (!pendingList || !pendingList.items.length) {
+      pendingList = null;
+      return;
+    }
+    const listEl = document.createElement(pendingList.type);
+    listEl.className = "spotlight-history-assistant-rich-text-list";
+    if (pendingList.type === "ol" && pendingList.start && pendingList.start > 1) {
+      listEl.start = pendingList.start;
+    }
+    pendingList.items.forEach((item) => {
+      const li = document.createElement("li");
+      li.appendChild(createHistoryAssistantInlineFragment(item.text));
+      listEl.appendChild(li);
+    });
+    container.appendChild(listEl);
+    pendingList = null;
+  }
+
+  blocks.forEach((block, blockIndex) => {
+    if (blockIndex > 0) {
+      flushParagraph();
+      flushList();
+    }
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+    lines.forEach((line) => {
+      const listMatch = line.match(/^(?:[\-*•]\s+|\d+[\.)]\s+)/);
+      if (listMatch) {
+        const numberMatch = line.match(/^(\d+)[\.)]\s+/);
+        const itemText = line.replace(/^(?:[\-*•]\s+|\d+[\.)]\s+)/, "").trim();
+        if (!pendingList || (numberMatch ? pendingList.type !== "ol" : pendingList.type !== "ul")) {
+          flushParagraph();
+          flushList();
+          pendingList = {
+            type: numberMatch ? "ol" : "ul",
+            start: numberMatch ? parseInt(numberMatch[1], 10) || 1 : null,
+            items: [],
+          };
+        }
+        if (numberMatch && pendingList && pendingList.type === "ol" && !pendingList.start) {
+          pendingList.start = parseInt(numberMatch[1], 10) || 1;
+        }
+        pendingList.items.push({ text: itemText });
+      } else {
+        flushList();
+        pendingParagraph.push(line);
+      }
+    });
+  });
+
+  flushParagraph();
+  flushList();
+
+  return container;
+}
+
 function updateHistoryAssistantUI() {
   if (!historyAssistantContainerEl) {
     return;
@@ -1675,7 +1783,12 @@ function updateHistoryAssistantUI() {
     } else {
       statusMessage = "Ask something like “List my YouTube visits from the past week.”";
     }
-    historyAssistantStatusEl.textContent = statusMessage;
+    historyAssistantStatusEl.replaceChildren();
+    if (statusMessage) {
+      historyAssistantStatusEl.appendChild(
+        createHistoryAssistantRichTextElement(statusMessage, "spotlight-history-assistant-status-text"),
+      );
+    }
   }
 }
 
@@ -3468,7 +3581,14 @@ function renderResults() {
 
     const text = document.createElement("div");
     text.className = "spotlight-history-assistant-header-text";
-    text.textContent = historyAssistantState.message || "History assistant results";
+    const headerMessage =
+      (historyAssistantState.message && historyAssistantState.message.trim()) || "History assistant results";
+    text.appendChild(
+      createHistoryAssistantRichTextElement(
+        headerMessage,
+        "spotlight-history-assistant-header-text-content",
+      ),
+    );
     header.appendChild(text);
 
     const meta = document.createElement("div");
@@ -3497,7 +3617,11 @@ function renderResults() {
     li.className = "spotlight-result empty";
     if (assistantActive) {
       const message = historyAssistantState.message || "No matching history entries";
-      li.textContent = message;
+      const richText = createHistoryAssistantRichTextElement(
+        message,
+        "spotlight-history-assistant-result-text",
+      );
+      li.appendChild(richText);
     } else {
       const scopeLabel = getFilterStatusLabel(activeFilter);
       const emptyLabel = activeFilter === "history" && scopeLabel ? "history results" : scopeLabel;
@@ -3574,6 +3698,14 @@ function renderResults() {
       meta.classList.add("spotlight-result-meta-web-search");
     }
 
+    const rawDescription = typeof result.description === "string" ? result.description : "";
+    const fallbackDescription = rawDescription || (typeof result.url === "string" ? result.url : "");
+    const showRichDescription =
+      assistantActive && result.historyAssistant && Boolean(rawDescription && rawDescription.trim());
+    if (showRichDescription) {
+      meta.classList.add("spotlight-result-meta-history-assistant");
+    }
+
     const url = document.createElement("span");
     url.className = "spotlight-result-url";
 
@@ -3590,15 +3722,16 @@ function renderResults() {
         meta.appendChild(url);
       }
     } else {
-      const descriptionText = result.description || result.url || "";
-      if (descriptionText) {
-        url.textContent = descriptionText;
-        url.setAttribute("aria-label", descriptionText);
-      } else {
-        url.textContent = "";
-        url.removeAttribute("aria-label");
+      if (!showRichDescription) {
+        if (fallbackDescription) {
+          url.textContent = fallbackDescription;
+          url.setAttribute("aria-label", fallbackDescription);
+        } else {
+          url.textContent = "";
+          url.removeAttribute("aria-label");
+        }
+        meta.appendChild(url);
       }
-      meta.appendChild(url);
 
       const timestampLabel = formatResultTimestamp(result);
 
@@ -3633,7 +3766,7 @@ function renderResults() {
       type.textContent = formatTypeLabel(result.type, result);
       meta.appendChild(type);
 
-      if (canSummarize && resultUrl) {
+      if (!showRichDescription && canSummarize && resultUrl) {
         const summaryButton = document.createElement("button");
         summaryButton.type = "button";
         summaryButton.className = TAB_SUMMARY_BUTTON_CLASS;
@@ -3665,7 +3798,16 @@ function renderResults() {
     }
 
     body.appendChild(title);
-    body.appendChild(meta);
+    if (meta.childElementCount > 0) {
+      body.appendChild(meta);
+    }
+    if (showRichDescription) {
+      const summaryEl = createHistoryAssistantRichTextElement(
+        rawDescription || fallbackDescription,
+        "spotlight-history-assistant-result-text",
+      );
+      body.appendChild(summaryEl);
+    }
     li.appendChild(body);
 
     if (canSummarize && resultUrl) {
