@@ -1675,6 +1675,13 @@ function updateHistoryAssistantUI() {
     } else {
       statusMessage = "Ask something like “List my YouTube visits from the past week.”";
     }
+    const loading = historyAssistantState.status === "loading";
+    historyAssistantStatusEl.classList.toggle("loading", loading);
+    if (statusMessage) {
+      historyAssistantStatusEl.setAttribute("data-text", statusMessage);
+    } else {
+      historyAssistantStatusEl.removeAttribute("data-text");
+    }
     historyAssistantStatusEl.textContent = statusMessage;
   }
 }

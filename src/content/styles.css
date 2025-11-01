@@ -934,6 +934,48 @@
   line-height: 1.45;
   min-height: 18px;
   padding: 0 16px;
+  position: relative;
+}
+
+.spotlight-history-assistant-status::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  display: inline-block;
+  font: inherit;
+  line-height: inherit;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  opacity: 0;
+  pointer-events: none;
+  white-space: inherit;
+}
+
+.spotlight-history-assistant-status.loading {
+  color: var(--spotlight-color-accent);
+}
+
+.spotlight-history-assistant-status.loading::after {
+  opacity: 1;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.35),
+    var(--spotlight-color-accent),
+    rgba(255, 255, 255, 0.35)
+  );
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
+  background-position: 0% 50%;
+  animation: spotlight-ai-panel-status-loading-gradient 1.8s linear infinite;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .spotlight-history-assistant-status.loading {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
 
