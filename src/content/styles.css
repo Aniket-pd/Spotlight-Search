@@ -971,15 +971,18 @@
 }
 
 .spotlight-result-history-assistant {
-  background: var(--spotlight-color-accent-soft);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-soft);
 }
 
 .spotlight-result-history-assistant:hover {
-  background: var(--spotlight-color-accent-soft-strong);
+  background: var(--spotlight-color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-strong);
 }
 
 .spotlight-result-history-assistant.active {
-  background: var(--spotlight-active-bg);
+  background: var(--spotlight-result-active);
+  box-shadow: inset 0 0 0 1px var(--spotlight-color-accent-strong);
 }
 
 .spotlight-subfilter {
