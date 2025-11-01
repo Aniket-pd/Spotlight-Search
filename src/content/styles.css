@@ -935,6 +935,7 @@
   min-height: 18px;
   padding: 0 16px;
   position: relative;
+  transition: color 160ms ease, opacity 160ms ease;
 }
 
 .spotlight-history-assistant-status::after {
@@ -951,6 +952,7 @@
   opacity: 0;
   pointer-events: none;
   white-space: inherit;
+  transition: opacity 160ms ease;
 }
 
 .spotlight-history-assistant-status.loading {

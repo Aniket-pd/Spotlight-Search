@@ -68,6 +68,9 @@ let historyAssistantState = createInitialHistoryAssistantState();
 let historyAssistantRequestCounter = 0;
 let historyAssistantAiModeActive = false;
 let filterShortcutsEl = null;
+let historyAssistantProgressTimeout = null;
+let historyAssistantProgressIndex = 0;
+let historyAssistantLoadingMessage = "";
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
@@ -95,6 +98,14 @@ let focusTitlePrefix = "";
 let focusActive = false;
 let colorSchemeMediaQuery = null;
 let colorSchemeChangeHandler = null;
+const HISTORY_ASSISTANT_PROGRESS_STEPS = [
+  { text: "Understanding your request…", duration: 1400 },
+  { text: "Gathering data…", duration: 1500 },
+  { text: "Analyzing what we found…", duration: 1700 },
+  { text: "Preparing your response…", duration: 1900 },
+];
+const HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE = "Working on your answer…";
+const HISTORY_ASSISTANT_PROGRESS_DEFAULT_DURATION = 1600;
 
 function getWebSearchApi() {
   const api = typeof globalThis !== "undefined" ? globalThis.SpotlightWebSearch : null;
@@ -1443,6 +1454,83 @@ function createInitialHistoryAssistantState() {
   };
 }
 
+function setHistoryAssistantLoadingMessage(message, options = {}) {
+  const { sync = true } = options || {};
+  historyAssistantLoadingMessage = typeof message === "string" ? message : "";
+  if (sync && historyAssistantState.status === "loading") {
+    updateHistoryAssistantUI();
+  }
+}
+
+function clearHistoryAssistantProgressCycle(options = {}) {
+  const { preserveMessage = false } = options || {};
+  if (historyAssistantProgressTimeout) {
+    clearTimeout(historyAssistantProgressTimeout);
+    historyAssistantProgressTimeout = null;
+  }
+  historyAssistantProgressIndex = 0;
+  if (!preserveMessage) {
+    setHistoryAssistantLoadingMessage("", { sync: false });
+  }
+}
+
+function scheduleHistoryAssistantProgressStep() {
+  if (historyAssistantState.status !== "loading") {
+    clearHistoryAssistantProgressCycle();
+    return;
+  }
+  const steps = Array.isArray(HISTORY_ASSISTANT_PROGRESS_STEPS) ? HISTORY_ASSISTANT_PROGRESS_STEPS : [];
+  if (!steps.length) {
+    return;
+  }
+  const currentStep = steps[historyAssistantProgressIndex] || null;
+  const duration =
+    currentStep && Number.isFinite(currentStep.duration)
+      ? currentStep.duration
+      : HISTORY_ASSISTANT_PROGRESS_DEFAULT_DURATION;
+  historyAssistantProgressTimeout = setTimeout(() => {
+    if (historyAssistantState.status !== "loading") {
+      clearHistoryAssistantProgressCycle();
+      return;
+    }
+    const stepsCount = steps.length;
+    if (!stepsCount) {
+      return;
+    }
+    historyAssistantProgressIndex = (historyAssistantProgressIndex + 1) % stepsCount;
+    const nextStep = steps[historyAssistantProgressIndex] || null;
+    const nextMessage =
+      nextStep && typeof nextStep.text === "string"
+        ? nextStep.text
+        : HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE;
+    setHistoryAssistantLoadingMessage(nextMessage);
+    scheduleHistoryAssistantProgressStep();
+  }, duration);
+}
+
+function startHistoryAssistantProgressCycle(options = {}) {
+  const { sync = true } = options || {};
+  if (historyAssistantState.status !== "loading") {
+    return;
+  }
+  clearHistoryAssistantProgressCycle();
+  const steps = Array.isArray(HISTORY_ASSISTANT_PROGRESS_STEPS) ? HISTORY_ASSISTANT_PROGRESS_STEPS : [];
+  historyAssistantProgressIndex = 0;
+  const initialStep = steps[0] || null;
+  const initialMessage =
+    initialStep && typeof initialStep.text === "string"
+      ? initialStep.text
+      : HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE;
+  setHistoryAssistantLoadingMessage(initialMessage, { sync: false });
+  if (sync && historyAssistantState.status === "loading") {
+    updateHistoryAssistantUI();
+  }
+  if (!steps.length) {
+    return;
+  }
+  scheduleHistoryAssistantProgressStep();
+}
+
 function ensureHistoryAssistantElements(parent) {
   if (!parent) {
     return null;
@@ -1558,6 +1646,7 @@ function updateHistoryAssistantVisibility() {
 function resetHistoryAssistantState(options = {}) {
   const { keepInput = false, skipRefresh = false } = options || {};
   const wasActive = historyAssistantState.resultsActive;
+  clearHistoryAssistantProgressCycle();
   historyAssistantState = createInitialHistoryAssistantState();
   if (keepInput && historyAssistantInputEl) {
     historyAssistantState.lastPrompt = historyAssistantInputEl.value.trim();
@@ -1662,7 +1751,14 @@ function updateHistoryAssistantUI() {
   if (historyAssistantStatusEl) {
     let statusMessage = "";
     if (historyAssistantState.status === "loading") {
-      statusMessage = "Understanding your request…";
+      const fallbackStep = Array.isArray(HISTORY_ASSISTANT_PROGRESS_STEPS)
+        ? HISTORY_ASSISTANT_PROGRESS_STEPS[0]
+        : null;
+      const fallbackMessage =
+        fallbackStep && typeof fallbackStep.text === "string"
+          ? fallbackStep.text
+          : HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE;
+      statusMessage = historyAssistantLoadingMessage || fallbackMessage;
     } else if (historyAssistantState.status === "error") {
       statusMessage = historyAssistantState.error || "History assistant unavailable.";
     } else if (historyAssistantState.status === "ready") {
@@ -1700,6 +1796,7 @@ function deactivateHistoryAssistantResults() {
 }
 
 function applyHistoryAssistantResults(response) {
+  clearHistoryAssistantProgressCycle();
   const results = Array.isArray(response?.results) ? response.results.filter(Boolean) : [];
   historyAssistantState = {
     ...historyAssistantState,
@@ -1727,6 +1824,7 @@ function handleHistoryAssistantResponse(response) {
     return;
   }
   if (!response.success) {
+    clearHistoryAssistantProgressCycle();
     historyAssistantState = {
       ...historyAssistantState,
       status: "error",
@@ -1754,11 +1852,13 @@ function runHistoryAssistantQuery(prompt) {
     actionPending: false,
     error: "",
   };
+  startHistoryAssistantProgressCycle({ sync: false });
   updateHistoryAssistantUI();
   chrome.runtime.sendMessage(
     { type: "SPOTLIGHT_HISTORY_ASSISTANT", prompt, requestId },
     (response) => {
       if (chrome.runtime.lastError) {
+        clearHistoryAssistantProgressCycle();
         historyAssistantState = {
           ...historyAssistantState,
           status: "error",
