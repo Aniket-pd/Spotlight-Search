@@ -1666,9 +1666,11 @@ function updateHistoryAssistantUI() {
     } else if (historyAssistantState.status === "error") {
       statusMessage = historyAssistantState.error || "History assistant unavailable.";
     } else if (historyAssistantState.status === "ready") {
-      statusMessage = historyAssistantState.message || "Here are the matching history results.";
-      if (historyAssistantState.notes) {
-        statusMessage = `${statusMessage} ${historyAssistantState.notes}`.trim();
+      if (!historyAssistantState.resultsActive) {
+        statusMessage = historyAssistantState.message || "Here are the matching history results.";
+        if (historyAssistantState.notes) {
+          statusMessage = `${statusMessage} ${historyAssistantState.notes}`.trim();
+        }
       }
     } else {
       statusMessage = "Ask something like “List my YouTube visits from the past week.”";
@@ -3458,7 +3460,8 @@ function renderResults() {
   }
 
   const assistantActive = historyAssistantState.resultsActive && historyAssistantState.status === "ready";
-  if (assistantActive) {
+  const assistantHasResults = assistantActive && resultsState.length > 0;
+  if (assistantHasResults) {
     const header = document.createElement("li");
     header.className = "spotlight-history-assistant-header";
     header.setAttribute("role", "presentation");
