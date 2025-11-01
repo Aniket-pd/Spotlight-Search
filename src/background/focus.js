@@ -1,3 +1,5 @@
+import { browser, supportsTabGroups } from "../shared/browser-shim.js";
+
 const STORAGE_KEY = "spotlightFocusedTab";
 const GROUP_TITLE = "🔥 Focus";
 const GROUP_COLOR = "orange";
@@ -66,7 +68,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       return cachedState;
     }
     try {
-      const result = await chrome.storage.local.get(STORAGE_KEY);
+      const result = await browser.storage.local.get(STORAGE_KEY);
       cachedState = sanitizeState(result?.[STORAGE_KEY]);
     } catch (err) {
       console.warn("Spotlight: failed to load focus state", err);
@@ -88,14 +90,14 @@ export function createFocusManager({ onStateChanged } = {}) {
     stateLoaded = true;
     if (!state) {
       try {
-        await chrome.storage.local.remove(STORAGE_KEY);
+        await browser.storage.local.remove(STORAGE_KEY);
       } catch (err) {
         console.warn("Spotlight: failed to clear focus state", err);
       }
       return;
     }
     try {
-      await chrome.storage.local.set({ [STORAGE_KEY]: cachedState });
+      await browser.storage.local.set({ [STORAGE_KEY]: cachedState });
     } catch (err) {
       console.warn("Spotlight: failed to persist focus state", err);
     }
@@ -106,7 +108,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       return null;
     }
     try {
-      const tab = await chrome.tabs.get(tabId);
+      const tab = await browser.tabs.get(tabId);
       return tab || null;
     } catch (err) {
       return null;
@@ -118,7 +120,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       return;
     }
     try {
-      const maybePromise = chrome.tabs.sendMessage(tabId, message);
+      const maybePromise = browser.tabs.sendMessage(tabId, message);
       if (maybePromise && typeof maybePromise.catch === "function") {
         maybePromise.catch((err) => {
           if (err && err.message && err.message.includes("Receiving end does not exist")) {
@@ -144,7 +146,7 @@ export function createFocusManager({ onStateChanged } = {}) {
   async function focusTabInternal(tabId) {
     let targetTabId = typeof tabId === "number" ? tabId : null;
     if (targetTabId === null) {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (!activeTab || typeof activeTab.id !== "number") {
         throw new Error("No active tab to focus");
       }
@@ -173,15 +175,12 @@ export function createFocusManager({ onStateChanged } = {}) {
     let movedToFront = false;
     let unpinnedForGroup = false;
 
-    const canUseTabGroups =
-      Boolean(chrome.tabGroups) &&
-      typeof chrome.tabs.group === "function" &&
-      typeof chrome.tabGroups.update === "function";
+    const canUseTabGroups = supportsTabGroups();
 
     if (canUseTabGroups) {
       if (tab.pinned) {
         try {
-          await chrome.tabs.update(tab.id, { pinned: false });
+          await browser.tabs.update(tab.id, { pinned: false });
           unpinnedForGroup = true;
           tab = (await ensureTab(tab.id)) || tab;
         } catch (err) {
@@ -189,8 +188,8 @@ export function createFocusManager({ onStateChanged } = {}) {
         }
       }
       try {
-        groupId = await chrome.tabs.group({ tabIds: [tab.id] });
-        await chrome.tabGroups.update(groupId, {
+        groupId = await browser.tabs.group({ tabIds: [tab.id] });
+        await browser.tabGroups.update(groupId, {
           title: GROUP_TITLE,
           color: GROUP_COLOR,
           collapsed: false,
@@ -207,12 +206,12 @@ export function createFocusManager({ onStateChanged } = {}) {
     }
 
     try {
-      await chrome.tabs.update(tab.id, updateOptions);
+      await browser.tabs.update(tab.id, updateOptions);
     } catch (err) {
       console.warn("Spotlight: unable to update focused tab", err);
       if (updateOptions.pinned) {
         try {
-          await chrome.tabs.update(tab.id, { active: true, highlighted: true });
+          await browser.tabs.update(tab.id, { active: true, highlighted: true });
         } catch (activateErr) {
           console.warn("Spotlight: unable to activate focused tab", activateErr);
         }
@@ -221,7 +220,7 @@ export function createFocusManager({ onStateChanged } = {}) {
 
     if (typeof tab.windowId === "number") {
       try {
-        await chrome.windows.update(tab.windowId, { focused: true });
+        await browser.windows.update(tab.windowId, { focused: true });
       } catch (err) {
         console.warn("Spotlight: unable to focus window for focused tab", err);
       }
@@ -233,8 +232,8 @@ export function createFocusManager({ onStateChanged } = {}) {
         groupId = refreshed.groupId;
       } else if (groupId !== null) {
         try {
-          groupId = await chrome.tabs.group({ tabIds: [tab.id] });
-          await chrome.tabGroups.update(groupId, {
+          groupId = await browser.tabs.group({ tabIds: [tab.id] });
+          await browser.tabGroups.update(groupId, {
             title: GROUP_TITLE,
             color: GROUP_COLOR,
             collapsed: false,
@@ -249,11 +248,11 @@ export function createFocusManager({ onStateChanged } = {}) {
       groupId = null;
     }
 
-    if (canUseTabGroups && groupId !== null && typeof chrome.tabs.move === "function") {
+    if (canUseTabGroups && groupId !== null && typeof browser.tabs.move === "function") {
       const shouldMoveToFront = unpinnedForGroup || !originalPinned;
       if (shouldMoveToFront) {
         try {
-          await chrome.tabs.move(tab.id, { index: 0 });
+          await browser.tabs.move(tab.id, { index: 0 });
           movedToFront = true;
           refreshed = (await ensureTab(tab.id)) || refreshed;
         } catch (err) {
@@ -290,9 +289,9 @@ export function createFocusManager({ onStateChanged } = {}) {
     const tab = await ensureTab(state.tabId);
 
     if (tab) {
-      if (state.groupId !== null && typeof chrome.tabs.ungroup === "function") {
+      if (state.groupId !== null && typeof browser.tabs.ungroup === "function") {
         try {
-          await chrome.tabs.ungroup(tab.id);
+          await browser.tabs.ungroup(tab.id);
         } catch (err) {
           console.warn("Spotlight: unable to ungroup focused tab", err);
         }
@@ -300,20 +299,20 @@ export function createFocusManager({ onStateChanged } = {}) {
 
       if (
         state.originalGroupId !== null &&
-        chrome.tabGroups &&
-        typeof chrome.tabs.group === "function"
+        browser.tabGroups &&
+        typeof browser.tabs.group === "function"
       ) {
         try {
-          await chrome.tabs.group({ groupId: state.originalGroupId, tabIds: [tab.id] });
+          await browser.tabs.group({ groupId: state.originalGroupId, tabIds: [tab.id] });
         } catch (err) {
           console.warn("Spotlight: unable to restore tab group", err);
         }
       }
 
       if (!state.originalPinned && state.movedToFront && state.originalIndex !== null) {
-        if (typeof chrome.tabs.move === "function") {
+        if (typeof browser.tabs.move === "function") {
           try {
-            await chrome.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
+            await browser.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
           } catch (err) {
             console.warn("Spotlight: unable to restore tab position", err);
           }
@@ -321,15 +320,15 @@ export function createFocusManager({ onStateChanged } = {}) {
       }
 
       try {
-        await chrome.tabs.update(tab.id, { pinned: state.originalPinned });
+        await browser.tabs.update(tab.id, { pinned: state.originalPinned });
       } catch (err) {
         console.warn("Spotlight: unable to restore tab pin state", err);
       }
 
       if (state.originalPinned && state.movedToFront && state.originalIndex !== null) {
-        if (typeof chrome.tabs.move === "function") {
+        if (typeof browser.tabs.move === "function") {
           try {
-            await chrome.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
+            await browser.tabs.move(tab.id, { index: Math.max(0, state.originalIndex) });
           } catch (err) {
             console.warn("Spotlight: unable to restore pinned tab position", err);
           }
@@ -357,13 +356,13 @@ export function createFocusManager({ onStateChanged } = {}) {
     }
 
     try {
-      await chrome.tabs.update(tab.id, { active: true, highlighted: true });
+      await browser.tabs.update(tab.id, { active: true, highlighted: true });
     } catch (err) {
       console.warn("Spotlight: unable to activate focused tab", err);
     }
     if (typeof tab.windowId === "number") {
       try {
-        await chrome.windows.update(tab.windowId, { focused: true });
+        await browser.windows.update(tab.windowId, { focused: true });
       } catch (err) {
         console.warn("Spotlight: unable to focus window for jump", err);
       }
@@ -376,9 +375,9 @@ export function createFocusManager({ onStateChanged } = {}) {
     const state = await getState();
     if (state?.tabId === tabId) {
       const updatedState = await ensureGroupHighlightForState(state);
-      if (updatedState?.movedToFront && typeof chrome.tabs.move === "function") {
+      if (updatedState?.movedToFront && typeof browser.tabs.move === "function") {
         try {
-          await chrome.tabs.move(tabId, { index: 0 });
+          await browser.tabs.move(tabId, { index: 0 });
         } catch (err) {
           console.warn("Spotlight: unable to maintain focused tab position", err);
         }
@@ -397,10 +396,7 @@ export function createFocusManager({ onStateChanged } = {}) {
     if (!current || current.groupId === null) {
       return current;
     }
-    const canUseTabGroups =
-      Boolean(chrome.tabGroups) &&
-      typeof chrome.tabGroups.update === "function" &&
-      typeof chrome.tabs.group === "function";
+    const canUseTabGroups = supportsTabGroups();
     if (!canUseTabGroups) {
       return current;
     }
@@ -409,7 +405,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       return current;
     }
     try {
-      await chrome.tabGroups.update(current.groupId, {
+      await browser.tabGroups.update(current.groupId, {
         title: GROUP_TITLE,
         color: GROUP_COLOR,
         collapsed: false,
@@ -420,8 +416,8 @@ export function createFocusManager({ onStateChanged } = {}) {
     }
 
     try {
-      const newGroupId = await chrome.tabs.group({ tabIds: [tab.id] });
-      await chrome.tabGroups.update(newGroupId, {
+      const newGroupId = await browser.tabs.group({ tabIds: [tab.id] });
+      await browser.tabGroups.update(newGroupId, {
         title: GROUP_TITLE,
         color: GROUP_COLOR,
         collapsed: false,
@@ -447,7 +443,7 @@ export function createFocusManager({ onStateChanged } = {}) {
   }
 
   function attachEventListeners() {
-    chrome.tabs.onRemoved.addListener((removedTabId) => {
+    browser.tabs.onRemoved.addListener((removedTabId) => {
       queueOperation(async () => {
         const state = await getState();
         if (state?.tabId === removedTabId) {
@@ -457,7 +453,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       });
     });
 
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
       if (changeInfo && changeInfo.status === "complete") {
         queueOperation(async () => {
           const state = await getState();
@@ -475,7 +471,7 @@ export function createFocusManager({ onStateChanged } = {}) {
           if (changeInfo.pinned === false && state.groupId === null) {
             // Re-pin to keep the focus visual state aligned when tab groups are unavailable.
             try {
-              await chrome.tabs.update(tabId, { pinned: true });
+              await browser.tabs.update(tabId, { pinned: true });
             } catch (err) {
               console.warn("Spotlight: unable to maintain focused tab pin", err);
             }
@@ -495,7 +491,7 @@ export function createFocusManager({ onStateChanged } = {}) {
       }
     });
 
-    chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+    browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
       queueOperation(async () => {
         const state = await getState();
         if (!state || state.tabId !== removedTabId) {
@@ -529,9 +525,9 @@ export function createFocusManager({ onStateChanged } = {}) {
     }
 
     const highlightedState = await ensureGroupHighlightForState(state);
-    if (highlightedState?.movedToFront && typeof chrome.tabs.move === "function") {
+    if (highlightedState?.movedToFront && typeof browser.tabs.move === "function") {
       try {
-        await chrome.tabs.move(tab.id, { index: 0 });
+        await browser.tabs.move(tab.id, { index: 0 });
       } catch (err) {
         console.warn("Spotlight: unable to reapply focused tab position", err);
       }

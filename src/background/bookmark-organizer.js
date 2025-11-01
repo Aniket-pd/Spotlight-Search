@@ -1,3 +1,5 @@
+import { browser } from "../shared/browser-shim.js";
+
 const PROMPT_TEMPLATE = `You are the "Smart Bookmark Organizer" for a browser extension. Your job is to turn messy bookmark metadata into a tidy catalog that people can scan, search, and maintain quickly.
 
 Follow these rules carefully:
@@ -165,9 +167,9 @@ function getBookmarkChildren(parentId) {
       return;
     }
     try {
-      chrome.bookmarks.getChildren(parentId, (nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+      browser.bookmarks.getChildren(parentId, (nodes) => {
+        if (browser.runtime.lastError) {
+          reject(browser.runtime.lastError);
           return;
         }
         resolve(Array.isArray(nodes) ? nodes : []);
@@ -185,9 +187,9 @@ function searchBookmarksByTitle(title) {
       return;
     }
     try {
-      chrome.bookmarks.search({ title }, (nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+      browser.bookmarks.search({ title }, (nodes) => {
+        if (browser.runtime.lastError) {
+          reject(browser.runtime.lastError);
           return;
         }
         resolve(Array.isArray(nodes) ? nodes : []);
@@ -202,9 +204,9 @@ function getRecentBookmarks(limit) {
   return new Promise((resolve, reject) => {
     const max = clampLimit(limit);
     try {
-      chrome.bookmarks.getRecent(max, (nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+      browser.bookmarks.getRecent(max, (nodes) => {
+        if (browser.runtime.lastError) {
+          reject(browser.runtime.lastError);
           return;
         }
         resolve(Array.isArray(nodes) ? nodes : []);
@@ -223,9 +225,9 @@ function getBookmarkNodeById(id) {
       return;
     }
     try {
-      chrome.bookmarks.get(normalizedId, (nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+      browser.bookmarks.get(normalizedId, (nodes) => {
+        if (browser.runtime.lastError) {
+          reject(browser.runtime.lastError);
           return;
         }
         resolve(Array.isArray(nodes) && nodes.length ? nodes[0] : null);
@@ -539,7 +541,7 @@ async function ensureFolder(parentId, title, folderLookup, createdFolders, nodeM
     return cachedFallback.id;
   }
 
-  const folder = await chrome.bookmarks.create({ parentId, title: sanitizedTitle });
+  const folder = await browser.bookmarks.create({ parentId, title: sanitizedTitle });
   if (!folder || !folder.id) {
     throw new Error(`Failed to create folder "${sanitizedTitle}"`);
   }
@@ -754,7 +756,7 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
 
     const cleanTitle = typeof resultEntry.cleanTitle === "string" ? resultEntry.cleanTitle.trim() : "";
     if (cleanTitle && cleanTitle !== source.title) {
-      await chrome.bookmarks.update(bookmarkId, { title: cleanTitle });
+      await browser.bookmarks.update(bookmarkId, { title: cleanTitle });
       source.title = cleanTitle;
       renamed += 1;
     }
@@ -806,7 +808,7 @@ async function applyOrganizerChanges(sourceBookmarks, organizerResult, context =
       continue;
     }
 
-    await chrome.bookmarks.move(bookmarkId, { parentId: folderId });
+    await browser.bookmarks.move(bookmarkId, { parentId: folderId });
     source.parentId = folderId;
     moved += 1;
   }

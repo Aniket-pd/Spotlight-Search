@@ -1,3 +1,5 @@
+import { browser } from "../shared/browser-shim.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LOOKBACK_MS = 7 * DAY_MS;
 const MAX_DATASET_ENTRIES = 240;
@@ -1954,7 +1956,7 @@ async function performDelete(items, scheduleRebuild) {
   let deleted = 0;
   for (const url of targets) {
     try {
-      await chrome.history.deleteUrl({ url });
+      await browser.history.deleteUrl({ url });
       deleted += 1;
     } catch (err) {
       console.warn("Spotlight: failed to delete history entry", err);
@@ -1981,7 +1983,7 @@ async function performOpen(items) {
     }
     uniqueUrls.add(item.url);
     try {
-      await chrome.tabs.create({ url: item.url });
+      await browser.tabs.create({ url: item.url });
       opened += 1;
     } catch (err) {
       console.warn("Spotlight: failed to open history entry", err);

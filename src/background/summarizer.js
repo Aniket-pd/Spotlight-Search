@@ -1,3 +1,5 @@
+import { browser } from "../shared/browser-shim.js";
+
 const SUMMARY_CACHE_LIMIT = 40;
 const PAGE_CACHE_LIMIT = 24;
 const SUMMARY_TTL = 15 * 60 * 1000;
@@ -148,7 +150,7 @@ async function queryTabText(tabId) {
     return null;
   }
   try {
-    const response = await chrome.tabs.sendMessage(tabId, { type: "SPOTLIGHT_PAGE_TEXT_REQUEST" });
+    const response = await browser.tabs.sendMessage(tabId, { type: "SPOTLIGHT_PAGE_TEXT_REQUEST" });
     if (!response || !response.success || !response.text) {
       return null;
     }

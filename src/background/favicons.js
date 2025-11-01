@@ -1,3 +1,5 @@
+import { browser } from "../shared/browser-shim.js";
+
 function isHttpUrl(url) {
   if (!url) return false;
   try {
@@ -56,7 +58,7 @@ async function resolveTabFavicon(tabId) {
     return null;
   }
   try {
-    const tab = await chrome.tabs.get(tabId);
+    const tab = await browser.tabs.get(tabId);
     if (tab && tab.favIconUrl && !tab.favIconUrl.startsWith("chrome://")) {
       return tab.favIconUrl;
     }

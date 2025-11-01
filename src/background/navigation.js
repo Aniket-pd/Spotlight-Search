@@ -1,3 +1,5 @@
+import { browser, supportsScripting, supportsWebNavigation } from "../shared/browser-shim.js";
+
 const MAX_HISTORY_ENTRIES = 60;
 
 function isValidUrl(url) {
@@ -32,7 +34,7 @@ function normalizeStack(history) {
 
 async function queryTab(tabId) {
   try {
-    return await chrome.tabs.get(tabId);
+    return await browser.tabs.get(tabId);
   } catch (err) {
     return null;
   }
@@ -153,7 +155,7 @@ export function createNavigationService() {
 
   async function bootstrap() {
     try {
-      const tabs = await chrome.tabs.query({});
+      const tabs = await browser.tabs.query({});
       const now = Date.now();
       for (const tab of tabs) {
         if (typeof tab.id !== "number" || tab.id < 0) {
@@ -256,17 +258,22 @@ export function createNavigationService() {
     if (!Number.isFinite(step) || step === 0) {
       throw new Error("Invalid navigation delta");
     }
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (offset) => {
-        try {
-          window.history.go(offset);
-        } catch (err) {
-          console.warn("Spotlight: navigation failed", err);
-        }
-      },
-      args: [step],
-    });
+    if (supportsScripting()) {
+      await browser.scripting.executeScript({
+        target: { tabId },
+        func: (offset) => {
+          try {
+            window.history.go(offset);
+          } catch (err) {
+            console.warn("Spotlight: navigation failed", err);
+          }
+        },
+        args: [step],
+      });
+      return;
+    }
+
+    await browser.tabs.sendMessage(tabId, { type: "SPOTLIGHT_HISTORY_GO", delta: step });
   }
 
   return {
@@ -287,23 +294,58 @@ export function registerNavigationListeners(service) {
       console.warn("Spotlight: failed to record navigation", err);
     });
   };
-  chrome.webNavigation.onCommitted.addListener(handleNavigation);
-  chrome.webNavigation.onHistoryStateUpdated.addListener(handleNavigation);
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const useWebNavigation = supportsWebNavigation();
+
+  if (useWebNavigation) {
+    browser.webNavigation.onCommitted.addListener(handleNavigation);
+    browser.webNavigation.onHistoryStateUpdated.addListener(handleNavigation);
+  } else {
+    browser.tabs?.onActivated?.addListener(async ({ tabId }) => {
+      try {
+        const tab = await browser.tabs.get(tabId);
+        if (tab && isValidUrl(tab.url)) {
+          await service.handleNavigation({
+            tabId,
+            frameId: 0,
+            url: tab.url,
+            timeStamp: Date.now(),
+            transitionQualifiers: [],
+          });
+        }
+      } catch (err) {
+        console.warn("Spotlight: failed to track activated tab navigation", err);
+      }
+    });
+  }
+
+  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     try {
       service.handleTabUpdated(tabId, changeInfo, tab);
     } catch (err) {
       console.warn("Spotlight: failed to process tab update", err);
     }
+    if (!useWebNavigation && changeInfo?.status === "complete" && tab && isValidUrl(tab.url)) {
+      service
+        .handleNavigation({
+          tabId,
+          frameId: 0,
+          url: tab.url,
+          timeStamp: Date.now(),
+          transitionQualifiers: [],
+        })
+        .catch((err) => {
+          console.warn("Spotlight: failed to record tab update navigation", err);
+        });
+    }
   });
-  chrome.tabs.onRemoved.addListener((tabId) => {
+  browser.tabs.onRemoved.addListener((tabId) => {
     try {
       service.handleTabRemoved(tabId);
     } catch (err) {
       console.warn("Spotlight: failed to process tab removal", err);
     }
   });
-  chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+  browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     try {
       service.handleTabReplaced(addedTabId, removedTabId);
     } catch (err) {

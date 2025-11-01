@@ -5,6 +5,65 @@ const SHADOW_HOST_ID = "spotlight-root";
 const LAZY_INITIAL_BATCH = 30;
 const LAZY_BATCH_SIZE = 24;
 const LAZY_LOAD_THRESHOLD = 160;
+
+const rawBrowserApi =
+  (typeof globalThis !== "undefined" &&
+    (globalThis.SpotlightBrowser || globalThis.browser || globalThis.chrome)) ||
+  {};
+const isChromeApi =
+  typeof globalThis !== "undefined" &&
+  typeof globalThis.chrome !== "undefined" &&
+  rawBrowserApi === globalThis.chrome;
+const browserProxyCache = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+function wrapNamespace(target) {
+  if (!target || typeof target !== "object") {
+    return target || {};
+  }
+  if (browserProxyCache && browserProxyCache.has(target)) {
+    return browserProxyCache.get(target);
+  }
+  const proxy = new Proxy(target, {
+    get(obj, prop) {
+      const value = Reflect.get(obj, prop);
+      if (typeof value === "function") {
+        return (...args) => {
+          const hasCallback = args.length && typeof args[args.length - 1] === "function";
+          if (isChromeApi) {
+            if (hasCallback) {
+              return value.apply(obj, args);
+            }
+            return new Promise((resolve, reject) => {
+              try {
+                value.call(obj, ...args, (result) => {
+                  const lastError = globalThis?.chrome?.runtime?.lastError;
+                  if (lastError) {
+                    reject(lastError);
+                    return;
+                  }
+                  resolve(result);
+                });
+              } catch (err) {
+                reject(err);
+              }
+            });
+          }
+          return value.apply(obj, args);
+        };
+      }
+      if (value && typeof value === "object") {
+        return wrapNamespace(value);
+      }
+      return value;
+    },
+  });
+  if (browserProxyCache) {
+    browserProxyCache.set(target, proxy);
+  }
+  return proxy;
+}
+
+const browser = wrapNamespace(rawBrowserApi);
 let shadowHostEl = null;
 let shadowRootEl = null;
 let shadowContentEl = null;
@@ -67,6 +126,8 @@ let historyAssistantRequestCounter = 0;
 let historyAssistantAiModeActive = false;
 let filterShortcutsEl = null;
 let historyAssistantLoadingMessage = "";
+const TAB_SUMMARY_FEATURE_ENABLED = false;
+const HISTORY_ASSISTANT_FEATURE_ENABLED = false;
 const TAB_SUMMARY_CACHE_LIMIT = 40;
 const TAB_SUMMARY_PANEL_CLASS = "spotlight-ai-panel";
 const TAB_SUMMARY_LIST_CLASS = "spotlight-ai-panel-list";
@@ -153,7 +214,7 @@ let faviconQueue = [];
 let faviconProcessing = false;
 const DOWNLOAD_ICON_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNiIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSI2IiByeD0iMi41IiBmaWxsPSIjMEVBNUU5Ii8+PHBhdGggZD0iTTE2IDV2MTMuMTdsNC41OS00LjU4TDIyIDE1bC02IDYtNi02IDEuNDEtMS40MUwxNCAxOC4xN1Y1aDJ6IiBmaWxsPSIjRTBGMkZFIi8+PC9zdmc+";
-const DEFAULT_ICON_URL = chrome.runtime.getURL("icons/default.svg");
+const DEFAULT_ICON_URL = browser.runtime.getURL("icons/default.svg");
 const PLACEHOLDER_COLORS = [
   "#A5B4FC",
   "#7DD3FC",
@@ -213,13 +274,6 @@ const SLASH_COMMAND_DEFINITIONS = [
     value: "forward:",
     keywords: ["forward", "ahead", "history", "navigate"],
   },
-  {
-    id: "slash-summarize",
-    label: "Summaries",
-    hint: "Filter tabs and preview AI key points",
-    value: "summarize:",
-    keywords: ["summary", "summaries", "digest", "ai", "tab digest"],
-  },
 ];
 
 const FILTER_SHORTCUT_DEFINITIONS = [
@@ -264,7 +318,7 @@ function ensureShadowRoot() {
 
   shadowStyleLinkEl = document.createElement("link");
   shadowStyleLinkEl.rel = "stylesheet";
-  shadowStyleLinkEl.href = chrome.runtime.getURL("src/content/styles.css");
+  shadowStyleLinkEl.href = browser.runtime.getURL("src/content/styles.css");
 
   shadowStylesPromise = new Promise((resolve) => {
     const markReady = () => {
@@ -466,28 +520,30 @@ function createOverlay() {
   engineMenuEl.setAttribute("aria-hidden", "true");
   inputContainerEl.appendChild(engineMenuEl);
 
-  historyAssistantTriggerEl = document.createElement("button");
-  historyAssistantTriggerEl.type = "button";
-  historyAssistantTriggerEl.className = "spotlight-history-assistant-trigger";
-  historyAssistantTriggerEl.setAttribute("aria-hidden", "true");
-  historyAssistantTriggerEl.setAttribute("aria-label", "Open Smart history assistant");
-  historyAssistantTriggerEl.innerHTML = `
-    <span class="spotlight-history-assistant-trigger-icon" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path
-          d="M8 1.33334L9.74667 5.84668L14.6667 6.25334L10.92 9.56668L12.08 14.5333L8 11.9333L3.92 14.5333L5.08 9.56668L1.33334 6.25334L6.25334 5.84668L8 1.33334Z"
-          fill="currentColor"
-        />
-      </svg>
-    </span>
-    <span class="spotlight-history-assistant-trigger-label">AI</span>
-  `;
-  historyAssistantTriggerEl.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    activateHistoryAssistantAiMode();
-  });
-  inputRowEl.appendChild(historyAssistantTriggerEl);
+  if (HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    historyAssistantTriggerEl = document.createElement("button");
+    historyAssistantTriggerEl.type = "button";
+    historyAssistantTriggerEl.className = "spotlight-history-assistant-trigger";
+    historyAssistantTriggerEl.setAttribute("aria-hidden", "true");
+    historyAssistantTriggerEl.setAttribute("aria-label", "Open Smart history assistant");
+    historyAssistantTriggerEl.innerHTML = `
+      <span class="spotlight-history-assistant-trigger-icon" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M8 1.33334L9.74667 5.84668L14.6667 6.25334L10.92 9.56668L12.08 14.5333L8 11.9333L3.92 14.5333L5.08 9.56668L1.33334 6.25334L6.25334 5.84668L8 1.33334Z"
+            fill="currentColor"
+          />
+        </svg>
+      </span>
+      <span class="spotlight-history-assistant-trigger-label">AI</span>
+    `;
+    historyAssistantTriggerEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      activateHistoryAssistantAiMode();
+    });
+    inputRowEl.appendChild(historyAssistantTriggerEl);
+  }
 
   const inputDividerEl = document.createElement("div");
   inputDividerEl.className = "spotlight-input-divider";
@@ -508,8 +564,10 @@ function createOverlay() {
   subfilterContainerEl.appendChild(subfilterScrollerEl);
   inputWrapper.appendChild(subfilterContainerEl);
   ensureBookmarkOrganizerControl();
-  ensureHistoryAssistantElements(inputWrapper);
-  updateHistoryAssistantVisibility();
+  if (HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    ensureHistoryAssistantElements(inputWrapper);
+    updateHistoryAssistantVisibility();
+  }
 
   statusEl = document.createElement("div");
   statusEl.className = "spotlight-status";
@@ -1198,6 +1256,9 @@ function updateFilterShortcutsActiveState(query) {
 }
 
 function updateHistoryAssistantTriggerState() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!historyAssistantTriggerEl) {
     return;
   }
@@ -1209,6 +1270,9 @@ function updateHistoryAssistantTriggerState() {
 }
 
 function updateHistoryAssistantLayout() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (historyAssistantAiModeActive && activeFilter !== "history") {
     historyAssistantAiModeActive = false;
   }
@@ -1223,6 +1287,9 @@ function updateHistoryAssistantLayout() {
 }
 
 function activateHistoryAssistantAiMode() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (activeFilter !== "history") {
     return;
   }
@@ -1244,6 +1311,9 @@ function activateHistoryAssistantAiMode() {
 }
 
 function deactivateHistoryAssistantAiMode() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!historyAssistantAiModeActive) {
     if (inputEl) {
       inputEl.focus({ preventScroll: true });
@@ -1461,6 +1531,9 @@ function clearHistoryAssistantLoadingMessage(options = {}) {
 }
 
 function ensureHistoryAssistantElements(parent) {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return null;
+  }
   if (!parent) {
     return null;
   }
@@ -1542,6 +1615,9 @@ function ensureHistoryAssistantElements(parent) {
 }
 
 function updateHistoryAssistantVisibility() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!historyAssistantContainerEl) {
     return;
   }
@@ -1603,6 +1679,9 @@ function formatHistoryAssistantRange(range) {
 }
 
 function updateHistoryAssistantUI() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!historyAssistantContainerEl) {
     return;
   }
@@ -1736,6 +1815,9 @@ function handleHistoryAssistantResponse(response) {
 }
 
 function runHistoryAssistantQuery(prompt) {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!prompt) {
     return;
   }
@@ -1750,10 +1832,10 @@ function runHistoryAssistantQuery(prompt) {
   };
   setHistoryAssistantLoadingMessage(HISTORY_ASSISTANT_PROGRESS_DEFAULT_MESSAGE, { sync: false });
   updateHistoryAssistantUI();
-  chrome.runtime.sendMessage(
+  browser.runtime.sendMessage(
     { type: "SPOTLIGHT_HISTORY_ASSISTANT", prompt, requestId },
     (response) => {
-      if (chrome.runtime.lastError) {
+      if (browser.runtime.lastError) {
         clearHistoryAssistantLoadingMessage();
         historyAssistantState = {
           ...historyAssistantState,
@@ -1762,7 +1844,7 @@ function runHistoryAssistantQuery(prompt) {
           resultsActive: false,
         };
         updateHistoryAssistantUI();
-        console.warn("Spotlight history assistant error", chrome.runtime.lastError);
+        console.warn("Spotlight history assistant error", browser.runtime.lastError);
         return;
       }
       handleHistoryAssistantResponse(response);
@@ -1771,6 +1853,9 @@ function runHistoryAssistantQuery(prompt) {
 }
 
 function handleHistoryAssistantSubmit(event) {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   event.preventDefault();
   if (!historyAssistantInputEl) {
     return;
@@ -1784,6 +1869,9 @@ function handleHistoryAssistantSubmit(event) {
 }
 
 function handleHistoryAssistantAction() {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!historyAssistantState || historyAssistantState.actionPending) {
     return;
   }
@@ -1800,14 +1888,14 @@ function handleHistoryAssistantAction() {
     actionPending: true,
   };
   updateHistoryAssistantUI();
-  chrome.runtime.sendMessage(
+  browser.runtime.sendMessage(
     { type: "SPOTLIGHT_HISTORY_ASSISTANT_ACTION", action, itemIds },
     (response) => {
       historyAssistantState = {
         ...historyAssistantState,
         actionPending: false,
       };
-      if (chrome.runtime.lastError) {
+      if (browser.runtime.lastError) {
         historyAssistantState = {
           ...historyAssistantState,
           status: "error",
@@ -1815,7 +1903,7 @@ function handleHistoryAssistantAction() {
           resultsActive: action === "delete" ? false : historyAssistantState.resultsActive,
         };
         updateHistoryAssistantUI();
-        console.warn("Spotlight history assistant action error", chrome.runtime.lastError);
+        console.warn("Spotlight history assistant action error", browser.runtime.lastError);
         return;
       }
       if (!response || !response.success) {
@@ -1855,13 +1943,13 @@ function handleBookmarkOrganizeRequest() {
   refreshBookmarkOrganizerControlState();
   setStatus("Organizing bookmarks…", { force: true, sticky: true });
 
-  chrome.runtime.sendMessage(
+  browser.runtime.sendMessage(
     { type: "SPOTLIGHT_BOOKMARK_ORGANIZE" },
     (response) => {
       bookmarkOrganizerRequestPending = false;
 
-      if (chrome.runtime.lastError) {
-        console.error("Spotlight bookmark organizer request failed", chrome.runtime.lastError);
+      if (browser.runtime.lastError) {
+        console.error("Spotlight bookmark organizer request failed", browser.runtime.lastError);
         control.showError("Retry");
         refreshBookmarkOrganizerControlState();
         setStatus("Bookmark organizer unavailable", { force: true });
@@ -2215,11 +2303,11 @@ function requestResults(query) {
   if (engineId) {
     message.webSearch = { engineId };
   }
-  chrome.runtime.sendMessage(
+  browser.runtime.sendMessage(
     message,
     (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Spotlight query error", chrome.runtime.lastError);
+      if (browser.runtime.lastError) {
+        console.error("Spotlight query error", browser.runtime.lastError);
         if (inputEl.value.trim() !== "> reindex") {
           setGhostText("");
           setStatus("", { force: true });
@@ -2535,17 +2623,17 @@ function openResult(result) {
     if (result.args) {
       payload.args = result.args;
     }
-    chrome.runtime.sendMessage(payload);
+    browser.runtime.sendMessage(payload);
     closeOverlay();
     return;
   }
   if (result.type === "navigation") {
     if (typeof result.navigationDelta === "number" && typeof result.tabId === "number") {
-      chrome.runtime.sendMessage(
+      browser.runtime.sendMessage(
         { type: "SPOTLIGHT_NAVIGATE", tabId: result.tabId, delta: result.navigationDelta },
         () => {
-          if (chrome.runtime.lastError) {
-            console.warn("Spotlight navigation error", chrome.runtime.lastError);
+          if (browser.runtime.lastError) {
+            console.warn("Spotlight navigation error", browser.runtime.lastError);
           }
         }
       );
@@ -2569,19 +2657,22 @@ function openResult(result) {
     if (result.url) {
       payload.url = result.url;
     }
-    chrome.runtime.sendMessage(payload, () => {
-      if (chrome.runtime.lastError) {
-        console.warn("Spotlight web search error", chrome.runtime.lastError);
+    browser.runtime.sendMessage(payload, () => {
+      if (browser.runtime.lastError) {
+        console.warn("Spotlight web search error", browser.runtime.lastError);
       }
     });
     closeOverlay();
     return;
   }
-  chrome.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
+  browser.runtime.sendMessage({ type: "SPOTLIGHT_OPEN", itemId: result.id });
   closeOverlay();
 }
 
 function shouldSummarizeResult(result) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return false;
+  }
   if (!result || typeof result !== "object") {
     return false;
   }
@@ -2616,6 +2707,9 @@ function shouldSummarizeResult(result) {
 }
 
 function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (tabSummaryState.size <= limit) {
     return;
   }
@@ -2640,6 +2734,9 @@ function pruneSummaryState(limit = TAB_SUMMARY_CACHE_LIMIT) {
 }
 
 function stopSummaryProgress(url) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!url) {
     return;
   }
@@ -2651,6 +2748,9 @@ function stopSummaryProgress(url) {
 }
 
 function scheduleSummaryProgressAdvance(url, state) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!url || !state) {
     return;
   }
@@ -2678,6 +2778,9 @@ function scheduleSummaryProgressAdvance(url, state) {
 }
 
 function beginSummaryProgress(url) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!url) {
     return;
   }
@@ -2689,6 +2792,9 @@ function beginSummaryProgress(url) {
 }
 
 function ensureSummaryProgress(url) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return null;
+  }
   if (!url) {
     return null;
   }
@@ -2705,6 +2811,9 @@ function ensureSummaryProgress(url) {
 }
 
 function getSummaryProgressMessage(url) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return SUMMARY_PROGRESS_DEFAULT_MESSAGE;
+  }
   if (!url) {
     return SUMMARY_PROGRESS_DEFAULT_MESSAGE;
   }
@@ -2756,6 +2865,9 @@ function updateSummaryButtonElement(button, entry) {
 }
 
 function renderSummaryPanelForElement(item, url, entry) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!item || !url) {
     return;
   }
@@ -2973,6 +3085,9 @@ function renderSummaryPanelForElement(item, url, entry) {
 }
 
 function updateSummaryUIForUrl(url) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!resultsEl || !url) {
     return;
   }
@@ -2991,6 +3106,9 @@ function updateSummaryUIForUrl(url) {
 }
 
 function handleSummaryProgress(message) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!message || typeof message.url !== "string") {
     return;
   }
@@ -3036,6 +3154,9 @@ function handleSummaryProgress(message) {
 }
 
 function handleHistoryAssistantProgress(message) {
+  if (!HISTORY_ASSISTANT_FEATURE_ENABLED) {
+    return;
+  }
   if (!message || typeof message !== "object") {
     return;
   }
@@ -3346,6 +3467,9 @@ function updateSummaryStreamText(element, nextText, options = {}) {
 }
 
 function requestSummaryForResult(result, options = {}) {
+  if (!TAB_SUMMARY_FEATURE_ENABLED) {
+    return;
+  }
   if (!shouldSummarizeResult(result)) {
     return;
   }
@@ -3392,7 +3516,7 @@ function requestSummaryForResult(result, options = {}) {
     payload.tabId = result.tabId;
   }
   try {
-    chrome.runtime.sendMessage(payload, (response) => {
+    browser.runtime.sendMessage(payload, (response) => {
       const current = tabSummaryState.get(url);
       if (!current || current.requestId !== requestId) {
         if (response && response.success) {
@@ -3412,10 +3536,10 @@ function requestSummaryForResult(result, options = {}) {
         }
         return;
       }
-      if (chrome.runtime.lastError || !response || !response.success) {
+      if (browser.runtime.lastError || !response || !response.success) {
         const errorMessage =
           (response && response.error) ||
-          (chrome.runtime.lastError && chrome.runtime.lastError.message) ||
+          (browser.runtime.lastError && browser.runtime.lastError.message) ||
           "Summary unavailable";
         current.status = "error";
         current.error = errorMessage;
@@ -3805,8 +3929,8 @@ function getDownloadStateClassName(state) {
 
 function triggerReindex() {
   setStatus("Rebuilding index...", { sticky: true, force: true });
-  chrome.runtime.sendMessage({ type: "SPOTLIGHT_REINDEX" }, (response) => {
-    if (chrome.runtime.lastError) {
+  browser.runtime.sendMessage({ type: "SPOTLIGHT_REINDEX" }, (response) => {
+    if (browser.runtime.lastError) {
       setStatus("Unable to rebuild index", { force: true });
       return;
     }
@@ -4249,7 +4373,7 @@ function processFaviconQueue() {
 
     pendingIconOrigins.add(task.origin);
 
-    chrome.runtime.sendMessage(
+    browser.runtime.sendMessage(
       {
         type: "SPOTLIGHT_FAVICON",
         itemId: task.itemId,
@@ -4261,7 +4385,7 @@ function processFaviconQueue() {
       (response) => {
         pendingIconOrigins.delete(task.origin);
 
-        if (chrome.runtime.lastError) {
+        if (browser.runtime.lastError) {
           scheduleIdleWork(runNext);
           return;
         }
@@ -4437,12 +4561,12 @@ function requestFocusStatus() {
   if (window.top && window.top !== window) {
     return;
   }
-  if (!chrome?.runtime?.sendMessage) {
+  if (!browser?.runtime?.sendMessage) {
     return;
   }
   try {
-    chrome.runtime.sendMessage({ type: "SPOTLIGHT_FOCUS_STATUS_REQUEST" }, (response) => {
-      if (chrome.runtime.lastError) {
+    browser.runtime.sendMessage({ type: "SPOTLIGHT_FOCUS_STATUS_REQUEST" }, (response) => {
+      if (browser.runtime.lastError) {
         return;
       }
       if (response && response.focused) {
@@ -4456,7 +4580,7 @@ function requestFocusStatus() {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
     return undefined;
   }
@@ -4469,11 +4593,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return undefined;
   }
   if (message.type === "SPOTLIGHT_SUMMARY_PROGRESS") {
-    handleSummaryProgress(message);
+    if (TAB_SUMMARY_FEATURE_ENABLED) {
+      handleSummaryProgress(message);
+    }
     return undefined;
   }
   if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS") {
-    handleHistoryAssistantProgress(message);
+    if (HISTORY_ASSISTANT_FEATURE_ENABLED) {
+      handleHistoryAssistantProgress(message);
+    }
     return undefined;
   }
   if (message.type === "SPOTLIGHT_FOCUS_APPLY") {
@@ -4482,6 +4610,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "SPOTLIGHT_FOCUS_CLEAR") {
     clearFocusIndicator();
+    return undefined;
+  }
+  if (message.type === "SPOTLIGHT_HISTORY_GO") {
+    const offset = Number(message.delta);
+    if (Number.isFinite(offset) && offset !== 0) {
+      try {
+        window.history.go(offset);
+      } catch (err) {
+        console.warn("Spotlight: page navigation failed", err);
+      }
+    }
     return undefined;
   }
   if (message.type === "SPOTLIGHT_PAGE_TEXT_REQUEST") {

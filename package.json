@@ -1,0 +1,9 @@
+{
+  "name": "spotlight-search-extension",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:chrome": "node scripts/build.js chrome",
+    "build:safari": "node scripts/build.js safari"
+  }
+}

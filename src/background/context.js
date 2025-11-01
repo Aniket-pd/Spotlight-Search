@@ -1,3 +1,5 @@
+import { browser, supportsDownloads } from "../shared/browser-shim.js";
+
 const DEFAULT_REBUILD_DELAY = 600;
 
 export function createBackgroundContext({ buildIndex }) {
@@ -44,9 +46,9 @@ export function createBackgroundContext({ buildIndex }) {
 
   async function sendToggleMessage() {
     try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (activeTab && activeTab.id !== undefined) {
-        await chrome.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
+        await browser.tabs.sendMessage(activeTab.id, { type: "SPOTLIGHT_TOGGLE" });
       }
     } catch (err) {
       console.warn("Spotlight: unable to toggle overlay", err);
@@ -62,31 +64,31 @@ export function createBackgroundContext({ buildIndex }) {
 
     if (item.type === "tab" && item.tabId !== undefined) {
       try {
-        await chrome.tabs.update(item.tabId, { active: true });
+        await browser.tabs.update(item.tabId, { active: true });
         if (item.windowId !== undefined) {
-          await chrome.windows.update(item.windowId, { focused: true });
+          await browser.windows.update(item.windowId, { focused: true });
         }
       } catch (err) {
         console.warn("Spotlight: failed to focus tab, opening new tab instead", err);
-        await chrome.tabs.create({ url: item.url });
+        await browser.tabs.create({ url: item.url });
       }
       return;
     }
 
     if (item.type === "download") {
       const downloadId = item.downloadId;
-      if (typeof downloadId === "number") {
+      if (supportsDownloads() && typeof downloadId === "number") {
         try {
           if (item.state === "complete") {
-            await chrome.downloads.open(downloadId);
+            await browser.downloads.open(downloadId);
           } else {
-            await chrome.downloads.show(downloadId);
+            await browser.downloads.show(downloadId);
           }
           return;
         } catch (err) {
           console.warn("Spotlight: failed to open download directly", err);
           try {
-            await chrome.downloads.open(downloadId);
+            await browser.downloads.open(downloadId);
             return;
           } catch (openErr) {
             console.warn("Spotlight: download open fallback failed", openErr);
@@ -95,12 +97,12 @@ export function createBackgroundContext({ buildIndex }) {
       }
       const fallbackUrl = item.fileUrl || item.url;
       if (fallbackUrl) {
-        await chrome.tabs.create({ url: fallbackUrl });
+        await browser.tabs.create({ url: fallbackUrl });
       }
       return;
     }
 
-    await chrome.tabs.create({ url: item.url });
+    await browser.tabs.create({ url: item.url });
   }
 
   function getItemById(itemId) {

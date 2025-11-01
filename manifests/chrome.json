@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Spotlight for Chrome",
+  "description": "Spotlight-style universal search overlay for tabs, bookmarks, and history.",
+  "version": "0.1.0",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "bookmarks",
+    "history",
+    "storage",
+    "scripting",
+    "webNavigation",
+    "downloads",
+    "topSites"
+  ],
+  "host_permissions": ["file:///*"],
+  "background": {
+    "service_worker": "src/background/index.js",
+    "type": "module"
+  },
+  "commands": {
+    "open-launcher": {
+      "suggested_key": {
+        "default": "Ctrl+K",
+        "mac": "Command+K"
+      },
+      "description": "Open Spotlight overlay"
+    },
+    "open-launcher-alt": {
+      "suggested_key": {
+        "default": "Alt+Space"
+      },
+      "description": "Open Spotlight overlay (alternate)"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "src/shared/web-search.js",
+        "src/content/bookmark-organizer-ui.js",
+        "src/content/index.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/styles.css", "icons/*.svg"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_title": "Spotlight for Chrome"
+  }
+}

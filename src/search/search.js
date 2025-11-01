@@ -99,7 +99,7 @@ const COMMAND_ICON_DATA_URL =
 const AUDIO_KEYWORDS = ["audio", "sound", "music", "noisy", "noise"];
 
 const FILTER_ALIASES = {
-  tab: ["tab:", "tabs:", "t:", "summarize:"],
+  tab: ["tab:", "tabs:", "t:"],
   bookmark: ["bookmark:", "bookmarks:", "bm:", "b:"],
   history: ["history:", "hist:", "h:"],
   download: ["download:", "downloads:", "dl:", "d:"],

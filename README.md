@@ -1,6 +1,6 @@
-# Spotlight for Chrome
+# Spotlight Search
 
-A Spotlight-style universal search and launcher for Chrome that runs entirely locally. Invoke the overlay with `Cmd+K` (macOS) or `Ctrl+K` (Windows/Linux) to instantly search across open tabs, bookmarks, and recent history.
+A Spotlight-style universal search and launcher for Chrome and Safari that runs entirely locally. Invoke the overlay with `Cmd+K` (macOS) or `Ctrl+K` (Windows/Linux) to instantly search across open tabs, bookmarks, and recent history.
 
 ## Features
 - Fast in-memory index covering tabs, bookmarks, and up to 500 history entries.
@@ -40,6 +40,20 @@ Spotlight keeps web search only one keystroke away when local data comes up empt
 
 The shared web search utilities live in `src/shared/web-search.js` if you want to add or customize engines.
 
+## Building for Chrome and Safari
+
+This repository ships platform-specific manifests for Chrome (Manifest V3 + service worker background) and Safari (Manifest V2-style persistent background page). Use the provided build scripts to assemble distributable folders:
+
+```bash
+# Build the Chrome bundle in dist/chrome
+npm run build:chrome
+
+# Build the Safari bundle in dist/safari
+npm run build:safari
+```
+
+Each command copies the shared source tree and drops in the correct manifest. Load the resulting `dist/<target>` directory into the respective browser.
+
 ## Installing the Extension in Chrome
 You can run Spotlight directly from source or side-load a packaged zip. Both approaches require Chrome 114 or later.
 
@@ -51,11 +65,21 @@ You can run Spotlight directly from source or side-load a packaged zip. Both app
 5. Spotlight will appear in your extensions list immediately. Use `Cmd+K` (macOS) or `Ctrl+K` (Windows/Linux) on any page to open the launcher.
 
 ### Option 2: Install from a zipped build (handy for testers)
-1. Run `npm install` (if you haven't already) and `npm run build` to produce the `dist` directory.
+1. Run `npm run build:chrome` to produce the Chrome bundle in `dist/chrome`.
 2. Compress the contents of the `dist` folder into a `.zip` archive (ensure the archive root contains `manifest.json`).
 3. Visit `chrome://extensions/`, enable **Developer mode**, and click **Load unpacked**.
 4. Select the extracted archive folder (or drag the folder onto the Extensions page) to install Spotlight.
 5. Trigger Spotlight with `Cmd+K`/`Ctrl+K` to confirm the installation worked.
+
+## Installing the Extension in Safari
+
+Safari loads the Manifest V2 bundle created by `npm run build:safari`.
+
+1. Run `npm run build:safari` to produce the Safari bundle in `dist/safari`.
+2. Open **Safari Preferences → Extensions** and enable *Develop* if it is not already turned on.
+3. In **Safari Develop → Allow Unsigned Extensions**, select the generated folder.
+4. Safari will prompt to trust the unsigned extension; approve it, then enable **Spotlight Search** in the Extensions preferences.
+5. Use `Cmd+K` to summon the overlay and confirm functionality.
 
 ## Development Notes
 - Background indexing runs on startup and whenever tabs/bookmarks/history change.
@@ -63,5 +87,7 @@ You can run Spotlight directly from source or side-load a packaged zip. Both app
 - Indexing and search logic reside in `src/search/indexer.js` and `src/search/search.js` respectively.
 - Background orchestration is handled by the modules in `src/background/` with `src/background/index.js` wiring listeners together.
 - Web search configuration, engine metadata, and fallback helpers are centralized in `src/shared/web-search.js`.
+- `src/shared/browser-shim.js` exposes a `browser` proxy that adapts Chrome's callback-centric APIs and Safari's promise-based APIs into a unified async interface. Capability helpers (`supportsTabGroups`, `supportsDownloads`, etc.) gate platform-specific features, falling back to safe behaviors when an API is unavailable.
+- Safari omits the downloads and tab groups APIs, so Spotlight falls back to opening download URLs in a new tab and keeps focus mode visuals by pinning tabs instead of re-grouping them.
 
 Enjoy lightning-fast, private browsing search!

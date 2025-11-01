@@ -1,3 +1,5 @@
+import { browser, supportsDownloads, supportsTopSites } from "../shared/browser-shim.js";
+
 const TAB_TITLE_WEIGHT = 3;
 const URL_WEIGHT = 2;
 const HISTORY_LIMIT = 1500;
@@ -67,25 +69,16 @@ function extractOrigin(url) {
 }
 
 function requestTopSites() {
-  if (!chrome?.topSites || typeof chrome.topSites.get !== "function") {
+  if (!supportsTopSites()) {
     return Promise.resolve([]);
   }
-  return new Promise((resolve, reject) => {
-    try {
-      chrome.topSites.get((entries) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-          return;
-        }
-        resolve(Array.isArray(entries) ? entries : []);
-      });
-    } catch (err) {
-      reject(err);
-    }
-  }).catch((err) => {
-    console.warn("Spotlight: failed to query top sites", err);
-    return [];
-  });
+  return browser.topSites
+    .get()
+    .then((entries) => (Array.isArray(entries) ? entries : []))
+    .catch((err) => {
+      console.warn("Spotlight: failed to query top sites", err);
+      return [];
+    });
 }
 
 async function indexTopSites(indexMap, termBuckets, items) {
@@ -161,7 +154,7 @@ function getDownloadDisplayPath(filename = "") {
 }
 
 async function indexTabs(indexMap, termBuckets, items) {
-  const tabs = await chrome.tabs.query({});
+  const tabs = await browser.tabs.query({});
   for (const tab of tabs) {
     if (!tab.url || tab.url.startsWith("chrome://")) continue;
     const itemId = items.length;
@@ -220,7 +213,7 @@ function collectBookmarkNodes(nodes, list = [], path = []) {
 }
 
 async function indexBookmarks(indexMap, termBuckets, items) {
-  const tree = await chrome.bookmarks.getTree();
+  const tree = await browser.bookmarks.getTree();
   const bookmarks = collectBookmarkNodes(tree, []);
   for (const bookmark of bookmarks) {
     if (!bookmark.url) continue;
@@ -249,7 +242,7 @@ async function indexBookmarks(indexMap, termBuckets, items) {
 }
 
 async function indexHistory(indexMap, termBuckets, items) {
-  const historyItems = await chrome.history.search({
+  const historyItems = await browser.history.search({
     text: "",
     maxResults: HISTORY_LIMIT,
     startTime: 0,
@@ -281,9 +274,12 @@ async function indexHistory(indexMap, termBuckets, items) {
 }
 
 async function indexDownloads(indexMap, termBuckets, items) {
+  if (!supportsDownloads()) {
+    return;
+  }
   let downloads = [];
   try {
-    downloads = await chrome.downloads.search({ orderBy: ["-startTime"], limit: DOWNLOAD_SEARCH_LIMIT });
+    downloads = await browser.downloads.search({ orderBy: ["-startTime"], limit: DOWNLOAD_SEARCH_LIMIT });
   } catch (err) {
     console.warn("Spotlight: failed to query downloads", err);
     return;

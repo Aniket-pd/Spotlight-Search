@@ -1,3 +1,4 @@
+import { browser } from "../shared/browser-shim.js";
 import "../shared/web-search.js";
 
 export function registerMessageHandlers({
@@ -6,12 +7,10 @@ export function registerMessageHandlers({
   executeCommand,
   resolveFaviconForTarget,
   navigation,
-  summaries,
   organizer,
   focus,
-  historyAssistant,
 }) {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !message.type) {
       return undefined;
     }
@@ -38,93 +37,6 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: query failed", err);
           sendResponse({ results: [], error: true, requestId: message.requestId });
-        });
-      return true;
-    }
-
-    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT") {
-      if (!historyAssistant || typeof historyAssistant.analyzeHistoryRequest !== "function") {
-        sendResponse({
-          success: false,
-          error: "History assistant unavailable",
-          requestId: message.requestId,
-        });
-        return true;
-      }
-      const prompt = typeof message.prompt === "string" ? message.prompt.trim() : "";
-      if (!prompt) {
-        sendResponse({
-          success: false,
-          error: "Enter a request for the history assistant",
-          requestId: message.requestId,
-        });
-        return true;
-      }
-      const senderTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
-      const progressReporter =
-        senderTabId !== null && chrome?.tabs?.sendMessage
-          ? (payload) => {
-              if (!payload || typeof payload !== "object") {
-                return;
-              }
-              try {
-                chrome.tabs.sendMessage(senderTabId, {
-                  type: "SPOTLIGHT_HISTORY_ASSISTANT_PROGRESS",
-                  requestId: message.requestId,
-                  ...payload,
-                });
-              } catch (err) {
-                console.warn("Spotlight: history assistant progress dispatch failed", err);
-              }
-            }
-          : null;
-      if (progressReporter) {
-        progressReporter({ stage: "started", message: "Understanding your request…" });
-      }
-      context
-        .ensureIndex()
-        .then((data) =>
-          historyAssistant.analyzeHistoryRequest({
-            prompt,
-            items: data?.items || [],
-            now: Date.now(),
-            progress: progressReporter,
-          })
-        )
-        .then((result) => {
-          if (progressReporter) {
-            progressReporter({ stage: "complete", complete: true });
-          }
-          sendResponse({ success: true, ...result, requestId: message.requestId });
-        })
-        .catch((err) => {
-          const errorMessage = err?.message || "History assistant unavailable";
-          console.warn("Spotlight: history assistant request failed", err);
-          if (progressReporter) {
-            progressReporter({ stage: "error", message: errorMessage });
-          }
-          sendResponse({ success: false, error: errorMessage, requestId: message.requestId });
-        });
-      return true;
-    }
-
-    if (message.type === "SPOTLIGHT_HISTORY_ASSISTANT_ACTION") {
-      if (!historyAssistant || typeof historyAssistant.executeAction !== "function") {
-        sendResponse({ success: false, error: "History assistant unavailable" });
-        return true;
-      }
-      context
-        .ensureIndex()
-        .then((data) =>
-          historyAssistant.executeAction(message.action, message.itemIds, data?.items || [])
-        )
-        .then((result) => {
-          sendResponse({ success: true, ...result });
-        })
-        .catch((err) => {
-          const errorMessage = err?.message || "Unable to complete action";
-          console.warn("Spotlight: history assistant action failed", err);
-          sendResponse({ success: false, error: errorMessage });
         });
       return true;
     }
@@ -236,7 +148,7 @@ export function registerMessageHandlers({
         sendResponse({ success: false, error: "Web search unavailable" });
         return true;
       }
-      chrome.tabs
+      browser.tabs
         .create({ url })
         .then(() => sendResponse({ success: true, url }))
         .catch((err) => {
@@ -257,60 +169,6 @@ export function registerMessageHandlers({
         .catch((err) => {
           console.error("Spotlight: navigation request failed", err);
           sendResponse({ success: false, error: err?.message });
-        });
-      return true;
-    }
-
-    if (message.type === "SPOTLIGHT_SUMMARIZE") {
-      if (!summaries || typeof summaries.requestSummary !== "function") {
-        sendResponse({ success: false, error: "Summaries unavailable" });
-        return true;
-      }
-      const url = typeof message.url === "string" ? message.url : "";
-      if (!url) {
-        sendResponse({ success: false, error: "Missing URL for summary" });
-        return true;
-      }
-      const tabId = typeof message.tabId === "number" ? message.tabId : null;
-      const requestId =
-        typeof message.summaryRequestId === "number" && Number.isFinite(message.summaryRequestId)
-          ? message.summaryRequestId
-          : null;
-      const requesterTabId = typeof sender?.tab?.id === "number" ? sender.tab.id : null;
-      const notifyProgress = (update) => {
-        if (requestId === null || requesterTabId === null) {
-          return;
-        }
-        const payload = {
-          type: "SPOTLIGHT_SUMMARY_PROGRESS",
-          url,
-          requestId,
-          bullets: Array.isArray(update?.bullets) ? update.bullets.filter(Boolean).slice(0, 3) : undefined,
-          raw: typeof update?.raw === "string" ? update.raw : undefined,
-          cached: Boolean(update?.cached),
-          source: typeof update?.source === "string" ? update.source : undefined,
-          done: Boolean(update?.done),
-        };
-        try {
-          const maybePromise = chrome.tabs.sendMessage(requesterTabId, payload);
-          if (maybePromise && typeof maybePromise.catch === "function") {
-            maybePromise.catch((error) => {
-              console.warn("Spotlight: failed to post summary progress", error);
-            });
-          }
-        } catch (err) {
-          console.warn("Spotlight: summary progress dispatch failed", err);
-        }
-      };
-      summaries
-        .requestSummary({ url, tabId, onProgress: notifyProgress })
-        .then((result) => {
-          sendResponse({ success: true, ...result });
-        })
-        .catch((err) => {
-          console.error("Spotlight: summary generation failed", err);
-          const errorMessage = err?.message || "Unable to generate summary";
-          sendResponse({ success: false, error: errorMessage });
         });
       return true;
     }

@@ -1,3 +1,5 @@
+import { browser } from "../shared/browser-shim.js";
+
 function tabTitle(tab) {
   return tab.title || tab.url || "";
 }
@@ -46,7 +48,7 @@ function shuffleInPlace(tabs) {
 }
 
 async function sortAllTabsByDomainAndTitle() {
-  const tabs = await chrome.tabs.query({});
+  const tabs = await browser.tabs.query({});
   const windows = new Map();
 
   for (const tab of tabs) {
@@ -68,7 +70,7 @@ async function sortAllTabsByDomainAndTitle() {
     for (const tab of unpinned) {
       if (tab.index !== targetIndex) {
         try {
-          await chrome.tabs.move(tab.id, { index: targetIndex });
+          await browser.tabs.move(tab.id, { index: targetIndex });
         } catch (err) {
           console.warn("Spotlight: failed to move tab during sort", err);
         }
@@ -79,7 +81,7 @@ async function sortAllTabsByDomainAndTitle() {
 }
 
 async function shuffleTabs() {
-  const tabs = await chrome.tabs.query({});
+  const tabs = await browser.tabs.query({});
   const windows = new Map();
 
   for (const tab of tabs) {
@@ -100,7 +102,7 @@ async function shuffleTabs() {
     for (const tab of unpinned) {
       if (tab.index !== targetIndex) {
         try {
-          await chrome.tabs.move(tab.id, { index: targetIndex });
+          await browser.tabs.move(tab.id, { index: targetIndex });
         } catch (err) {
           console.warn("Spotlight: failed to move tab during shuffle", err);
         }
@@ -125,7 +127,7 @@ async function closeTabById(tabId) {
     return;
   }
   try {
-    await chrome.tabs.remove(tabId);
+    await browser.tabs.remove(tabId);
   } catch (err) {
     console.warn("Spotlight: failed to close tab", err);
   }
@@ -133,13 +135,13 @@ async function closeTabById(tabId) {
 
 async function closeAllTabsExceptActive() {
   try {
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const allTabs = await chrome.tabs.query({ currentWindow: true });
+    const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
+    const allTabs = await browser.tabs.query({ currentWindow: true });
     const toClose = allTabs
       .filter((tab) => tab.id !== undefined && (!activeTab || tab.id !== activeTab.id))
       .map((tab) => tab.id);
     if (toClose.length) {
-      await chrome.tabs.remove(toClose);
+      await browser.tabs.remove(toClose);
     }
   } catch (err) {
     console.warn("Spotlight: failed to close all tabs", err);
@@ -152,7 +154,7 @@ async function closeTabsByDomain(domain) {
   }
   const normalized = domain.toLowerCase();
   try {
-    const tabs = await chrome.tabs.query({});
+    const tabs = await browser.tabs.query({});
     const toClose = tabs
       .filter((tab) => {
         if (tab.id === undefined || !tab.url) {
@@ -163,7 +165,7 @@ async function closeTabsByDomain(domain) {
       })
       .map((tab) => tab.id);
     if (toClose.length) {
-      await chrome.tabs.remove(toClose);
+      await browser.tabs.remove(toClose);
     }
   } catch (err) {
     console.warn("Spotlight: failed to close tabs by domain", err);
@@ -172,12 +174,12 @@ async function closeTabsByDomain(domain) {
 
 async function closeAudibleTabs() {
   try {
-    const audibleTabs = await chrome.tabs.query({ audible: true });
+    const audibleTabs = await browser.tabs.query({ audible: true });
     const toClose = audibleTabs
       .filter((tab) => tab.id !== undefined)
       .map((tab) => tab.id);
     if (toClose.length) {
-      await chrome.tabs.remove(toClose);
+      await browser.tabs.remove(toClose);
     }
   } catch (err) {
     console.warn("Spotlight: failed to close audio tabs", err);
