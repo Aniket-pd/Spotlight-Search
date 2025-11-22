@@ -1,3 +1,5 @@
+![Spotlight](https://github.com/user-attachments/assets/0b73742e-092c-4de5-aeef-6f5a0c36cf77)
+
 # Spotlight for Chrome
 
 A Spotlight-style universal search and launcher for Chrome that runs entirely locally. Invoke the overlay with `Cmd+K` (macOS) or `Ctrl+K` (Windows/Linux) to instantly search across open tabs, bookmarks, and recent history.
